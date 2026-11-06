@@ -93,6 +93,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'view_reports',
         'export_reports',
         'view_classrooms',
+        'teaching_schedule.view',
+        'teaching_schedule.create',
+        'teaching_schedule.edit',
+        'teaching_schedule.export',
       ];
       return allowedPermissions.includes(permission);
     }
@@ -110,7 +114,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'submit_lesson_plan',
         'view_lesson_plans',
         'view_teaching_history',
-        'view_profile'
+        'view_profile',
+        'teaching_schedule.view',
+        'teaching_schedule.export',
       ];
       return teacherAllowed.includes(permission);
     }
