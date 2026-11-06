@@ -1,0 +1,6 @@
+{
+  "name": "LeeGo Center Management",
+  "description": "Hệ thống quản lý Trung tâm Anh ngữ LeeGo (English Center Management System) với phân quyền Admin, Quản lý học thuật và Giáo viên, quản lý học sinh, lớp học, thời khóa biểu, điểm danh, đánh giá Cambridge và báo cáo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
