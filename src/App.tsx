@@ -10,6 +10,7 @@ import { DashboardView } from './components/views/DashboardView';
 import { StudentsView } from './components/views/StudentsView';
 import { ParentsView } from './components/views/ParentsView';
 import { ClassesView } from './components/views/ClassesView';
+import { TeachingScheduleView } from './components/views/TeachingScheduleView';
 import { ProgramsView } from './components/views/ProgramsView';
 import { TeachersView } from './components/views/TeachersView';
 import { TeachingAssistantsView } from './components/views/TeachingAssistantsView';
@@ -38,7 +39,7 @@ const AppContent: React.FC = () => {
       return !['users', 'settings'].includes(tab);
     }
     if (role === 'teacher') {
-      return ['dashboard', 'students', 'classes', 'timetable', 'attendance', 'assessments', 'lesson_plans'].includes(tab);
+      return ['dashboard', 'students', 'classes', 'teaching_schedule', 'timetable', 'attendance', 'assessments', 'lesson_plans'].includes(tab);
     }
     return false;
   };
@@ -100,6 +101,7 @@ const AppContent: React.FC = () => {
             {activeTab === 'students' && <StudentsView />}
             {activeTab === 'parents' && <ParentsView />}
             {activeTab === 'classes' && <ClassesView />}
+            {activeTab === 'teaching_schedule' && <TeachingScheduleView />}
             {activeTab === 'programs' && <ProgramsView />}
             {activeTab === 'teachers' && <TeachersView />}
             {activeTab === 'assistants' && <TeachingAssistantsView />}
