@@ -240,3 +240,43 @@ export interface CenterSettings {
   firebaseConnected: boolean;
   demoMode: boolean;
 }
+
+export interface TeachingSession {
+  sessionId: string;
+  date: string; // "YYYY-MM-DD"
+  weekday: string; // "Mon", "Thu", "Thứ 2", etc.
+  dateOrdinal: string; // "Mon 2nd", "Thu 5th"
+  teacherId: string;
+  teacherName: string;
+  teachingAssistantId?: string;
+  teachingAssistantName?: string;
+  time: string; // "19:30 - 21:00" or "7:30 – 9:00pm"
+  classroom: string; // "Phòng 1A", "101"
+  courseBook: string; // Textbook name
+  lesson: string; // "Unit 1: I love animals"
+  contents: string; // multiline details
+  notes: string; // multiline notes
+  notesHighlight?: boolean; // red text styling for test/important activity
+}
+
+export interface MonthlyTeachingSchedule {
+  id: string; // e.g. "SCH-CLS-STA-01-2026-11"
+  classId: string;
+  className: string;
+  month: number; // 1 - 12
+  year: number; // e.g. 2026
+  teacherId: string;
+  teacherName: string;
+  teachingAssistantId?: string;
+  teachingAssistantName?: string;
+  defaultTime: string;
+  defaultClassroom: string;
+  courseBook: string;
+  generatedFromTimetable: boolean;
+  sessions: TeachingSession[];
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
