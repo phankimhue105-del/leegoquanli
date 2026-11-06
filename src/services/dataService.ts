@@ -1,5 +1,20 @@
 import * as XLSX from 'xlsx';
 import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableRow,
+  TableCell,
+  WidthType,
+  AlignmentType,
+  BorderStyle,
+  PageOrientation,
+  VerticalAlign,
+  ShadingType
+} from 'docx';
+import {
   Student,
   ClassItem,
   Teacher,
@@ -12,7 +27,9 @@ import {
   User,
   CenterSettings,
   ActivityLog,
-  Parent
+  Parent,
+  MonthlyTeachingSchedule,
+  TeachingSession
 } from '../types';
 import {
   initialStudents,
@@ -27,7 +44,8 @@ import {
   initialUsers,
   initialSettings,
   initialActivityLogs,
-  initialParents
+  initialParents,
+  initialTeachingSchedules
 } from '../data/initialData';
 
 const STORAGE_KEY = 'leego_center_storage_v1';
@@ -46,6 +64,7 @@ export interface AppDataStore {
   parents: Parent[];
   settings: CenterSettings;
   activityLogs: ActivityLog[];
+  teachingSchedules: MonthlyTeachingSchedule[];
 }
 
 export function loadInitialStorage(): AppDataStore {
@@ -68,6 +87,7 @@ export function loadInitialStorage(): AppDataStore {
         parents: parsed.parents || initialParents,
         settings: parsed.settings || initialSettings,
         activityLogs: parsed.activityLogs || initialActivityLogs,
+        teachingSchedules: parsed.teachingSchedules || initialTeachingSchedules,
       };
     }
   } catch (err) {
@@ -88,6 +108,7 @@ export function loadInitialStorage(): AppDataStore {
     parents: initialParents,
     settings: initialSettings,
     activityLogs: initialActivityLogs,
+    teachingSchedules: initialTeachingSchedules,
   };
 
   saveStorage(defaultData);
@@ -117,6 +138,7 @@ export function resetStorage(): AppDataStore {
     parents: initialParents,
     settings: initialSettings,
     activityLogs: initialActivityLogs,
+    teachingSchedules: initialTeachingSchedules,
   };
   saveStorage(defaultData);
   return defaultData;
@@ -274,4 +296,276 @@ export function parseExcelToStudents(file: File): Promise<Partial<Student>[]> {
     reader.onerror = (err) => reject(err);
     reader.readAsArrayBuffer(file);
   });
+}
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+/**
+ * Export Teaching Schedule to Microsoft Word (.docx)
+ * Formatted professionally with Landscape orientation, Times New Roman,
+ * clear borders, centered red title, blue course book title, and accurate session data.
+ */
+export async function exportTeachingScheduleToWord(schedule: MonthlyTeachingSchedule): Promise<void> {
+  const monthName = MONTH_NAMES[schedule.month - 1] || `Tháng ${schedule.month}`;
+  const titleText = `TEACHING SCHEDULE – ${monthName.toUpperCase()}, ${schedule.year}`;
+
+  const borderSingle = {
+    top: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    bottom: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    left: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    right: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+  };
+
+  const sessions = schedule.sessions;
+  const numCols = sessions.length + 1; // 1 label column + sessions
+
+  // Helper to create table cell
+  const createCell = (
+    textLines: { text: string; bold?: boolean; color?: string; italic?: boolean }[],
+    options?: { isHeader?: boolean; widthPct?: number }
+  ) => {
+    return new TableCell({
+      borders: borderSingle,
+      verticalAlign: VerticalAlign.TOP,
+      shading: options?.isHeader ? { fill: 'F3F4F6', type: ShadingType.CLEAR } : undefined,
+      children: textLines.map(
+        line =>
+          new Paragraph({
+            spacing: { before: 40, after: 40, line: 240 },
+            alignment: options?.isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
+            children: [
+              new TextRun({
+                text: line.text,
+                font: 'Times New Roman',
+                size: 19, // 9.5pt
+                bold: line.bold ?? false,
+                italics: line.italic ?? false,
+                color: line.color || '000000',
+              }),
+            ],
+          })
+      ),
+    });
+  };
+
+  // Helper for multiline text cell
+  const createMultilineCell = (text: string, color?: string, bold?: boolean) => {
+    const lines = (text || '').split('\n').filter(l => l.trim().length > 0);
+    if (lines.length === 0) {
+      return createCell([{ text: '' }]);
+    }
+    return new TableCell({
+      borders: borderSingle,
+      verticalAlign: VerticalAlign.TOP,
+      children: lines.map(
+        line =>
+          new Paragraph({
+            spacing: { before: 20, after: 20, line: 220 },
+            children: [
+              new TextRun({
+                text: line,
+                font: 'Times New Roman',
+                size: 18, // 9pt
+                color: color || '000000',
+                bold: bold ?? false,
+              }),
+            ],
+          })
+      ),
+    });
+  };
+
+  // Build Table Rows
+  // Row 1: Date
+  const dateRow = new TableRow({
+    children: [
+      createCell([{ text: 'Date', bold: true }], { isHeader: true }),
+      ...sessions.map(s => createCell([{ text: s.dateOrdinal || s.date, bold: true }], { isHeader: true })),
+    ],
+  });
+
+  // Row 2: Teacher
+  const teacherRow = new TableRow({
+    children: [
+      createCell([{ text: 'Teacher', bold: true }], { isHeader: true }),
+      ...sessions.map(s => createCell([{ text: s.teacherName || '' }])),
+    ],
+  });
+
+  // Row 3: T.A
+  const taRow = new TableRow({
+    children: [
+      createCell([{ text: 'T.A', bold: true }], { isHeader: true }),
+      ...sessions.map(s => createCell([{ text: s.teachingAssistantName || '' }])),
+    ],
+  });
+
+  // Row 4: Lesson
+  const lessonRow = new TableRow({
+    children: [
+      createCell([{ text: 'Lesson', bold: true }], { isHeader: true }),
+      ...sessions.map(s => createMultilineCell(s.lesson || '', undefined, true)),
+    ],
+  });
+
+  // Row 5: Contents
+  const contentsRow = new TableRow({
+    children: [
+      createCell([{ text: 'Contents', bold: true }], { isHeader: true }),
+      ...sessions.map(s => createMultilineCell(s.contents || '')),
+    ],
+  });
+
+  // Row 6: Notes
+  const notesRow = new TableRow({
+    children: [
+      createCell([{ text: 'Notes', bold: true }], { isHeader: true }),
+      ...sessions.map(s => {
+        const isHighlight = s.notesHighlight || /test|speaking|important|red/i.test(s.notes || '');
+        return createMultilineCell(s.notes || '', isHighlight ? 'DC2626' : undefined, isHighlight);
+      }),
+    ],
+  });
+
+  const table = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: borderSingle,
+    rows: [dateRow, teacherRow, taRow, lessonRow, contentsRow, notesRow],
+  });
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: {
+          page: {
+            size: {
+              orientation: PageOrientation.LANDSCAPE,
+            },
+            margin: {
+              top: 720, // 0.5 in
+              bottom: 720,
+              left: 720,
+              right: 720,
+            },
+          },
+        },
+        children: [
+          // Centered Red Heading
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 100, after: 140 },
+            children: [
+              new TextRun({
+                text: titleText,
+                font: 'Times New Roman',
+                size: 32, // 16pt
+                bold: true,
+                color: 'C00000', // Traditional center red heading
+              }),
+            ],
+          }),
+
+          // Class Information Header Line 1
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            children: [
+              new TextRun({ text: 'Class: ', font: 'Times New Roman', bold: true, size: 22 }),
+              new TextRun({ text: `${schedule.className}   –   `, font: 'Times New Roman', size: 22 }),
+              new TextRun({ text: 'Teacher: ', font: 'Times New Roman', bold: true, size: 22 }),
+              new TextRun({ text: `${schedule.teacherName}   –   `, font: 'Times New Roman', size: 22 }),
+              new TextRun({ text: 'T.A: ', font: 'Times New Roman', bold: true, size: 22 }),
+              new TextRun({ text: `${schedule.teachingAssistantName || 'None'}`, font: 'Times New Roman', size: 22 }),
+            ],
+          }),
+
+          // Class Information Header Line 2
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            children: [
+              new TextRun({ text: 'Time: ', font: 'Times New Roman', bold: true, size: 22 }),
+              new TextRun({ text: `${schedule.defaultTime}   |   `, font: 'Times New Roman', size: 22 }),
+              new TextRun({ text: 'Class Room: ', font: 'Times New Roman', bold: true, size: 22 }),
+              new TextRun({ text: `${schedule.defaultClassroom}   |   `, font: 'Times New Roman', size: 22 }),
+              new TextRun({ text: 'Course book: ', font: 'Times New Roman', bold: true, size: 22 }),
+              new TextRun({
+                text: `${schedule.courseBook}`,
+                font: 'Times New Roman',
+                bold: true,
+                size: 22,
+                color: '1D4ED8', // Blue text for course book
+              }),
+            ],
+          }),
+
+          // Spacing before table
+          new Paragraph({ spacing: { before: 80, after: 80 }, children: [] }),
+
+          // The Horizontal Schedule Table
+          table,
+        ],
+      },
+    ],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const cleanClassName = schedule.className.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filename = `Teaching_Schedule_${cleanClassName}_${monthName}_${schedule.year}.docx`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Export Teaching Schedule to Microsoft Excel (.xlsx)
+ * Table horizontal format: 1 column per session, 1 row per field.
+ */
+export function exportTeachingScheduleToExcel(schedule: MonthlyTeachingSchedule): void {
+  const monthName = MONTH_NAMES[schedule.month - 1] || `Tháng ${schedule.month}`;
+  const title = `TEACHING SCHEDULE – ${monthName.toUpperCase()}, ${schedule.year}`;
+  const classInfo = `Class: ${schedule.className} – Teacher: ${schedule.teacherName}${schedule.teachingAssistantName ? ` – T.A (${schedule.teachingAssistantName})` : ''} | Time: ${schedule.defaultTime} | Room: ${schedule.defaultClassroom} | Course book: ${schedule.courseBook}`;
+
+  const headerRow = ['Date', ...schedule.sessions.map(s => s.dateOrdinal || s.date)];
+  const teacherRow = ['Teacher', ...schedule.sessions.map(s => s.teacherName || '')];
+  const taRow = ['T.A', ...schedule.sessions.map(s => s.teachingAssistantName || '')];
+  const lessonRow = ['Lesson', ...schedule.sessions.map(s => s.lesson || '')];
+  const contentsRow = ['Contents', ...schedule.sessions.map(s => s.contents || '')];
+  const notesRow = ['Notes', ...schedule.sessions.map(s => s.notes || '')];
+
+  const aoa = [
+    [title],
+    [classInfo],
+    [],
+    headerRow,
+    teacherRow,
+    taRow,
+    lessonRow,
+    contentsRow,
+    notesRow,
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Set column widths: 1st label column ~15 chars, each session ~28 chars
+  const colWidths = [{ wch: 15 }];
+  schedule.sessions.forEach(() => {
+    colWidths.push({ wch: 28 });
+  });
+  worksheet['!cols'] = colWidths;
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, `Schedule_${schedule.month}_${schedule.year}`);
+  const cleanClassName = schedule.className.replace(/[^a-zA-Z0-9_-]/g, '_');
+  XLSX.writeFile(
+    workbook,
+    `LeeGo_Teaching_Schedule_${cleanClassName}_${monthName}_${schedule.year}.xlsx`
+  );
 }
