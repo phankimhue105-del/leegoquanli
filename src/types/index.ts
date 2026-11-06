@@ -280,3 +280,89 @@ export interface MonthlyTeachingSchedule {
   updatedAt: string;
 }
 
+// ==========================================
+// LESSON REPORT & PARENT REPORT TYPES
+// ==========================================
+
+export type HomeworkStatus = 'Đạt' | 'Chưa đạt' | 'Chưa hoàn thành' | 'Không giao BVN';
+export type PreviousLessonStatus = 'Đạt' | 'Chưa đạt' | 'Chưa thuộc bài' | 'Chưa chuẩn bị';
+export type ReportCompletionStatus = 'not_started' | 'in_progress' | 'submitted' | 'completed';
+export type ReportLockStatus = 'open' | 'locked';
+
+export interface StudentLessonReportEntry {
+  studentId: string;
+  studentName: string;
+  homeworkStatus: HomeworkStatus | string;
+  previousLessonStatus: PreviousLessonStatus | string;
+  comments: string; // Nhận xét
+  assignedHomework: string; // Giao BVN
+  notes: string; // Ghi chú (Điểm kiểm tra, Speaking, Test scores...)
+  completed: boolean; // True when required fields are filled
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+export interface LessonReport {
+  id: string; // e.g. "LR-CLS-STA-01-2026-11-06"
+  classId: string;
+  className: string;
+  teachingDate: string; // "YYYY-MM-DD"
+  timetableSessionId?: string;
+  sessionType: 'regular' | 'makeup'; // regular weekly or make-up class
+  teacherId: string;
+  teacherName: string;
+  teachingAssistantId?: string;
+  teachingAssistantName?: string;
+  scheduledTime: string;
+  classroom: string;
+  lessonProgress: string; // e.g. "Unit 3 – Lesson 2"
+  status: ReportCompletionStatus;
+  locked: boolean;
+  lockedAt?: string;
+  lockedBy?: string;
+  completedAt?: string;
+  completionPercentage: number; // 0 - 100
+  totalStudents: number;
+  completedStudents: number;
+  studentReports: StudentLessonReportEntry[];
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface IncompleteReportRecord {
+  id: string;
+  teacherId: string;
+  teacherName: string;
+  classId: string;
+  className: string;
+  teachingDate: string;
+  scheduledTime: string;
+  reportId: string;
+  completionPercentage: number;
+  incompleteStudentCount: number;
+  missingFields: string; // e.g. "2 học sinh chưa có nhận xét"
+  lockedAt: string;
+  lockedBy: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  status: 'pending' | 'resolved';
+}
+
+export interface MakeupClassSession {
+  id: string;
+  classId: string;
+  className: string;
+  date: string; // "YYYY-MM-DD"
+  time: string; // "17:30 - 19:00"
+  classroom: string;
+  teacherId: string;
+  teacherName: string;
+  assistantId?: string;
+  assistantName?: string;
+  lessonProgress: string;
+  notes?: string;
+  createdAt: string;
+  createdBy: string;
+}
