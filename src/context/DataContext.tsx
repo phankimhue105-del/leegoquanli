@@ -14,7 +14,9 @@ import {
   CenterSettings,
   ActivityLog,
   StudentAttendanceEntry,
-  StudentScoreEntry
+  StudentScoreEntry,
+  MonthlyTeachingSchedule,
+  TeachingSession
 } from '../types';
 import { loadInitialStorage, saveStorage, resetStorage, AppDataStore } from '../services/dataService';
 import { useAuth } from './AuthContext';
@@ -94,6 +96,14 @@ interface DataContextType {
   updateUser: (id: string, updates: Partial<User>) => void;
   toggleUserStatus: (id: string) => void;
 
+  // Teaching Schedule
+  getScheduleByClassAndMonth: (classId: string, month: number, year: number) => MonthlyTeachingSchedule | undefined;
+  getSchedulesByClass: (classId: string) => MonthlyTeachingSchedule[];
+  generateScheduleFromTimetable: (classId: string, month: number, year: number) => MonthlyTeachingSchedule;
+  saveTeachingSchedule: (schedule: MonthlyTeachingSchedule) => { success: boolean; schedule?: MonthlyTeachingSchedule; error?: string };
+  deleteTeachingSchedule: (id: string) => { success: boolean; error?: string };
+  copyScheduleContent: (sourceScheduleId: string, targetMonth: number, targetYear: number) => MonthlyTeachingSchedule | null;
+
   // Settings & System
   updateSettings: (settings: Partial<CenterSettings>) => void;
   resetAllData: () => void;
@@ -117,7 +127,7 @@ function isTimeOverlapping(startA: string, endA: string, startB: string, endB: s
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [data, setData] = useState<AppDataStore>(() => loadInitialStorage());
-  const { currentUser } = useAuth();
+  const { currentUser, hasPermission } = useAuth();
 
   useEffect(() => {
     saveStorage(data);
@@ -746,7 +756,255 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
   };
 
-  // 11. Settings & Reset
+  // 11. Teaching Schedule Management
+  const getScheduleByClassAndMonth = (classId: string, month: number, year: number): MonthlyTeachingSchedule | undefined => {
+    return data.teachingSchedules.find(
+      s => s.classId === classId && s.month === Number(month) && s.year === Number(year)
+    );
+  };
+
+  const getSchedulesByClass = (classId: string): MonthlyTeachingSchedule[] => {
+    return data.teachingSchedules
+      .filter(s => s.classId === classId)
+      .sort((a, b) => b.year - a.year || b.month - a.month);
+  };
+
+  const generateScheduleFromTimetable = (classId: string, month: number, year: number): MonthlyTeachingSchedule => {
+    const cls = data.classes.find(c => c.id === classId);
+    const teacher = data.teachers.find(t => t.id === cls?.teacherId);
+    const assistant = data.teachingAssistants.find(ta => ta.id === cls?.assistantTeacherId);
+    const program = data.programs.find(p => p.id === cls?.courseId);
+
+    const classTimetables = data.timetable.filter(t => t.classId === classId);
+    const activeDaysMap: Record<number, { time: string; classroom: string; teacherName: string; teacherId: string; taName?: string; taId?: string }> = {};
+
+    if (classTimetables.length > 0) {
+      classTimetables.forEach(t => {
+        activeDaysMap[t.dayOfWeek] = {
+          time: `${t.startTime} – ${t.endTime}`,
+          classroom: t.classroom || cls?.classroom || 'Phòng học',
+          teacherName: t.teacherName || teacher?.vietnameseName || teacher?.fullName || 'Giáo viên',
+          teacherId: t.teacherId || cls?.teacherId || '',
+          taName: t.assistantName || assistant?.fullName,
+          taId: t.assistantId || assistant?.id,
+        };
+      });
+    } else if (cls?.scheduleDays) {
+      const lower = cls.scheduleDays.toLowerCase();
+      const defaultTime = cls.scheduleTime || '7:30 – 9:00pm';
+      const defaultRoom = cls.classroom || '1A';
+      const defaultTchName = teacher?.vietnameseName || teacher?.fullName || 'Giáo viên';
+      const defaultTchId = teacher?.id || '';
+      const defaultTaName = assistant?.fullName;
+      const defaultTaId = assistant?.id;
+
+      if (lower.includes('thứ 2') || lower.includes('t2') || lower.includes('monday') || lower.includes('mon')) {
+        activeDaysMap[1] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 3') || lower.includes('t3') || lower.includes('tuesday') || lower.includes('tue')) {
+        activeDaysMap[2] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 4') || lower.includes('t4') || lower.includes('wednesday') || lower.includes('wed')) {
+        activeDaysMap[3] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 5') || lower.includes('t5') || lower.includes('thursday') || lower.includes('thu')) {
+        activeDaysMap[4] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 6') || lower.includes('t6') || lower.includes('friday') || lower.includes('fri')) {
+        activeDaysMap[5] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 7') || lower.includes('t7') || lower.includes('saturday') || lower.includes('sat')) {
+        activeDaysMap[6] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('chủ nhật') || lower.includes('cn') || lower.includes('sunday') || lower.includes('sun')) {
+        activeDaysMap[7] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+    }
+
+    const totalDays = new Date(year, month, 0).getDate();
+    const sessions: TeachingSession[] = [];
+    const weekdayAbbr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    const getOrdinal = (num: number) => {
+      if (num >= 11 && num <= 13) return `${num}th`;
+      switch (num % 10) {
+        case 1: return `${num}st`;
+        case 2: return `${num}nd`;
+        case 3: return `${num}rd`;
+        default: return `${num}th`;
+      }
+    };
+
+    let sessionCounter = 1;
+    for (let day = 1; day <= totalDays; day++) {
+      const dateObj = new Date(year, month - 1, day);
+      const jsDay = dateObj.getDay();
+      const ttDay = jsDay === 0 ? 7 : jsDay;
+
+      if (activeDaysMap[ttDay]) {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const dateStr = `${year}-${pad(month)}-${pad(day)}`;
+
+        if (cls?.startDate && cls?.endDate) {
+          if (dateStr < cls.startDate && cls.startDate.startsWith(String(year))) {
+            continue;
+          }
+          if (dateStr > cls.endDate && cls.endDate.startsWith(String(year))) {
+            continue;
+          }
+        }
+
+        const dayConfig = activeDaysMap[ttDay];
+        const dateOrdinal = `${weekdayAbbr[jsDay]} ${getOrdinal(day)}`;
+        const programOutline = program?.lessonSequence?.[sessionCounter - 1];
+
+        sessions.push({
+          sessionId: `SES-SCH-${year}${pad(month)}${pad(day)}-${classId}`,
+          date: dateStr,
+          weekday: weekdayAbbr[jsDay],
+          dateOrdinal,
+          teacherId: dayConfig.teacherId,
+          teacherName: dayConfig.teacherName,
+          teachingAssistantId: dayConfig.taId,
+          teachingAssistantName: dayConfig.taName,
+          time: dayConfig.time,
+          classroom: dayConfig.classroom,
+          courseBook: cls?.curriculum || program?.textbook || 'GET READY FOR STARTERS',
+          lesson: programOutline ? `Unit ${sessionCounter}: ${programOutline.title}` : `Unit ${sessionCounter}`,
+          contents: programOutline ? `- Grammar: ${programOutline.grammarFocus}\n- Vocabulary: ${programOutline.vocabFocus}\n- Homework: ${programOutline.homework}` : '',
+          notes: '',
+          notesHighlight: false,
+        });
+
+        sessionCounter++;
+      }
+    }
+
+    const defaultTeacherLabel = teacher?.vietnameseName || teacher?.fullName || 'Giáo viên';
+    const defaultTALabel = assistant?.fullName || '';
+
+    const newSchedule: MonthlyTeachingSchedule = {
+      id: `SCH-${classId}-${year}-${String(month).padStart(2, '0')}`,
+      classId,
+      className: cls?.name || 'Class',
+      month: Number(month),
+      year: Number(year),
+      teacherId: cls?.teacherId || '',
+      teacherName: defaultTeacherLabel,
+      teachingAssistantId: cls?.assistantTeacherId,
+      teachingAssistantName: defaultTALabel,
+      defaultTime: cls?.scheduleTime || '7:30 – 9:00pm, Monday/Thursday',
+      defaultClassroom: cls?.classroom || '1A',
+      courseBook: cls?.curriculum || program?.textbook || 'GET READY FOR STARTERS',
+      generatedFromTimetable: true,
+      sessions,
+      createdBy: currentUser.name,
+      createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      updatedBy: currentUser.name,
+      updatedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+    };
+
+    return newSchedule;
+  };
+
+  const saveTeachingSchedule = (
+    schedule: MonthlyTeachingSchedule
+  ): { success: boolean; schedule?: MonthlyTeachingSchedule; error?: string } => {
+    if (currentUser.role === 'teacher') {
+      return {
+        success: false,
+        error: 'Tài khoản Giáo viên không có quyền tạo hoặc chỉnh sửa Lịch giảng dạy (Yêu cầu quyền teaching_schedule.edit).',
+      };
+    }
+    if (!hasPermission('teaching_schedule.edit') && !hasPermission('teaching_schedule.create')) {
+      return {
+        success: false,
+        error: 'Bạn không có quyền thực hiện thao tác lưu Lịch giảng dạy.',
+      };
+    }
+
+    const updatedSchedule: MonthlyTeachingSchedule = {
+      ...schedule,
+      updatedBy: currentUser.name,
+      updatedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+    };
+
+    setData(prev => {
+      const existingIdx = prev.teachingSchedules.findIndex(
+        s => s.id === updatedSchedule.id || (s.classId === updatedSchedule.classId && s.month === updatedSchedule.month && s.year === updatedSchedule.year)
+      );
+
+      let nextSchedules: MonthlyTeachingSchedule[];
+      if (existingIdx >= 0) {
+        nextSchedules = [...prev.teachingSchedules];
+        nextSchedules[existingIdx] = updatedSchedule;
+      } else {
+        nextSchedules = [...prev.teachingSchedules, updatedSchedule];
+      }
+
+      return {
+        ...prev,
+        teachingSchedules: nextSchedules,
+      };
+    });
+
+    addActivityLog('Lưu Lịch giảng dạy', `Đã lưu lịch giảng dạy tháng ${schedule.month}/${schedule.year} của lớp ${schedule.className}`);
+    return { success: true, schedule: updatedSchedule };
+  };
+
+  const deleteTeachingSchedule = (id: string): { success: boolean; error?: string } => {
+    if (currentUser.role !== 'admin' && !hasPermission('teaching_schedule.delete')) {
+      return {
+        success: false,
+        error: 'Chỉ Quản trị viên (Admin) hoặc tài khoản được cấp quyền xóa mới có thể xóa Lịch giảng dạy.',
+      };
+    }
+
+    const target = data.teachingSchedules.find(s => s.id === id);
+    if (!target) {
+      return { success: false, error: 'Không tìm thấy lịch giảng dạy cần xóa.' };
+    }
+
+    setData(prev => ({
+      ...prev,
+      teachingSchedules: prev.teachingSchedules.filter(s => s.id !== id),
+    }));
+
+    addActivityLog('Xóa Lịch giảng dạy', `Đã xóa lịch giảng dạy tháng ${target.month}/${target.year} của lớp ${target.className}`);
+    return { success: true };
+  };
+
+  const copyScheduleContent = (
+    sourceScheduleId: string,
+    targetMonth: number,
+    targetYear: number
+  ): MonthlyTeachingSchedule | null => {
+    const source = data.teachingSchedules.find(s => s.id === sourceScheduleId);
+    if (!source) return null;
+
+    const target = generateScheduleFromTimetable(source.classId, targetMonth, targetYear);
+    const mergedSessions = target.sessions.map((targetSession, index) => {
+      const srcSession = source.sessions[index];
+      if (srcSession) {
+        return {
+          ...targetSession,
+          lesson: srcSession.lesson,
+          contents: srcSession.contents,
+          notes: srcSession.notes,
+          notesHighlight: srcSession.notesHighlight,
+        };
+      }
+      return targetSession;
+    });
+
+    return {
+      ...target,
+      sessions: mergedSessions,
+      courseBook: source.courseBook,
+    };
+  };
+
+  // 12. Settings & Reset
   const updateSettings = (updates: Partial<CenterSettings>) => {
     setData(prev => ({
       ...prev,
@@ -797,6 +1055,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addUser,
         updateUser,
         toggleUserStatus,
+        getScheduleByClassAndMonth,
+        getSchedulesByClass,
+        generateScheduleFromTimetable,
+        saveTeachingSchedule,
+        deleteTeachingSchedule,
+        copyScheduleContent,
         updateSettings,
         resetAllData,
         addActivityLog
