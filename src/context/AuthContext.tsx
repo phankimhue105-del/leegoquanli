@@ -97,6 +97,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'teaching_schedule.create',
         'teaching_schedule.edit',
         'teaching_schedule.export',
+        'lesson_report.view',
+        'lesson_report.create',
+        'lesson_report.edit',
+        'lesson_report.submit',
+        'lesson_report.lock',
+        'lesson_report.unlock',
+        'lesson_report.export',
+        'lesson_report.view_incomplete',
+        'lesson_report.manage_makeup',
       ];
       return allowedPermissions.includes(permission);
     }
@@ -117,6 +126,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'view_profile',
         'teaching_schedule.view',
         'teaching_schedule.export',
+        'lesson_report.view',
+        'lesson_report.create',
+        'lesson_report.edit',
+        'lesson_report.submit',
       ];
       return teacherAllowed.includes(permission);
     }
