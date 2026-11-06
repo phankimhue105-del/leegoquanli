@@ -52,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
     assistants: { title: 'Quản Lý Trợ Giảng (Assistants)', subtitle: 'Đội ngũ trợ giảng hỗ trợ lớp học và sửa bài tập' },
     timetable: { title: 'Thời Khóa Biểu (Timetable)', subtitle: 'Lịch học hàng tuần và tự động phát hiện xung đột lịch' },
     attendance: { title: 'Điểm Danh Lớp Học (Attendance)', subtitle: 'Ghi nhận chuyên cần, đi muộn, có phép và vắng mặt' },
+    lesson_reports: { title: 'Báo Cáo Tình Hình Học Tập (Lesson Report)', subtitle: 'Quản lý báo cáo sau buổi học, đánh giá học viên, khóa sổ và xuất báo cáo phụ huynh' },
     assessments: { title: 'Đánh Giá Học Tập (Assessments)', subtitle: 'Bảng điểm 4 kỹ năng Cambridge, nhận xét và xếp loại' },
     lesson_plans: { title: 'Giáo Án & Báo Cáo Buổi Dạy', subtitle: 'Nộp báo cáo bài giảng và quản lý học thuật phê duyệt' },
     reports: { title: 'Báo Cáo Học Thuật (Academic Reports)', subtitle: 'Thống kê tuyển sinh, chuyên cần, giờ dạy và xuất Excel' },
