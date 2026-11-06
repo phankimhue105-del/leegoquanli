@@ -12,6 +12,7 @@ import {
   ClipboardCheck,
   Award,
   FileText,
+  FileSpreadsheet,
   BarChart3,
   ShieldCheck,
   Settings,
@@ -32,6 +33,7 @@ export type NavigationTab =
   | 'assistants'
   | 'timetable'
   | 'attendance'
+  | 'lesson_reports'
   | 'assessments'
   | 'lesson_plans'
   | 'reports'
@@ -125,6 +127,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Điểm danh',
       sublabel: 'Attendance',
       icon: ClipboardCheck,
+      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+    },
+    {
+      id: 'lesson_reports',
+      label: 'Lesson Report',
+      sublabel: 'Báo cáo tình hình học tập',
+      icon: FileSpreadsheet,
       allowedRoles: ['admin', 'academic_manager', 'teacher'],
     },
     {
