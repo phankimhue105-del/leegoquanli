@@ -13,7 +13,10 @@ import {
   ActivityLog,
   Parent,
   MonthlyTeachingSchedule,
-  TeachingSession
+  TeachingSession,
+  LessonReport,
+  IncompleteReportRecord,
+  MakeupClassSession
 } from '../types';
 
 export const initialUsers: User[] = [
@@ -349,7 +352,7 @@ export const initialClasses: ClassItem[] = [
   },
   {
     id: 'CLS-FLY-01',
-    name: 'Flyers Challenger 01',
+    name: 'Step 5 (Flyers Challenger 01)',
     code: 'FLY-C01',
     level: 'A2 Flyers',
     courseId: 'PROG-FLY',
@@ -1000,6 +1003,36 @@ export const initialParents: Parent[] = [
 
 export const initialTimetableSessions: TimetableSession[] = [
   {
+    id: 'SES-FLY-FRI',
+    classId: 'CLS-FLY-01',
+    className: 'Step 5',
+    teacherId: 'TCH-006',
+    teacherName: 'Ms.D.Huyền',
+    assistantId: 'TA-001',
+    assistantName: 'Nguyễn Thảo Linh',
+    classroom: 'Phòng 202 - Focus Room',
+    dayOfWeek: 5,
+    dayName: 'Thứ 6 (Friday)',
+    startTime: '19:15',
+    endTime: '20:45',
+    status: 'scheduled'
+  },
+  {
+    id: 'SES-STA-FRI',
+    classId: 'CLS-STA-02',
+    className: 'Star 2',
+    teacherId: 'TCH-001',
+    teacherName: 'David Miller',
+    assistantId: 'TA-003',
+    assistantName: 'Thiên',
+    classroom: 'Phòng 101 - Smart Room',
+    dayOfWeek: 5,
+    dayName: 'Thứ 6 (Friday)',
+    startTime: '17:30',
+    endTime: '19:00',
+    status: 'scheduled'
+  },
+  {
     id: 'SES-001',
     classId: 'CLS-STA-01',
     className: 'Star 1 (Starters Explorer 01)',
@@ -1062,7 +1095,7 @@ export const initialTimetableSessions: TimetableSession[] = [
   {
     id: 'SES-005',
     classId: 'CLS-FLY-01',
-    className: 'Flyers Challenger 01',
+    classname: 'Step 5 (Flyers Challenger 01)',
     teacherId: 'TCH-003',
     teacherName: 'Nguyễn Văn Minh',
     assistantId: 'TA-001',
@@ -1077,7 +1110,7 @@ export const initialTimetableSessions: TimetableSession[] = [
   {
     id: 'SES-006',
     classId: 'CLS-FLY-01',
-    className: 'Flyers Challenger 01',
+    classname: 'Step 5 (Flyers Challenger 01)',
     teacherId: 'TCH-003',
     teacherName: 'Nguyễn Văn Minh',
     assistantId: 'TA-001',
@@ -1327,7 +1360,7 @@ export const initialAssessments: AssessmentRecord[] = [
   {
     id: 'ASM-2025-FLY-MID',
     classId: 'CLS-FLY-01',
-    className: 'Flyers Challenger 01',
+    classname: 'Step 5 (Flyers Challenger 01)',
     title: 'Kiểm tra Năng lực Định kỳ Cambridge Flyers (10-Point)',
     examType: 'Monthly',
     date: '2025-02-28',
@@ -1759,3 +1792,223 @@ export const initialTeachingSchedules: MonthlyTeachingSchedule[] = [
   }
 ];
 
+
+
+export const initialLessonReports: LessonReport[] = [
+  {
+    id: 'LR-CLS-FLY-01-2026-11-06',
+    classId: 'CLS-FLY-01',
+    className: 'Step 5',
+    teachingDate: '2026-11-06',
+    sessionType: 'regular',
+    teacherId: 'TCH-006',
+    teacherName: 'Ms.D.Huyền',
+    teachingAssistantId: 'TA-001',
+    teachingAssistantName: 'Nguyễn Thảo Linh',
+    scheduledTime: '19:15 - 20:45',
+    classroom: 'Phòng 202 - Focus Room',
+    lessonProgress: 'Unit 3 – Lesson 2',
+    status: 'in_progress',
+    locked: false,
+    completionPercentage: 80,
+    totalStudents: 10,
+    completedStudents: 8,
+    createdBy: 'Ms.D.Huyền',
+    createdAt: '2026-11-06 20:50',
+    updatedBy: 'Ms.D.Huyền',
+    updatedAt: '2026-11-06 21:30',
+    studentReports: [
+      {
+        studentId: 'LG-STU-017',
+        studentName: 'Trịnh Hoàng Long',
+        homeworkStatus: 'Đạt',
+        previousLessonStatus: 'Đạt',
+        comments: 'Con nắm được từ vựng và cấu trúc câu, thực hành chính xác cấu trúc Unit 3.',
+        assignedHomework: 'Ôn tập từ vựng Unit 3, hoàn thành WB trang 26–27.',
+        notes: 'Speaking Test: 8.5/10',
+        completed: true
+      },
+      {
+        studentId: 'LG-STU-018',
+        studentName: 'Đặng Mai Phương',
+        homeworkStatus: 'Đạt',
+        previousLessonStatus: 'Đạt',
+        comments: 'Con rất hăng hái, tập trung và thực hành tốt mẫu câu hỏi đáp.',
+        assignedHomework: 'Hoàn thành bài tập viết WB/28 và quay video phát âm 5 từ mới.',
+        notes: 'Vocabulary Test: 9/10',
+        completed: true
+      },
+      {
+        studentId: 'LG-STU-019',
+        studentName: 'Bùi Gia Huy',
+        homeworkStatus: 'Đạt',
+        previousLessonStatus: 'Chưa đạt',
+        comments: 'Con làm bài tập về nhà đầy đủ nhưng cần ôn lại cách dùng thì quá khứ.',
+        assignedHomework: 'Luyện viết 5 câu quá khứ đơn, học thuộc bảng động từ bất quy tắc.',
+        notes: 'Grammar Quiz: 6.5/10',
+        completed: true
+      },
+      {
+        studentId: 'LG-STU-020',
+        studentName: 'Nguyễn Thùy Linh',
+        homeworkStatus: 'Chưa đạt',
+        previousLessonStatus: 'Đạt',
+        comments: 'Con chưa hoàn thành hết bài tập trong sách bài tập, cần rèn tính tự giác hơn.',
+        assignedHomework: 'Làm bù bài tập trang 25 và nộp lại cho cô vào buổi sau.',
+        notes: 'Cần phụ huynh nhắc nhở làm BVN',
+        completed: true
+      },
+      {
+        studentId: 'LG-STU-021',
+        studentName: 'Phạm Đức Anh',
+        homeworkStatus: 'Đạt',
+        previousLessonStatus: 'Đạt',
+        comments: 'Con phản xạ speaking nhanh nhẹn, tự tin phát biểu trước lớp.',
+        assignedHomework: 'Đọc đoạn văn Unit 3 và trả lời 4 câu hỏi đọc hiểu.',
+        notes: 'Speaking Test: 9.0/10',
+        completed: true
+      },
+      {
+        studentId: 'LG-STU-022',
+        studentName: 'Vũ Hải Yến',
+        homeworkStatus: 'Đạt',
+        previousLessonStatus: 'Đạt',
+        comments: 'Con chăm chỉ, ghi chép bài cẩn thận, phát âm âm cuối rất tốt.',
+        assignedHomework: 'Ôn tập từ vựng và chuẩn bị bài mới Unit 4.',
+        notes: 'Written Test: 18/20',
+        completed: true
+      },
+      {
+        studentId: 'LG-STU-023',
+        studentName: 'Lý Quốc Bảo',
+        homeworkStatus: 'Chưa hoàn thành',
+        previousLessonStatus: 'Chưa thuộc bài',
+        comments: 'Con còn lơ là, chưa thuộc từ vựng bài cũ và quên mang sách bài tập.',
+        assignedHomework: 'Chép phạt từ vựng 2 lần, làm lại WB trang 26.',
+        notes: 'Đã trao đổi trực tiếp với phụ huynh',
+        completed: true
+      },
+      {
+        studentId: 'LG-STU-024',
+        studentName: 'Hoàng Kim Ngân',
+        homeworkStatus: 'Đạt',
+        previousLessonStatus: 'Đạt',
+        comments: 'Con tiếp thu nhanh, giọng đọc truyền cảm và rõ ràng.',
+        assignedHomework: 'Luyện nghe audio track 15 và làm bài tập trắc nghiệm.',
+        notes: 'Listening Score: 10/10',
+        completed: true
+      },
+      {
+        studentId: 'LG-STU-025',
+        studentName: 'Dương Văn Phong',
+        homeworkStatus: 'Đạt',
+        previousLessonStatus: 'Chưa chuẩn bị',
+        comments: '',
+        assignedHomework: 'Ôn tập Unit 3.',
+        notes: '',
+        completed: false
+      },
+      {
+        studentId: 'LG-STU-026',
+        studentName: 'Tô Minh Châu',
+        homeworkStatus: '',
+        previousLessonStatus: '',
+        comments: '',
+        assignedHomework: '',
+        notes: '',
+        completed: false
+      }
+    ]
+  },
+  {
+    id: 'LR-CLS-STA-02-2026-11-06',
+    classId: 'CLS-STA-02',
+    className: 'Star 2',
+    teachingDate: '2026-11-06',
+    sessionType: 'regular',
+    teacherId: 'TCH-001',
+    teacherName: 'David Miller',
+    teachingAssistantId: 'TA-003',
+    teachingAssistantName: 'Thiên',
+    scheduledTime: '17:30 - 19:00',
+    classroom: 'Phòng 101 - Smart Room',
+    lessonProgress: 'Unit 2 – Lesson 1',
+    status: 'not_started',
+    locked: false,
+    completionPercentage: 0,
+    totalStudents: 12,
+    completedStudents: 0,
+    createdBy: 'David Miller',
+    createdAt: '2026-11-06 17:00',
+    updatedBy: 'David Miller',
+    updatedAt: '2026-11-06 17:00',
+    studentReports: [
+      { studentId: 'LG-STU-001', studentName: 'Nguyễn Bảo Nam', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-002', studentName: 'Trần Hà My', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-003', studentName: 'Lê Quang Dũng', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-004', studentName: 'Hoàng Minh Khôi', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-005', studentName: 'Phạm Ngọc Diệp', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-006', studentName: 'Vũ Gia Khiêm', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-007', studentName: 'Trịnh Bảo Châu', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-008', studentName: 'Ngô Tuấn Hưng', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-009', studentName: 'Đặng Tuấn Kiệt', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-010', studentName: 'Bùi Anh Thư', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-011', studentName: 'Trần Minh Trí', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
+      { studentId: 'LG-STU-012', studentName: 'Đỗ Thảo Vy', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false }
+    ]
+  }
+];
+
+export const initialIncompleteReports: IncompleteReportRecord[] = [
+  {
+    id: 'INC-20261106-01',
+    teacherId: 'TCH-006',
+    teacherName: 'Ms.D.Huyền',
+    classId: 'CLS-FLY-01',
+    className: 'Step 5',
+    teachingDate: '2026-11-06',
+    scheduledTime: '19:15 - 20:45',
+    reportId: 'LR-CLS-FLY-01-2026-11-06',
+    completionPercentage: 80,
+    incompleteStudentCount: 2,
+    missingFields: '2 học sinh (Dương Văn Phong, Tô Minh Châu) chưa điền nhận xét hoặc tình hình bài tập',
+    lockedAt: '2026-11-06 22:00',
+    lockedBy: 'Trần Học Thuật (Academic Manager)',
+    status: 'pending'
+  },
+  {
+    id: 'INC-20261106-02',
+    teacherId: 'TCH-001',
+    teacherName: 'David Miller',
+    classId: 'CLS-STA-02',
+    className: 'Star 2',
+    teachingDate: '2026-11-06',
+    scheduledTime: '17:30 - 19:00',
+    reportId: 'LR-CLS-STA-02-2026-11-06',
+    completionPercentage: 0,
+    incompleteStudentCount: 12,
+    missingFields: 'Chưa khởi tạo báo cáo (12 học sinh chưa có dữ liệu)',
+    lockedAt: '2026-11-06 22:00',
+    lockedBy: 'Trần Học Thuật (Academic Manager)',
+    status: 'pending'
+  }
+];
+
+export const initialMakeupSessions: MakeupClassSession[] = [
+  {
+    id: 'MK-20261106-01',
+    classId: 'CLS-STA-01',
+    className: 'Star 1',
+    date: '2026-11-06',
+    time: '18:00 - 19:30',
+    classroom: '1A',
+    teacherId: 'TCH-006',
+    teacherName: 'Ms.D.Huyền',
+    assistantId: 'TA-003',
+    assistantName: 'Thiên',
+    lessonProgress: 'Unit 2 – Lesson 2 (Học bù buổi nghỉ lễ)',
+    notes: 'Lớp học bù cho buổi nghỉ lễ 02/09',
+    createdAt: '2026-11-04 10:00',
+    createdBy: 'Trần Học Thuật (Academic Manager)'
+  }
+];
