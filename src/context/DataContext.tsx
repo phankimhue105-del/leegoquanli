@@ -16,7 +16,11 @@ import {
   StudentAttendanceEntry,
   StudentScoreEntry,
   MonthlyTeachingSchedule,
-  TeachingSession
+  TeachingSession,
+  LessonReport,
+  StudentLessonReportEntry,
+  IncompleteReportRecord,
+  MakeupClassSession
 } from '../types';
 import { loadInitialStorage, saveStorage, resetStorage, AppDataStore } from '../services/dataService';
 import { useAuth } from './AuthContext';
@@ -103,6 +107,15 @@ interface DataContextType {
   saveTeachingSchedule: (schedule: MonthlyTeachingSchedule) => { success: boolean; schedule?: MonthlyTeachingSchedule; error?: string };
   deleteTeachingSchedule: (id: string) => { success: boolean; error?: string };
   copyScheduleContent: (sourceScheduleId: string, targetMonth: number, targetYear: number) => MonthlyTeachingSchedule | null;
+
+  // Lesson Reports & Make-up Classes
+  getLessonReportsForDate: (dateStr: string) => LessonReport[];
+  saveLessonReport: (report: LessonReport) => { success: boolean; report?: LessonReport; error?: string };
+  submitLessonReport: (reportId: string) => { success: boolean; error?: string };
+  toggleReportLock: (reportId: string, lock: boolean) => { success: boolean; error?: string };
+  addMakeupClass: (session: Omit<MakeupClassSession, 'id' | 'createdAt' | 'createdBy'>) => { success: boolean; session?: MakeupClassSession; error?: string };
+  deleteMakeupClass: (id: string) => { success: boolean; error?: string };
+  resolveIncompleteReport: (reportId: string) => void;
 
   // Settings & System
   updateSettings: (settings: Partial<CenterSettings>) => void;
@@ -1004,7 +1017,395 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
-  // 12. Settings & Reset
+  // 12. Lesson Reports & Make-up Classes Management
+  const getLessonReportsForDate = (dateStr: string): LessonReport[] => {
+    const targetDate = new Date(dateStr);
+    const jsDay = targetDate.getDay(); // 0: Sun, 1: Mon, ..., 6: Sat
+    const ttDay = jsDay === 0 ? 7 : jsDay;
+
+    // A. Classes scheduled on this weekday from timetable
+    const regularTimetables = data.timetable.filter(t => t.dayOfWeek === ttDay);
+    
+    // B. Classes scheduled on this weekday based on scheduleDays if no timetable session
+    const regularClasses = data.classes.filter(c => {
+      // Check start & end date
+      if (c.startDate && dateStr < c.startDate) return false;
+      if (c.endDate && dateStr > c.endDate) return false;
+      if (c.status !== 'ongoing' && c.status !== 'upcoming') return false;
+
+      // Has timetable entry
+      if (regularTimetables.some(t => t.classId === c.id)) return true;
+
+      // Or parse scheduleDays
+      const lower = (c.scheduleDays || '').toLowerCase();
+      if (ttDay === 1 && (lower.includes('thứ 2') || lower.includes('t2') || lower.includes('monday') || lower.includes('mon'))) return true;
+      if (ttDay === 2 && (lower.includes('thứ 3') || lower.includes('t3') || lower.includes('tuesday') || lower.includes('tue'))) return true;
+      if (ttDay === 3 && (lower.includes('thứ 4') || lower.includes('t4') || lower.includes('wednesday') || lower.includes('wed'))) return true;
+      if (ttDay === 4 && (lower.includes('thứ 5') || lower.includes('t5') || lower.includes('thursday') || lower.includes('thu'))) return true;
+      if (ttDay === 5 && (lower.includes('thứ 6') || lower.includes('t6') || lower.includes('friday') || lower.includes('fri'))) return true;
+      if (ttDay === 6 && (lower.includes('thứ 7') || lower.includes('t7') || lower.includes('saturday') || lower.includes('sat'))) return true;
+      if (ttDay === 7 && (lower.includes('chủ nhật') || lower.includes('cn') || lower.includes('sunday') || lower.includes('sun'))) return true;
+      return false;
+    });
+
+    // C. Make-up classes scheduled on this specific date
+    const dateMakeups = (data.makeupSessions || []).filter(m => m.date === dateStr);
+
+    const reports: LessonReport[] = [];
+
+    // Helper to generate blank student report entries for a class
+    const generateStudentEntries = (classItem: ClassItem): StudentLessonReportEntry[] => {
+      const classStudents = data.students.filter(s => classItem.studentIds.includes(s.id));
+      return classStudents.map(stu => ({
+        studentId: stu.id,
+        studentName: stu.vietnameseName ? `${stu.fullName} (${stu.vietnameseName})` : stu.fullName,
+        homeworkStatus: 'Đạt',
+        previousLessonStatus: 'Đạt',
+        comments: '',
+        assignedHomework: '',
+        notes: '',
+        completed: false
+      }));
+    };
+
+    // Process Regular Classes
+    regularClasses.forEach(cls => {
+      const existing = (data.lessonReports || []).find(r => r.classId === cls.id && r.teachingDate === dateStr && r.sessionType !== 'makeup');
+      if (existing) {
+        reports.push(existing);
+      } else {
+        const tt = regularTimetables.find(t => t.classId === cls.id);
+        const teacher = data.teachers.find(t => t.id === (tt?.teacherId || cls.teacherId));
+        const assistant = data.teachingAssistants.find(ta => ta.id === (tt?.assistantId || cls.assistantTeacherId));
+        const students = generateStudentEntries(cls);
+
+        const newReport: LessonReport = {
+          id: `LR-${cls.id}-${dateStr}`,
+          classId: cls.id,
+          className: cls.name,
+          teachingDate: dateStr,
+          timetableSessionId: tt?.id,
+          sessionType: 'regular',
+          teacherId: teacher?.id || cls.teacherId || '',
+          teacherName: teacher?.vietnameseName || teacher?.fullName || 'Giáo viên',
+          teachingAssistantId: assistant?.id || cls.assistantTeacherId,
+          teachingAssistantName: assistant?.fullName,
+          scheduledTime: tt ? `${tt.startTime} – ${tt.endTime}` : (cls.scheduleTime || '17:30 – 19:00'),
+          classroom: tt?.classroom || cls.classroom || 'Phòng 101',
+          lessonProgress: 'Unit 1 – Lesson 1',
+          status: 'not_started',
+          locked: false,
+          completionPercentage: 0,
+          totalStudents: students.length,
+          completedStudents: 0,
+          studentReports: students,
+          createdBy: 'Hệ thống tự động',
+          createdAt: `${dateStr} 08:00`,
+          updatedBy: 'Hệ thống tự động',
+          updatedAt: `${dateStr} 08:00`
+        };
+        reports.push(newReport);
+      }
+    });
+
+    // Process Make-up Classes
+    dateMakeups.forEach(mk => {
+      const existing = (data.lessonReports || []).find(r => r.id === `LR-MAKEUP-${mk.id}` || (r.classId === mk.classId && r.teachingDate === dateStr && r.sessionType === 'makeup'));
+      if (existing) {
+        reports.push(existing);
+      } else {
+        const cls = data.classes.find(c => c.id === mk.classId);
+        const students = cls ? generateStudentEntries(cls) : [];
+
+        const newMakeupReport: LessonReport = {
+          id: `LR-MAKEUP-${mk.id}`,
+          classId: mk.classId,
+          className: `${mk.className} (HỌC BÙ)`,
+          teachingDate: dateStr,
+          sessionType: 'makeup',
+          teacherId: mk.teacherId,
+          teacherName: mk.teacherName,
+          teachingAssistantId: mk.assistantId,
+          teachingAssistantName: mk.assistantName,
+          scheduledTime: mk.time,
+          classroom: mk.classroom,
+          lessonProgress: mk.lessonProgress || 'Buổi học bù',
+          status: 'not_started',
+          locked: false,
+          completionPercentage: 0,
+          totalStudents: students.length,
+          completedStudents: 0,
+          studentReports: students,
+          createdBy: mk.createdBy,
+          createdAt: `${dateStr} 08:00`,
+          updatedBy: mk.createdBy,
+          updatedAt: `${dateStr} 08:00`
+        };
+        reports.push(newMakeupReport);
+      }
+    });
+
+    return reports;
+  };
+
+  const saveLessonReport = (
+    report: LessonReport
+  ): { success: boolean; report?: LessonReport; error?: string } => {
+    // 1. Permission & Locking Enforcement
+    const existing = (data.lessonReports || []).find(r => r.id === report.id);
+    if (existing?.locked && currentUser.role === 'teacher') {
+      return {
+        success: false,
+        error: 'BÁO CÁO ĐÃ KHÓA: Báo cáo này đã được Quản lý học thuật khóa sổ. Giáo viên không thể chỉnh sửa.'
+      };
+    }
+
+    if (currentUser.role === 'teacher') {
+      if (report.teacherId && currentUser.teacherId && report.teacherId !== currentUser.teacherId) {
+        return {
+          success: false,
+          error: 'Bạn chỉ có quyền nhập báo cáo cho lớp học do mình phụ trách.'
+        };
+      }
+    }
+
+    // 2. Calculate completion stats accurately
+    const completedStudents = report.studentReports.filter(s => {
+      const hasHw = Boolean(s.homeworkStatus && s.homeworkStatus.trim());
+      const hasPrev = Boolean(s.previousLessonStatus && s.previousLessonStatus.trim());
+      const hasComm = Boolean(s.comments && s.comments.trim());
+      return hasHw && hasPrev && hasComm;
+    }).length;
+
+    const totalStudents = report.studentReports.length;
+    const completionPercentage = totalStudents > 0 ? Math.round((completedStudents / totalStudents) * 100) : 0;
+    
+    // Status resolution
+    let status: LessonReport['status'] = report.status;
+    if (status !== 'submitted') {
+      if (completedStudents === totalStudents && totalStudents > 0) {
+        status = 'completed';
+      } else if (completedStudents > 0) {
+        status = 'in_progress';
+      } else {
+        status = 'not_started';
+      }
+    }
+
+    const updatedReport: LessonReport = {
+      ...report,
+      completedStudents,
+      totalStudents,
+      completionPercentage,
+      status,
+      updatedBy: currentUser.name,
+      updatedAt: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    };
+
+    // Update in storage
+    setData(prev => {
+      const idx = (prev.lessonReports || []).findIndex(r => r.id === updatedReport.id);
+      let nextReports: LessonReport[];
+      if (idx >= 0) {
+        nextReports = [...prev.lessonReports];
+        nextReports[idx] = updatedReport;
+      } else {
+        nextReports = [...(prev.lessonReports || []), updatedReport];
+      }
+
+      // Check if this report was marked incomplete and is now completed -> resolve incomplete record
+      let nextIncompletes = prev.incompleteReports || [];
+      if (updatedReport.status === 'completed' || updatedReport.completionPercentage === 100) {
+        nextIncompletes = nextIncompletes.map(inc => {
+          if (inc.reportId === updatedReport.id && inc.status === 'pending') {
+            return {
+              ...inc,
+              status: 'resolved' as const,
+              resolvedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+              resolvedBy: currentUser.name,
+              completionPercentage: 100,
+              incompleteStudentCount: 0
+            };
+          }
+          return inc;
+        });
+      }
+
+      return {
+        ...prev,
+        lessonReports: nextReports,
+        incompleteReports: nextIncompletes
+      };
+    });
+
+    addActivityLog('Lưu Báo cáo tình hình học tập', `Đã lưu báo cáo lớp ${report.className} ngày ${report.teachingDate} (${completedStudents}/${totalStudents} học sinh hoàn thành)`);
+    return { success: true, report: updatedReport };
+  };
+
+  const submitLessonReport = (reportId: string): { success: boolean; error?: string } => {
+    const report = (data.lessonReports || []).find(r => r.id === reportId);
+    if (!report) return { success: false, error: 'Không tìm thấy báo cáo.' };
+
+    if (report.locked && currentUser.role === 'teacher') {
+      return { success: false, error: 'Báo cáo đã khóa, không thể nộp lại.' };
+    }
+
+    const updated: LessonReport = {
+      ...report,
+      status: 'submitted',
+      updatedBy: currentUser.name,
+      updatedAt: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    };
+
+    return saveLessonReport(updated);
+  };
+
+  const toggleReportLock = (reportId: string, lock: boolean): { success: boolean; error?: string } => {
+    if (currentUser.role === 'teacher') {
+      return { success: false, error: 'Chỉ Quản lý học thuật hoặc Admin mới có quyền khóa/mở khóa báo cáo.' };
+    }
+
+    let targetReport = (data.lessonReports || []).find(r => r.id === reportId);
+    if (!targetReport) {
+      // Find from date generation
+      return { success: false, error: 'Báo cáo chưa được khởi tạo. Vui lòng mở báo cáo và lưu lại trước khi khóa.' };
+    }
+
+    const nowStr = new Date().toISOString().slice(0, 16).replace('T', ' ');
+
+    const updatedReport: LessonReport = {
+      ...targetReport,
+      locked: lock,
+      lockedAt: lock ? nowStr : undefined,
+      lockedBy: lock ? currentUser.name : undefined,
+      updatedBy: currentUser.name,
+      updatedAt: nowStr
+    };
+
+    setData(prev => {
+      // 1. Update report lock status
+      const repIdx = prev.lessonReports.findIndex(r => r.id === reportId);
+      let nextReports = [...prev.lessonReports];
+      if (repIdx >= 0) {
+        nextReports[repIdx] = updatedReport;
+      } else {
+        nextReports.push(updatedReport);
+      }
+
+      // 2. CRITICAL FEATURE: AUTOMATIC INCOMPLETE REPORT TRACKING
+      let nextIncompletes = [...(prev.incompleteReports || [])];
+
+      if (lock) {
+        // If report is incomplete when locked, automatically generate permanent incomplete tracking record
+        const isIncomplete = updatedReport.completedStudents < updatedReport.totalStudents || updatedReport.status !== 'completed';
+        if (isIncomplete) {
+          const missingCount = updatedReport.totalStudents - updatedReport.completedStudents;
+          const missingStudents = updatedReport.studentReports
+            .filter(s => !s.completed)
+            .map(s => s.studentName)
+            .slice(0, 3)
+            .join(', ');
+          
+          const missingDesc = `${missingCount} học sinh chưa hoàn thành (${missingStudents}${missingCount > 3 ? '...' : ''})`;
+
+          // Avoid duplicate pending record for same report
+          const existingPendingIdx = nextIncompletes.findIndex(i => i.reportId === updatedReport.id && i.status === 'pending');
+          const incRecord: IncompleteReportRecord = {
+            id: `INC-${Date.now()}`,
+            teacherId: updatedReport.teacherId,
+            teacherName: updatedReport.teacherName,
+            classId: updatedReport.classId,
+            className: updatedReport.className,
+            teachingDate: updatedReport.teachingDate,
+            scheduledTime: updatedReport.scheduledTime,
+            reportId: updatedReport.id,
+            completionPercentage: updatedReport.completionPercentage,
+            incompleteStudentCount: missingCount,
+            missingFields: missingDesc,
+            lockedAt: nowStr,
+            lockedBy: currentUser.name,
+            status: 'pending'
+          };
+
+          if (existingPendingIdx >= 0) {
+            nextIncompletes[existingPendingIdx] = incRecord;
+          } else {
+            nextIncompletes.unshift(incRecord);
+          }
+        }
+      }
+
+      return {
+        ...prev,
+        lessonReports: nextReports,
+        incompleteReports: nextIncompletes
+      };
+    });
+
+    const actionText = lock ? 'Khóa sổ' : 'Mở khóa';
+    addActivityLog(`${actionText} Báo cáo học tập`, `Đã ${actionText.toLowerCase()} báo cáo lớp ${targetReport.className} ngày ${targetReport.teachingDate}`);
+    return { success: true };
+  };
+
+  const addMakeupClass = (
+    session: Omit<MakeupClassSession, 'id' | 'createdAt' | 'createdBy'>
+  ): { success: boolean; session?: MakeupClassSession; error?: string } => {
+    if (currentUser.role === 'teacher') {
+      return { success: false, error: 'Chỉ Quản lý học thuật hoặc Admin mới có quyền thêm lớp học bù.' };
+    }
+
+    const newMakeup: MakeupClassSession = {
+      ...session,
+      id: `MK-${Date.now()}`,
+      createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      createdBy: currentUser.name
+    };
+
+    setData(prev => ({
+      ...prev,
+      makeupSessions: [newMakeup, ...(prev.makeupSessions || [])]
+    }));
+
+    addActivityLog('Bổ sung lớp học bù', `Đã thêm lớp học bù cho ${session.className} ngày ${session.date} (${session.time})`);
+    return { success: true, session: newMakeup };
+  };
+
+  const deleteMakeupClass = (id: string): { success: boolean; error?: string } => {
+    if (currentUser.role === 'teacher') {
+      return { success: false, error: 'Chỉ Quản lý học thuật hoặc Admin mới có quyền xóa lớp học bù.' };
+    }
+
+    const target = (data.makeupSessions || []).find(m => m.id === id);
+    if (!target) return { success: false, error: 'Không tìm thấy lớp học bù.' };
+
+    setData(prev => ({
+      ...prev,
+      makeupSessions: (prev.makeupSessions || []).filter(m => m.id !== id),
+      lessonReports: (prev.lessonReports || []).filter(r => r.id !== `LR-MAKEUP-${id}`)
+    }));
+
+    addActivityLog('Xóa lớp học bù', `Đã xóa lớp học bù của ${target.className} ngày ${target.date}`);
+    return { success: true };
+  };
+
+  const resolveIncompleteReport = (reportId: string): void => {
+    setData(prev => ({
+      ...prev,
+      incompleteReports: (prev.incompleteReports || []).map(inc => {
+        if (inc.reportId === reportId && inc.status === 'pending') {
+          return {
+            ...inc,
+            status: 'resolved',
+            resolvedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+            resolvedBy: currentUser.name
+          };
+        }
+        return inc;
+      })
+    }));
+  };
+
+  // 13. Settings & Reset
   const updateSettings = (updates: Partial<CenterSettings>) => {
     setData(prev => ({
       ...prev,
@@ -1061,6 +1462,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveTeachingSchedule,
         deleteTeachingSchedule,
         copyScheduleContent,
+        getLessonReportsForDate,
+        saveLessonReport,
+        submitLessonReport,
+        toggleReportLock,
+        addMakeupClass,
+        deleteMakeupClass,
+        resolveIncompleteReport,
         updateSettings,
         resetAllData,
         addActivityLog
