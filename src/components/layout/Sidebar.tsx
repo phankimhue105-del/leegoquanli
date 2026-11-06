@@ -8,6 +8,7 @@ import {
   UserCheck,
   UserPlus,
   Calendar,
+  CalendarDays,
   ClipboardCheck,
   Award,
   FileText,
@@ -25,6 +26,7 @@ export type NavigationTab =
   | 'students'
   | 'parents'
   | 'classes'
+  | 'teaching_schedule'
   | 'programs'
   | 'teachers'
   | 'assistants'
@@ -91,11 +93,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       allowedRoles: ['admin', 'academic_manager', 'teacher'],
     },
     {
-      id: 'programs',
-      label: 'Chương trình học',
-      sublabel: 'Curriculum',
-      icon: BookMarked,
-      allowedRoles: ['admin', 'academic_manager'],
+      id: 'teaching_schedule',
+      label: 'Teaching Schedule',
+      sublabel: 'Lịch giảng dạy',
+      icon: CalendarDays,
+      allowedRoles: ['admin', 'academic_manager', 'teacher'],
     },
     {
       id: 'teachers',
