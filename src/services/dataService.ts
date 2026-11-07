@@ -32,7 +32,11 @@ import {
   TeachingSession,
   LessonReport,
   IncompleteReportRecord,
-  MakeupClassSession
+  MakeupClassSession,
+  CourseDurationRecord,
+  CourseHoliday,
+  CourseMakeupSession,
+  CourseDurationHistoryEntry
 } from '../types';
 import {
   initialStudents,
@@ -51,7 +55,11 @@ import {
   initialTeachingSchedules,
   initialLessonReports,
   initialIncompleteReports,
-  initialMakeupSessions
+  initialMakeupSessions,
+  initialCourseDurations,
+  initialCourseHolidays,
+  initialCourseMakeups,
+  initialCourseDurationHistory
 } from '../data/initialData';
 
 const STORAGE_KEY = 'leego_center_storage_v1';
@@ -74,6 +82,10 @@ export interface AppDataStore {
   lessonReports: LessonReport[];
   incompleteReports: IncompleteReportRecord[];
   makeupSessions: MakeupClassSession[];
+  courseDurations: CourseDurationRecord[];
+  courseHolidays: CourseHoliday[];
+  courseMakeups: CourseMakeupSession[];
+  courseDurationHistory: CourseDurationHistoryEntry[];
 }
 
 export function loadInitialStorage(): AppDataStore {
@@ -99,6 +111,10 @@ export function loadInitialStorage(): AppDataStore {
         lessonReports: parsed.lessonReports || initialLessonReports,
         incompleteReports: parsed.incompleteReports || initialIncompleteReports,
         makeupSessions: parsed.makeupSessions || initialMakeupSessions,
+        courseDurations: parsed.courseDurations || initialCourseDurations,
+        courseHolidays: parsed.courseHolidays || initialCourseHolidays,
+        courseMakeups: parsed.courseMakeups || initialCourseMakeups,
+        courseDurationHistory: parsed.courseDurationHistory || initialCourseDurationHistory,
       };
     }
   } catch (err) {
@@ -123,6 +139,10 @@ export function loadInitialStorage(): AppDataStore {
     lessonReports: initialLessonReports,
     incompleteReports: initialIncompleteReports,
     makeupSessions: initialMakeupSessions,
+    courseDurations: initialCourseDurations,
+    courseHolidays: initialCourseHolidays,
+    courseMakeups: initialCourseMakeups,
+    courseDurationHistory: initialCourseDurationHistory,
   };
 
   saveStorage(defaultData);
@@ -156,6 +176,10 @@ export function resetStorage(): AppDataStore {
     lessonReports: initialLessonReports,
     incompleteReports: initialIncompleteReports,
     makeupSessions: initialMakeupSessions,
+    courseDurations: initialCourseDurations,
+    courseHolidays: initialCourseHolidays,
+    courseMakeups: initialCourseMakeups,
+    courseDurationHistory: initialCourseDurationHistory,
   };
   saveStorage(defaultData);
   return defaultData;
@@ -770,4 +794,114 @@ export function exportLessonReportToExcel(report: LessonReport): void {
     workbook,
     `LeeGo_Bao_Cao_Hoc_Tap_${cleanClassName}_${report.teachingDate}.xlsx`
   );
+}
+
+
+/**
+ * Export Course Duration Management List to Excel (.xlsx)
+ */
+export function exportCourseDurationsToExcel(courses: CourseDurationRecord[]): void {
+  const titleRow = ['BÁO CÁO QUẢN LÝ THỜI GIAN KHÓA HỌC – LEEGO CENTER'];
+  const generatedRow = [`Thời điểm xuất báo cáo: ${new Date().toLocaleDateString('vi-VN')} ${new Date().toLocaleTimeString('vi-VN')}`];
+  const summaryRow = [`Tổng số khóa học theo dõi: ${courses.length}`];
+
+  const headerRow = [
+    'Mã khóa học',
+    'Tên khóa học',
+    'Lớp học',
+    'Giáo viên phụ trách',
+    'Giáo trình',
+    'Hình thức thời lượng',
+    'Thời lượng',
+    'Ngày bắt đầu',
+    'Ngày hoàn thành ban đầu',
+    'Ngày hoàn thành hiện tại',
+    'Chính sách gia hạn',
+    'Buổi yêu cầu',
+    'Buổi hoàn thành',
+    'Buổi còn lại',
+    'Tiến độ (%)',
+    'Trạng thái',
+    'Ghi chú & Giải thích tính toán'
+  ];
+
+  const durationModeLabels: Record<string, string> = {
+    months: 'Tháng lịch',
+    calendar_days: 'Ngày lịch',
+    learning_days: 'Ngày học thực tế',
+    learning_sessions: 'Số buổi học'
+  };
+
+  const statusLabels: Record<string, string> = {
+    not_started: 'Chưa khai giảng',
+    in_progress: 'Đang diễn ra',
+    near_completion: 'Sắp hoàn thành',
+    completed: 'Đã hoàn thành',
+    extended: 'Đã gia hạn',
+    on_hold: 'Tạm dừng'
+  };
+
+  const policyLabels: Record<string, string> = {
+    none: 'Không tự động kéo dài',
+    missed_scheduled_lessons: 'Gia hạn theo buổi nghỉ có phép',
+    scheduled_holidays: 'Gia hạn theo ngày nghỉ lễ trung tâm',
+    all_non_study_days: 'Gia hạn toàn bộ ngày không học',
+    custom: 'Chính sách tùy chỉnh'
+  };
+
+  const dataRows = courses.map(c => [
+    c.id,
+    c.courseName,
+    c.className || 'Chưa gán',
+    c.teacherName || 'Chưa gán',
+    c.courseBook || '',
+    durationModeLabels[c.durationMode] || c.durationMode,
+    c.durationValue,
+    c.courseStartDate,
+    c.originalExpectedCompletionDate,
+    c.currentExpectedCompletionDate,
+    policyLabels[c.extensionPolicy] || c.extensionPolicy,
+    c.requiredSessions,
+    c.completedSessions,
+    c.remainingSessions,
+    `${c.progressPercentage}%`,
+    statusLabels[c.status] || c.status,
+    c.notes ? `${c.notes} | ${c.calculationExplanation || ''}` : (c.calculationExplanation || '')
+  ]);
+
+  const aoa = [
+    titleRow,
+    generatedRow,
+    summaryRow,
+    [],
+    headerRow,
+    ...dataRows
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+
+  worksheet['!cols'] = [
+    { wch: 14 }, // Mã
+    { wch: 32 }, // Tên
+    { wch: 24 }, // Lớp
+    { wch: 22 }, // GV
+    { wch: 26 }, // Giáo trình
+    { wch: 18 }, // Hình thức
+    { wch: 12 }, // Thời lượng
+    { wch: 14 }, // Ngày bắt đầu
+    { wch: 18 }, // Ngày HT ban đầu
+    { wch: 18 }, // Ngày HT hiện tại
+    { wch: 26 }, // Chính sách
+    { wch: 12 }, // Yêu cầu
+    { wch: 14 }, // Hoàn thành
+    { wch: 12 }, // Còn lại
+    { wch: 12 }, // Tiến độ
+    { wch: 16 }, // Trạng thái
+    { wch: 45 }  // Ghi chú
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'ThoiGianKhoaHoc');
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(workbook, `LeeGo_Quan_Ly_Thoi_Gian_Khoa_Hoc_${dateStamp}.xlsx`);
 }
