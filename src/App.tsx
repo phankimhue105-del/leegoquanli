@@ -4,6 +4,7 @@ import { DataProvider } from './context/DataContext';
 import { ToastProvider } from './components/common/Toast';
 import { Sidebar, NavigationTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
+import { LoginPage } from './components/LoginPage';
 
 // Views
 import { DashboardView } from './components/views/DashboardView';
@@ -23,16 +24,20 @@ import { LessonPlansView } from './components/views/LessonPlansView';
 import { AcademicReportsView } from './components/views/AcademicReportsView';
 import { UserManagementView } from './components/views/UserManagementView';
 import { SettingsView } from './components/views/SettingsView';
-import { ShieldAlert } from 'lucide-react';
 
 const AppContent: React.FC = () => {
-  const { currentUser, hasPermission } = useAuth();
+  const { currentUser, isAuthenticated, hasPermission } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
 
-  // Validate permission for currentTab
+  // 1. Unauthenticated gate: Display Login screen
+  if (!isAuthenticated || !currentUser) {
+    return <LoginPage />;
+  }
+
+  // 2. Validate permission for currentTab
   const role = currentUser.role;
 
   const isTabAllowed = (tab: NavigationTab): boolean => {
