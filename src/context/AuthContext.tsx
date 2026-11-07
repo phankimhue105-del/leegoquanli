@@ -1,43 +1,38 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { initialUsers } from '../data/initialData';
+import {
+  getStoredUserSession,
+  saveUserSession,
+  clearUserSession
+} from '../services/authService';
 
 interface AuthContextType {
-  currentUser: User;
+  currentUser: User | null;
+  isAuthenticated: boolean;
   switchUser: (userId: string) => void;
   switchRoleQuick: (role: UserRole) => void;
   hasPermission: (permission: string) => boolean;
   canAccessClass: (classId: string, assignedClassIds?: string[]) => boolean;
   canAccessTeacher: (teacherId: string) => boolean;
   logout: () => void;
-  loginAs: (user: User) => void;
+  loginAs: (user: User, rememberMe?: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const AUTH_USER_KEY = 'leego_auth_user_v1';
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    try {
-      const stored = localStorage.getItem(AUTH_USER_KEY);
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    // Default to Admin
-    return initialUsers[0];
+  // Initialize user from stored session
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    return getStoredUserSession();
   });
 
-  useEffect(() => {
-    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(currentUser));
-  }, [currentUser]);
+  const isAuthenticated = currentUser !== null;
 
   const switchUser = (userId: string) => {
     const user = initialUsers.find(u => u.id === userId);
     if (user) {
+      saveUserSession(user, true);
       setCurrentUser(user);
     }
   };
@@ -45,23 +40,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const switchRoleQuick = (role: UserRole) => {
     const targetUser = initialUsers.find(u => u.role === role);
     if (targetUser) {
+      saveUserSession(targetUser, true);
       setCurrentUser(targetUser);
     }
   };
 
-  const loginAs = (user: User) => {
+  const loginAs = (user: User, rememberMe: boolean = true) => {
+    saveUserSession(user, rememberMe);
     setCurrentUser(user);
   };
 
   const logout = () => {
-    // Revert to demo admin for preview usability
-    setCurrentUser(initialUsers[0]);
+    clearUserSession();
+    setCurrentUser(null);
   };
 
   /**
-   * RBAC Permission Matrix
+   * RBAC Permission Matrix & Backend Assigned Permissions
    */
   const hasPermission = (permission: string): boolean => {
+    if (!currentUser) {
+      return false;
+    }
+
+    // Explicit custom permissions from backend take precedence
+    if (currentUser.permissions && currentUser.permissions.length > 0) {
+      if (currentUser.permissions.includes(permission) || currentUser.permissions.includes('*')) {
+        return true;
+      }
+    }
+
     const role = currentUser.role;
 
     if (role === 'admin') {
@@ -151,10 +159,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccessClass = (classId: string, assignedClassIds?: string[]): boolean => {
+    if (!currentUser) return false;
+
     if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
       return true;
     }
+
     if (currentUser.role === 'teacher') {
+      // Check user-level assignedClasses first if provided from backend
+      if (currentUser.assignedClasses && currentUser.assignedClasses.includes(classId)) {
+        return true;
+      }
       if (!assignedClassIds) return false;
       return assignedClassIds.includes(classId);
     }
@@ -162,6 +177,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccessTeacher = (teacherId: string): boolean => {
+    if (!currentUser) return false;
+
     if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
       return true;
     }
@@ -175,6 +192,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         currentUser,
+        isAuthenticated,
         switchUser,
         switchRoleQuick,
         hasPermission,
