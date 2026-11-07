@@ -3,6 +3,7 @@ export type UserRole = 'admin' | 'academic_manager' | 'teacher';
 export interface User {
   id: string;
   name: string;
+  username?: string;
   email: string;
   role: UserRole;
   avatar?: string;
@@ -11,6 +12,8 @@ export interface User {
   status: 'active' | 'inactive';
   lastLogin?: string;
   createdAt: string;
+  permissions?: string[];
+  assignedClasses?: string[];
 }
 
 export type StudentStatus = 'studying' | 'reserved' | 'graduated' | 'dropped';
