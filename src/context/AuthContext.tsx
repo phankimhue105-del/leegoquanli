@@ -106,6 +106,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'lesson_report.export',
         'lesson_report.view_incomplete',
         'lesson_report.manage_makeup',
+        // Course Duration Permissions
+        'course_duration.view',
+        'course_duration.create',
+        'course_duration.edit',
+        'course_duration.delete',
+        'course_duration.manage_holidays',
+        'course_duration.manage_makeup',
+        'course_duration.recalculate',
+        'course_duration.view_history',
+        'course_duration.export',
       ];
       return allowedPermissions.includes(permission);
     }
@@ -130,6 +140,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'lesson_report.create',
         'lesson_report.edit',
         'lesson_report.submit',
+        // Teacher course duration view permission
+        'course_duration.view',
+        'course_duration.export',
       ];
       return teacherAllowed.includes(permission);
     }
