@@ -7,10 +7,9 @@ import {
   Loader2,
   AlertCircle,
   ShieldCheck,
-  ExternalLink,
-  Info
+  CheckCircle2
 } from 'lucide-react';
-import { loginWithCredentials, getAuthApiUrl } from '../services/authService';
+import { loginWithCredentials } from '../services/authService';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from './common/Toast';
 
@@ -24,9 +23,6 @@ export const LoginPage: React.FC = () => {
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const apiUrl = getAuthApiUrl();
-  const isApiConfigured = Boolean(apiUrl);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +43,7 @@ export const LoginPage: React.FC = () => {
     setIsLoading(true);
 
     try {
+      // Preserve exact password casing and special characters
       const response = await loginWithCredentials(trimmedUser, password, rememberMe);
 
       if (response.success && response.user) {
@@ -56,7 +53,7 @@ export const LoginPage: React.FC = () => {
         setErrorMessage(response.error || 'Tên đăng nhập hoặc mật khẩu không chính xác.');
       }
     } catch (err: any) {
-      setErrorMessage('Không thể kết nối máy chủ. Vui lòng thử lại sau.');
+      setErrorMessage('Không thể kết nối máy chủ xác thực. Vui lòng thử lại sau.');
     } finally {
       setIsLoading(false);
     }
@@ -108,20 +105,6 @@ export const LoginPage: React.FC = () => {
             <div className="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
               <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
               <div className="flex-1 leading-relaxed">{errorMessage}</div>
-            </div>
-          )}
-
-          {/* Configuration Notice if VITE_AUTH_API_URL is missing */}
-          {!isApiConfigured && (
-            <div className="mb-5 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs space-y-1.5">
-              <div className="font-semibold flex items-center gap-1.5 text-amber-900">
-                <Info className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>Thông báo chuẩn bị máy chủ xác thực:</span>
-              </div>
-              <p className="text-[11px] leading-relaxed text-amber-700">
-                Biến môi trường <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[10px]">VITE_AUTH_API_URL</code> chưa được cấu hình.
-                Khi triển khai Google Apps Script Web App, hãy cập nhật URL vào file <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[10px]">.env</code> hoặc cấu hình trên Vercel.
-              </p>
             </div>
           )}
 
