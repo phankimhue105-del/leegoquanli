@@ -366,3 +366,116 @@ export interface MakeupClassSession {
   createdAt: string;
   createdBy: string;
 }
+
+// ==========================================
+// COURSE DURATION MANAGER TYPES
+// ==========================================
+
+export type DurationMode =
+  | 'months'
+  | 'calendar_days'
+  | 'learning_days'
+  | 'learning_sessions';
+
+export type CourseStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'near_completion'
+  | 'completed'
+  | 'extended'
+  | 'on_hold';
+
+export type HolidayType =
+  | 'tet'
+  | 'national'
+  | 'center'
+  | 'suspension'
+  | 'teacher_absence'
+  | 'other';
+
+export type ExtensionPolicy =
+  | 'none'
+  | 'missed_scheduled_lessons'
+  | 'scheduled_holidays'
+  | 'all_non_study_days'
+  | 'custom';
+
+export interface CourseHoliday {
+  id: string;
+  holidayName: string;
+  startDate: string; // "YYYY-MM-DD"
+  endDate: string; // "YYYY-MM-DD"
+  holidayType: HolidayType;
+  reason?: string;
+  affectsScheduledLessons: boolean;
+  notes?: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
+export interface CourseMakeupSession {
+  id: string;
+  classId: string;
+  className?: string;
+  courseDurationId?: string;
+  originalMissedDate?: string; // "YYYY-MM-DD" (optional link to missed session)
+  makeupDate: string; // "YYYY-MM-DD"
+  time?: string; // "09:00 - 10:30"
+  classroom?: string;
+  teacherId?: string;
+  teacherName?: string;
+  reason?: string;
+  notes?: string;
+  countsTowardCourseProgress: boolean; // default true
+  status: 'scheduled' | 'completed' | 'cancelled';
+  createdAt?: string;
+  createdBy?: string;
+}
+
+export interface CourseDurationHistoryEntry {
+  id: string;
+  courseDurationId: string;
+  originalStartDate: string;
+  previousExpectedCompletionDate: string;
+  newExpectedCompletionDate: string;
+  reason: string;
+  changedBy: string;
+  changedAt: string;
+}
+
+export interface CourseDurationRecord {
+  id: string; // e.g. "CD-MOV-01"
+  courseName: string; // e.g. "Cambridge Movers"
+  classId?: string; // e.g. "CLS-MOV-01"
+  className?: string; // e.g. "Movers 1"
+  courseBook?: string; // e.g. "Kid's Box 3"
+  teacherId?: string;
+  teacherName?: string;
+  academicProgramId?: string;
+  durationMode: DurationMode;
+  durationValue: number; // e.g. 6 (months), 90 (days), 72 (sessions)
+  courseStartDate: string; // "YYYY-MM-DD"
+  originalExpectedCompletionDate: string; // "YYYY-MM-DD"
+  currentExpectedCompletionDate: string; // "YYYY-MM-DD"
+  extensionPolicy: ExtensionPolicy;
+  requiredSessions: number;
+  completedSessions: number;
+  progressPercentage: number; // 0 - 100
+  remainingSessions: number;
+  calculationExplanation?: string;
+  notes?: string;
+  status: CourseStatus;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CourseCalculationResult {
+  expectedCompletionDate: string;
+  totalDaysSpan: number;
+  scheduledSessionsCount: number;
+  holidaysEncounteredCount: number;
+  makeupsCount: number;
+  explanation: string;
+  breakdownDates: { date: string; type: 'regular' | 'holiday_skipped' | 'makeup' | 'compensated_holiday'; note?: string }[];
+}
