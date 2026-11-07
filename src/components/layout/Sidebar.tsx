@@ -19,7 +19,8 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  LogOut
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -55,8 +56,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   collapsed,
   onToggleCollapse,
 }) => {
-  const { currentUser } = useAuth();
-  const role = currentUser.role;
+  const { currentUser, logout } = useAuth();
+  const role = currentUser?.role || 'teacher';
 
   interface MenuItem {
     id: NavigationTab;
@@ -278,26 +279,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center gap-3 p-2 rounded-xl bg-slate-900/80 border border-slate-800">
           <div className="relative shrink-0">
             <img
-              src={currentUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
-              alt={currentUser.name}
+              src={currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
+              alt={currentUser?.name || 'User'}
               className="w-9 h-9 rounded-full object-cover border border-slate-700"
             />
             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-slate-900 rounded-full" />
           </div>
 
           {!collapsed && (
-            <div className="flex-1 truncate">
-              <div className="text-xs font-semibold text-white truncate flex items-center gap-1">
-                <span>{currentUser.name}</span>
+            <>
+              <div className="flex-1 truncate">
+                <div className="text-xs font-semibold text-white truncate flex items-center gap-1">
+                  <span>{currentUser?.name || 'Khách'}</span>
+                </div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wider font-mono">
+                  {role === 'admin'
+                    ? 'Ban Quản Trị'
+                    : role === 'academic_manager'
+                    ? 'Quản Lý Học Thuật'
+                    : 'Giáo Viên'}
+                </div>
               </div>
-              <div className="text-[10px] text-slate-400 uppercase tracking-wider font-mono">
-                {role === 'admin'
-                  ? 'Ban Quản Trị'
-                  : role === 'academic_manager'
-                  ? 'Quản Lý Học Thuật'
-                  : 'Giáo Viên'}
-              </div>
-            </div>
+              <button
+                onClick={() => logout()}
+                className="p-1.5 text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800 transition-colors"
+                title="Đăng xuất khỏi hệ thống"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </>
           )}
         </div>
       </div>
