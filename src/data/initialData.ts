@@ -16,7 +16,11 @@ import {
   TeachingSession,
   LessonReport,
   IncompleteReportRecord,
-  MakeupClassSession
+  MakeupClassSession,
+  CourseDurationRecord,
+  CourseHoliday,
+  CourseMakeupSession,
+  CourseDurationHistoryEntry
 } from '../types';
 
 export const initialUsers: User[] = [
@@ -2010,5 +2014,228 @@ export const initialMakeupSessions: MakeupClassSession[] = [
     notes: 'Lớp học bù cho buổi nghỉ lễ 02/09',
     createdAt: '2026-11-04 10:00',
     createdBy: 'Trần Học Thuật (Academic Manager)'
+  }
+];
+// ==========================================
+// COURSE DURATION MANAGER INITIAL DATA
+// ==========================================
+
+export const initialCourseHolidays: CourseHoliday[] = [
+  {
+    id: 'HOL-001',
+    holidayName: 'Tết Nguyên Đán 2027 (Đinh Mùi)',
+    startDate: '2027-02-05',
+    endDate: '2027-02-15',
+    holidayType: 'tet',
+    reason: 'Kỳ nghỉ Tết cổ truyền theo thông báo của Bộ LĐTBXH',
+    affectsScheduledLessons: true,
+    notes: 'Toàn bộ các lớp dừng học trong thời gian này. Hệ thống tự động tính ngày bù.',
+    createdAt: '2026-11-01 08:00',
+    createdBy: 'Trần Học Thuật (Academic Manager)'
+  },
+  {
+    id: 'HOL-002',
+    holidayName: 'Lễ Giáng Sinh & Hoạt Động Ngoại Khóa',
+    startDate: '2026-12-24',
+    endDate: '2026-12-25',
+    holidayType: 'center',
+    reason: 'Sự kiện Noel và hoạt động ngoại khóa tại trung tâm LeeGo',
+    affectsScheduledLessons: true,
+    notes: 'Các lớp học trong 2 ngày này được tạm hoãn',
+    createdAt: '2026-11-02 09:30',
+    createdBy: 'Trần Học Thuật (Academic Manager)'
+  },
+  {
+    id: 'HOL-003',
+    holidayName: 'Ngày Giải Phóng & Quốc Tế Lao Động',
+    startDate: '2027-04-30',
+    endDate: '2027-05-02',
+    holidayType: 'national',
+    reason: 'Nghỉ lễ 30/4 và 1/5 theo lịch quốc gia',
+    affectsScheduledLessons: true,
+    notes: 'Nghỉ 3 ngày lễ chính thức',
+    createdAt: '2026-11-01 08:00',
+    createdBy: 'Trần Học Thuật (Academic Manager)'
+  },
+  {
+    id: 'HOL-004',
+    holidayName: 'Bảo Trì Cơ Sở Vật Chất & Kỷ Niệm 20/11',
+    startDate: '2026-11-20',
+    endDate: '2026-11-20',
+    holidayType: 'center',
+    reason: 'Ngày Nhà giáo Việt Nam và nâng cấp trang thiết bị phòng Lab',
+    affectsScheduledLessons: true,
+    notes: 'Chỉ nghỉ các lớp học trong ngày 20/11',
+    createdAt: '2026-11-03 14:00',
+    createdBy: 'Trần Học Thuật (Academic Manager)'
+  }
+];
+
+export const initialCourseMakeups: CourseMakeupSession[] = [
+  {
+    id: 'MK-CD-001',
+    classId: 'CLS-FLY-01',
+    className: 'Step 5 (Flyers Challenger 01)',
+    courseDurationId: 'CD-FLY-01',
+    originalMissedDate: '2026-10-19',
+    makeupDate: '2026-10-25',
+    time: '09:00 - 10:30',
+    classroom: '101',
+    teacherId: 'TCH-003',
+    teacherName: 'Michael Chang',
+    reason: 'Bù buổi nghỉ do sự cố mất điện khu vực ngày 19/10',
+    notes: 'Đã hoàn thành 100% học viên tham dự',
+    countsTowardCourseProgress: true,
+    status: 'completed',
+    createdAt: '2026-10-20 09:00',
+    createdBy: 'Trần Học Thuật (Academic Manager)'
+  },
+  {
+    id: 'MK-CD-002',
+    classId: 'CLS-STA-01',
+    className: 'Star 1 (Starters Explorer 01)',
+    courseDurationId: 'CD-STA-01',
+    originalMissedDate: '2026-11-20',
+    makeupDate: '2026-11-22',
+    time: '18:00 - 19:30',
+    classroom: '1A',
+    teacherId: 'TCH-001',
+    teacherName: 'David Miller',
+    reason: 'Học bù buổi nghỉ ngày Nhà giáo Việt Nam 20/11',
+    notes: 'Xếp lịch vào Chủ Nhật để phụ huynh tiện đưa đón',
+    countsTowardCourseProgress: true,
+    status: 'scheduled',
+    createdAt: '2026-11-05 14:00',
+    createdBy: 'Trần Học Thuật (Academic Manager)'
+  }
+];
+
+export const initialCourseDurationHistory: CourseDurationHistoryEntry[] = [
+  {
+    id: 'HIST-CD-001',
+    courseDurationId: 'CD-MOV-01',
+    originalStartDate: '2026-12-01',
+    previousExpectedCompletionDate: '2027-06-01',
+    newExpectedCompletionDate: '2027-06-15',
+    reason: 'Tự động tính thêm 3 buổi bị ảnh hưởng bởi kỳ nghỉ Tết Nguyên Đán (áp dụng chính sách gia hạn ngày nghỉ lễ)',
+    changedBy: 'Trần Học Thuật (Academic Manager)',
+    changedAt: '2026-11-02 11:15'
+  },
+  {
+    id: 'HIST-CD-002',
+    courseDurationId: 'CD-FLY-01',
+    originalStartDate: '2026-10-01',
+    previousExpectedCompletionDate: '2027-03-15',
+    newExpectedCompletionDate: '2027-03-22',
+    reason: 'Điều chỉnh lịch hoàn thành sau khi chốt lịch thi chứng chỉ Cambridge Flyers',
+    changedBy: 'Trần Học Thuật (Academic Manager)',
+    changedAt: '2026-10-28 16:40'
+  }
+];
+
+export const initialCourseDurations: CourseDurationRecord[] = [
+  {
+    id: 'CD-MOV-01',
+    courseName: 'Cambridge Movers (Adventurer 01)',
+    classId: 'CLS-MOV-01',
+    className: 'Movers Adventurer 01',
+    courseBook: "Kid's Box 3 (Second Edition)",
+    teacherId: 'TCH-001',
+    teacherName: 'David Miller',
+    academicProgramId: 'PROG-002',
+    durationMode: 'months',
+    durationValue: 6,
+    courseStartDate: '2026-12-01',
+    originalExpectedCompletionDate: '2027-06-01',
+    currentExpectedCompletionDate: '2027-06-15',
+    extensionPolicy: 'scheduled_holidays',
+    requiredSessions: 72,
+    completedSessions: 36,
+    progressPercentage: 50,
+    remainingSessions: 36,
+    calculationExplanation: 'Tính theo lịch 6 tháng: 01/12/2026 + 6 tháng = 01/06/2027. Do áp dụng chính sách gia hạn theo ngày nghỉ lễ (Tết Nguyên Đán 3 buổi), ngày hoàn thành dự kiến chuyển sang 15/06/2027.',
+    notes: 'Lớp học theo lịch Thứ 3 & Thứ 5. Đã hoàn thành 50% thời lượng bài thi Movers.',
+    status: 'in_progress',
+    createdBy: 'Trần Học Thuật (Academic Manager)',
+    createdAt: '2026-11-01 09:00',
+    updatedAt: '2026-11-02 11:15'
+  },
+  {
+    id: 'CD-STA-01',
+    courseName: 'Cambridge Starters (Star 1)',
+    classId: 'CLS-STA-01',
+    className: 'Star 1 (Starters Explorer 01)',
+    courseBook: "Kid's Box 1 (Second Edition)",
+    teacherId: 'TCH-001',
+    teacherName: 'David Miller',
+    academicProgramId: 'PROG-001',
+    durationMode: 'learning_sessions',
+    durationValue: 36,
+    courseStartDate: '2026-09-01',
+    originalExpectedCompletionDate: '2026-12-15',
+    currentExpectedCompletionDate: '2026-12-17',
+    extensionPolicy: 'scheduled_holidays',
+    requiredSessions: 36,
+    completedSessions: 34,
+    progressPercentage: 94,
+    remainingSessions: 2,
+    calculationExplanation: 'Tổng 36 buổi học (Thứ 2, Thứ 5 lúc 19:30). Đã học 34 buổi, còn lại 2 buổi. Khóa học sắp kết thúc (< 30 ngày).',
+    notes: 'Lớp chuẩn bị thi lấy chứng chỉ Pre-A1 Starters của Cambridge.',
+    status: 'near_completion',
+    createdBy: 'Trần Học Thuật (Academic Manager)',
+    createdAt: '2026-09-01 08:30',
+    updatedAt: '2026-11-05 14:00'
+  },
+  {
+    id: 'CD-FLY-01',
+    courseName: 'Cambridge Flyers (Step 5)',
+    classId: 'CLS-FLY-01',
+    className: 'Step 5 (Flyers Challenger 01)',
+    courseBook: "Kid's Box 5 & Cambridge Flyers Practice Tests",
+    teacherId: 'TCH-003',
+    teacherName: 'Michael Chang',
+    academicProgramId: 'PROG-003',
+    durationMode: 'learning_days',
+    durationValue: 48,
+    courseStartDate: '2026-10-01',
+    originalExpectedCompletionDate: '2027-03-15',
+    currentExpectedCompletionDate: '2027-03-22',
+    extensionPolicy: 'all_non_study_days',
+    requiredSessions: 48,
+    completedSessions: 20,
+    progressPercentage: 42,
+    remainingSessions: 28,
+    calculationExplanation: 'Yêu cầu 48 ngày học thực tế (Thứ 2, Thứ 6 lúc 19:15). Đã học bù 1 buổi ngày 25/10/2026; dự kiến kết thúc ngày 22/03/2027.',
+    notes: 'Lớp nâng cao Flyers, chuẩn bị chuyển tiếp sang khung Cambridge KET (A2 Key).',
+    status: 'in_progress',
+    createdBy: 'Trần Học Thuật (Academic Manager)',
+    createdAt: '2026-10-01 08:00',
+    updatedAt: '2026-10-28 16:40'
+  },
+  {
+    id: 'CD-KET-01',
+    courseName: 'Cambridge KET Intensive',
+    classId: 'CLS-KET-01',
+    className: 'KET Intensive Mastery',
+    courseBook: 'Complete Key for Schools (B1 Preliminary Preparation)',
+    teacherId: 'TCH-002',
+    teacherName: 'Sarah Jenkins',
+    academicProgramId: 'PROG-004',
+    durationMode: 'months',
+    durationValue: 3,
+    courseStartDate: '2026-11-10',
+    originalExpectedCompletionDate: '2027-02-10',
+    currentExpectedCompletionDate: '2027-02-10',
+    extensionPolicy: 'none',
+    requiredSessions: 36,
+    completedSessions: 0,
+    progressPercentage: 0,
+    remainingSessions: 36,
+    calculationExplanation: 'Khóa học cấp tốc 3 tháng: 10/11/2026 đến 10/02/2027. Chính sách không kéo dài ngày kết thúc.',
+    notes: 'Lớp sắp khai giảng vào ngày 10/11/2026.',
+    status: 'not_started',
+    createdBy: 'Trần Học Thuật (Academic Manager)',
+    createdAt: '2026-11-04 15:30',
+    updatedAt: '2026-11-04 15:30'
   }
 ];
