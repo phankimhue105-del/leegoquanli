@@ -1,0 +1,154 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'admin' ||
+        request.auth.token.role == 'admin'
+      );
+    }
+
+    function isAcademicManager() {
+      return isAuthenticated() && (
+        getUserData().role == 'academic_manager' ||
+        request.auth.token.role == 'academic_manager'
+      );
+    }
+
+    function isTeacher() {
+      return isAuthenticated() && (
+        getUserData().role == 'teacher' ||
+        request.auth.token.role == 'teacher'
+      );
+    }
+
+    function isAssignedTeacher(teacherId) {
+      return isTeacher() && (
+        getUserData().teacherId == teacherId ||
+        request.auth.uid == teacherId
+      );
+    }
+
+    // ========================================================
+    // LESSON REPORTS COLLECTION (SECURITY & LOCKING RULES)
+    // ========================================================
+    match /lessonReports/{reportId} {
+      // 1. Read: Admin, Manager, or Assigned Teacher can read
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        isAcademicManager() ||
+        isAssignedTeacher(resource.data.teacherId)
+      );
+
+      // 2. Create: Admin or Academic Manager can create anytime; Assigned Teacher can create if open
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        isAcademicManager() ||
+        (isAssignedTeacher(request.resource.data.teacherId) && request.resource.data.locked == false)
+      );
+
+      // 3. Update: CRITICAL LOCKING ENFORCEMENT
+      // - If report is LOCKED: Teachers CANNOT edit or update!
+      // - Only Admin or Academic Manager can modify a locked report or toggle the `locked` field.
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        isAcademicManager() ||
+        (
+          resource.data.locked == false &&
+          request.resource.data.locked == false &&
+          isAssignedTeacher(resource.data.teacherId)
+        )
+      );
+
+      // 4. Delete: Only Admin or Academic Manager
+      allow delete: if isAuthenticated() && (isAdmin() || isAcademicManager());
+    }
+
+    // ========================================================
+    // INCOMPLETE LESSON REPORTS TRACKING (PERMANENT LOGS)
+    // ========================================================
+    match /incompleteReports/{recordId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAcademicManager());
+      allow create, update, delete: if isAuthenticated() && (isAdmin() || isAcademicManager());
+    }
+
+    // ========================================================
+    // MAKEUP SESSIONS
+    // ========================================================
+    match /makeupSessions/{sessionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (isAdmin() || isAcademicManager());
+    }
+
+    // ========================================================
+    // TEACHING SCHEDULES
+    // ========================================================
+    match /teachingSchedules/{scheduleId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (isAdmin() || isAcademicManager());
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // ========================================================
+    // COURSE DURATION MANAGER COLLECTIONS
+    // ========================================================
+    match /courseDurations/{courseId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        isAcademicManager() ||
+        isTeacher()
+      );
+      allow create, update, delete: if isAuthenticated() && (isAdmin() || isAcademicManager());
+    }
+
+    match /courseHolidays/{holidayId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (isAdmin() || isAcademicManager());
+    }
+
+    match /courseMakeups/{makeupId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (isAdmin() || isAcademicManager());
+    }
+
+    match /courseDurationHistory/{historyId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAcademicManager());
+      allow create: if isAuthenticated() && (isAdmin() || isAcademicManager());
+      allow update, delete: if false; // Immutable audit log
+    }
+
+    // ========================================================
+    // GENERAL APP COLLECTIONS
+    // ========================================================
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /classes/{classId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isAcademicManager();
+    }
+
+    match /students/{studentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isAcademicManager();
+    }
+
+    match /activityLogs/{logId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAcademicManager());
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable audit log
+    }
+  }
+}
