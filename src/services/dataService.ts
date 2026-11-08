@@ -66,12 +66,15 @@ import {
   initialPayrollAuditLogs
 } from '../data/initialPayrollData';
 
-// Re-export payroll Excel generators for easy access
+// Re-export payroll Excel generators & aggregations from payrollService
 export {
   exportStaffAttendanceToExcel,
   exportWorkRecordsToExcel,
   exportPayrollReportToExcel,
-  exportPaymentReportToExcel
+  exportPaymentReportToExcel,
+  aggregateAllWorkRecords,
+  formatVND,
+  formatNumber
 } from './payrollService';
 
 const STORAGE_KEY = 'leego_center_storage_v1';
@@ -210,7 +213,10 @@ export function resetStorage(): AppDataStore {
   return defaultData;
 }
 
-// Excel Export Functions
+// ==========================================
+// EXCEL & WORD EXPORT FUNCTIONS
+// ==========================================
+
 export function exportStudentsToExcel(students: Student[], classes: ClassItem[]): void {
   const classMap = new Map(classes.map(c => [c.id, c.name]));
   const exportData = students.map((s, idx) => ({
@@ -319,6 +325,288 @@ export function exportTeacherWorkloadToExcel(teachers: Teacher[], classes: Class
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Gio_day_Giao_vien');
   XLSX.writeFile(workbook, `LeeGo_Bao_Cao_Cong_Tac_Giao_Vien_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+/**
+ * 1. RESTORED: Export Course Durations / Class Schedules to Excel (.xlsx)
+ * Required by CourseDurationView.tsx
+ */
+export function exportCourseDurationsToExcel(
+  items: any[],
+  programs?: AcademicProgram[]
+): void {
+  const progMap = new Map((programs || []).map(p => [p.id, p]));
+  const rows = (items || []).map((item, idx) => {
+    const prog = progMap.get(item.courseId || item.programId);
+    const studentCount = Array.isArray(item.studentIds) ? item.studentIds.length : (item.studentCount || 0);
+
+    return {
+      'STT': idx + 1,
+      'Mã lớp': item.id || item.code || '',
+      'Tên lớp học': item.name || item.className || '',
+      'Trình độ / Level': item.level || prog?.level || '',
+      'Chương trình học': item.curriculum || prog?.curriculum || prog?.name || '',
+      'Giáo trình': item.textbook || prog?.textbook || '',
+      'Ngày bắt đầu': item.startDate || '',
+      'Ngày kết thúc': item.endDate || '',
+      'Tổng số buổi': item.totalLessons || prog?.totalLessons || item.duration || '48 buổi',
+      'Thời lượng mỗi buổi': item.durationMinutes ? `${item.durationMinutes} phút` : prog?.durationMinutes ? `${prog.durationMinutes} phút` : '90 phút',
+      'Số buổi / tuần': item.lessonsPerWeek || prog?.lessonsPerWeek || 2,
+      'Lịch học': `${item.scheduleDays || ''} (${item.scheduleTime || ''})`.trim(),
+      'Phòng học': item.classroom || '',
+      'Giáo viên phụ trách': item.teacherName || item.teacherId || '',
+      'Trợ giảng': item.assistantTeacherName || item.assistantTeacherId || '',
+      'Sĩ số hiện tại': studentCount,
+      'Sĩ số tối đa': item.maxCapacity || 15,
+      'Học phí': item.tuitionFee
+        ? new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(item.tuitionFee)
+        : (item.fee ? new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(item.fee) : 'Chưa thiết lập'),
+      'Trạng thái': item.status === 'ongoing'
+        ? 'Đang diễn ra'
+        : item.status === 'upcoming'
+        ? 'Sắp khai giảng'
+        : item.status === 'completed'
+        ? 'Đã kết thúc'
+        : item.status === 'cancelled'
+        ? 'Đã hủy'
+        : item.status || 'Đang học',
+      'Ghi chú': item.notes || ''
+    };
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 6 },  // STT
+    { wch: 14 }, // Mã lớp
+    { wch: 24 }, // Tên lớp
+    { wch: 18 }, // Level
+    { wch: 24 }, // Chương trình
+    { wch: 24 }, // Giáo trình
+    { wch: 14 }, // Ngày bắt đầu
+    { wch: 14 }, // Ngày kết thúc
+    { wch: 16 }, // Tổng số buổi
+    { wch: 20 }, // Thời lượng
+    { wch: 14 }, // Số buổi/tuần
+    { wch: 24 }, // Lịch học
+    { wch: 14 }, // Phòng học
+    { wch: 22 }, // Giáo viên
+    { wch: 20 }, // Trợ giảng
+    { wch: 14 }, // Sĩ số
+    { wch: 14 }, // Sĩ số max
+    { wch: 18 }, // Học phí
+    { wch: 16 }, // Trạng thái
+    { wch: 28 }, // Ghi chú
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Thoi_luong_khoa_hoc');
+  XLSX.writeFile(workbook, `LeeGo_Thoi_Luong_Khoa_Hoc_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+/**
+ * 2. RESTORED: Export Lesson Plan Reports to Excel (.xlsx)
+ * Required by LessonReportsView.tsx
+ */
+export function exportLessonReportToExcel(reports: any): void {
+  const list: LessonPlanReport[] = Array.isArray(reports) ? reports : [reports];
+  const rows = list.map((r, idx) => ({
+    'STT': idx + 1,
+    'Mã báo cáo': r.id || '',
+    'Mã lớp': r.classId || '',
+    'Tên lớp học': r.className || '',
+    'Giáo viên': r.teacherName || '',
+    'Ngày dạy': r.date || '',
+    'Bài số': r.lessonNumber || '',
+    'Giáo trình / Sách': r.textbook || '',
+    'Nội dung bài học': r.lessonContent || '',
+    'Mục tiêu bài học': r.learningObjectives || '',
+    'Hoạt động đã triển khai': r.activitiesCompleted || '',
+    'Bài tập về nhà': r.homeworkAssigned || '',
+    'Học sinh cần lưu ý': r.studentsAttention || '',
+    'Ghi chú của giáo viên': r.teachingNotes || '',
+    'Trạng thái': r.status === 'approved' ? 'Đã duyệt' : r.status === 'reviewed' ? 'Đã kiểm tra' : 'Đã nộp',
+    'Nhận xét của Quản lý': r.managerFeedback || '',
+    'Thời gian nộp': r.submittedAt || ''
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 6 },  // STT
+    { wch: 14 }, // Mã báo cáo
+    { wch: 14 }, // Mã lớp
+    { wch: 22 }, // Tên lớp
+    { wch: 20 }, // Giáo viên
+    { wch: 14 }, // Ngày dạy
+    { wch: 10 }, // Bài số
+    { wch: 26 }, // Giáo trình
+    { wch: 35 }, // Nội dung
+    { wch: 35 }, // Mục tiêu
+    { wch: 35 }, // Hoạt động
+    { wch: 30 }, // BTVN
+    { wch: 28 }, // Lưu ý
+    { wch: 28 }, // Ghi chú
+    { wch: 14 }, // Trạng thái
+    { wch: 30 }, // Nhận xét
+    { wch: 18 }  // Thời gian nộp
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Bao_cao_bai_giang');
+  XLSX.writeFile(workbook, `LeeGo_Bao_Cao_Bai_Giang_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+/**
+ * 3. RESTORED: Export Lesson Plan Report to Microsoft Word (.docx)
+ * Required by LessonReportsView.tsx
+ */
+export async function exportLessonReportToWord(report: any): Promise<void> {
+  const r: LessonPlanReport = Array.isArray(report) ? report[0] : report;
+  if (!r) return;
+
+  const borderSingle = {
+    top: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    bottom: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    left: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    right: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+  };
+
+  const createRow = (label: string, content: string) => {
+    const lines = (content || '').split('\n').filter(Boolean);
+    return new TableRow({
+      children: [
+        new TableCell({
+          width: { size: 28, type: WidthType.PERCENTAGE },
+          borders: borderSingle,
+          verticalAlign: VerticalAlign.TOP,
+          shading: { fill: 'F3F4F6', type: ShadingType.CLEAR },
+          children: [
+            new Paragraph({
+              spacing: { before: 40, after: 40 },
+              children: [
+                new TextRun({
+                  text: label,
+                  font: 'Times New Roman',
+                  bold: true,
+                  size: 20, // 10pt
+                  color: '1E293B',
+                }),
+              ],
+            }),
+          ],
+        }),
+        new TableCell({
+          width: { size: 72, type: WidthType.PERCENTAGE },
+          borders: borderSingle,
+          verticalAlign: VerticalAlign.TOP,
+          children: lines.length > 0
+            ? lines.map(
+                line =>
+                  new Paragraph({
+                    spacing: { before: 30, after: 30 },
+                    children: [
+                      new TextRun({
+                        text: line,
+                        font: 'Times New Roman',
+                        size: 20,
+                        color: '000000',
+                      }),
+                    ],
+                  })
+              )
+            : [
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: content || '—',
+                      font: 'Times New Roman',
+                      size: 20,
+                    }),
+                  ],
+                }),
+              ],
+        }),
+      ],
+    });
+  };
+
+  const table = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: borderSingle,
+    rows: [
+      createRow('Mã báo cáo / ID', r.id || 'N/A'),
+      createRow('Lớp học (Class)', `${r.className || ''} (${r.classId || ''})`),
+      createRow('Giáo viên (Teacher)', r.teacherName || '—'),
+      createRow('Ngày giảng dạy (Date)', r.date || '—'),
+      createRow('Buổi học số (Lesson No.)', `Lesson ${r.lessonNumber || 1}`),
+      createRow('Giáo trình (Textbook)', r.textbook || '—'),
+      createRow('Nội dung bài dạy (Content)', r.lessonContent || '—'),
+      createRow('Mục tiêu bài học (Objectives)', r.learningObjectives || '—'),
+      createRow('Hoạt động đã triển khai (Activities)', r.activitiesCompleted || '—'),
+      createRow('Bài tập về nhà (Homework)', r.homeworkAssigned || '—'),
+      createRow('Học sinh cần lưu ý (Attention)', r.studentsAttention || '—'),
+      createRow('Ghi chú giảng dạy (Teaching Notes)', r.teachingNotes || '—'),
+      createRow(
+        'Trạng thái phê duyệt (Status)',
+        r.status === 'approved' ? 'ĐÃ DUYỆT (Approved)' : r.status === 'reviewed' ? 'ĐÃ KIỂM TRA (Reviewed)' : 'ĐÃ NỘP (Submitted)'
+      ),
+      createRow('Nhận xét của Quản lý học thuật', r.managerFeedback || 'Chưa có nhận xét'),
+      createRow('Thời gian nộp báo cáo', r.submittedAt || '—'),
+    ],
+  });
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: { top: 720, bottom: 720, left: 720, right: 720 },
+          },
+        },
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 80, after: 60 },
+            children: [
+              new TextRun({
+                text: 'LEEGO ENGLISH CENTER',
+                font: 'Times New Roman',
+                size: 24,
+                bold: true,
+                color: '475569',
+              }),
+            ],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 40, after: 140 },
+            children: [
+              new TextRun({
+                text: 'BÁO CÁO BÀI GIẢNG / LESSON PLAN REPORT',
+                font: 'Times New Roman',
+                size: 32, // 16pt
+                bold: true,
+                color: 'C00000',
+              }),
+            ],
+          }),
+          table,
+        ],
+      },
+    ],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const cleanClassName = (r.className || 'Class').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filename = `Lesson_Report_${cleanClassName}_Lesson_${r.lessonNumber || 1}_${r.date || ''}.docx`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // Parse Excel file to students
