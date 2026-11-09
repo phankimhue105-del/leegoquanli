@@ -26,7 +26,22 @@ import {
   StaffPayrollAdjustment,
   StaffPayrollBatch,
   AttendancePeriodLock,
-  PayrollAuditLog
+  PayrollAuditLog,
+  // Course Duration & Lesson Report Types
+  CourseDurationRecord,
+  DurationMode,
+  CourseStatus,
+  ExtensionPolicy,
+  CourseHoliday,
+  CourseMakeupSession,
+  HolidayType,
+  CourseDurationHistory,
+  LessonReport,
+  StudentLessonReportEntry,
+  IncompleteReportRecord,
+  MakeupClassSession,
+  HomeworkStatus,
+  PreviousLessonStatus
 } from '../types';
 import { loadInitialStorage, saveStorage, resetStorage, AppDataStore } from '../services/dataService';
 import { buildPayrollBatch, calculateMonthlyWorkRecord } from '../services/payrollService';
@@ -38,6 +53,16 @@ export interface ScheduleConflictResult {
   roomConflict?: string;
   classConflict?: string;
   details: string[];
+}
+
+export interface CourseCalculationResult {
+  expectedCompletionDate: string;
+  totalDaysSpan: number;
+  explanation: string;
+  scheduledSessionsCount: number;
+  holidaysEncounteredCount: number;
+  makeupsCount: number;
+  breakdownDates: { date: string; type: string; note: string }[];
 }
 
 interface DataContextType {
@@ -124,14 +149,12 @@ interface DataContextType {
   // ==========================================
   // STAFF ATTENDANCE & PAYROLL V2 METHODS
   // ==========================================
-  // Staff Management
   addStaffMember: (staff: Omit<StaffMember, 'id'>) => StaffMember;
   updateStaffMember: (id: string, updates: Partial<StaffMember>) => void;
   deleteStaffMember: (id: string) => void;
   addStaffShift: (shift: Omit<WorkingShift, 'id'>) => WorkingShift;
   updateStaffShift: (id: string, updates: Partial<WorkingShift>) => void;
 
-  // Staff Attendance
   saveStaffAttendanceRecord: (record: Omit<StaffAttendanceRecord, 'id' | 'recordedBy' | 'recordedAt'> & { id?: string }) => { success: boolean; error?: string };
   saveBulkStaffAttendance: (date: string, shiftId: string, records: { staffId: string; status: StaffAttendanceStatus; workingSessions: number; workingHours: number; notes?: string }[]) => { success: boolean; count?: number; error?: string };
   deleteStaffAttendanceRecord: (id: string) => { success: boolean; error?: string };
@@ -139,12 +162,10 @@ interface DataContextType {
   unlockAttendancePeriod: (month: number, year: number, reason: string) => { success: boolean; error?: string };
   isAttendancePeriodLocked: (month: number, year: number) => boolean;
 
-  // Staff Pay Rates & Adjustments
   updateStaffPayRate: (staffId: string, rate: number, effectiveDate: string, notes?: string) => void;
   addStaffAdjustment: (adjustment: Omit<StaffPayrollAdjustment, 'id' | 'createdBy' | 'createdAt'>) => StaffPayrollAdjustment;
   deleteStaffAdjustment: (id: string) => { success: boolean; error?: string };
 
-  // Monthly Payroll Batches
   createPayrollBatch: (month: number, year: number) => { success: boolean; batch?: StaffPayrollBatch; error?: string };
   recalculatePayrollBatch: (batchId: string) => { success: boolean; batch?: StaffPayrollBatch; error?: string };
   reviewPayrollBatch: (batchId: string, notes?: string) => { success: boolean; error?: string };
@@ -152,6 +173,40 @@ interface DataContextType {
   payPayrollBatch: (batchId: string, paymentMethod: 'bank_transfer' | 'cash' | 'other', reference: string, notes?: string) => { success: boolean; error?: string };
   reopenPayrollBatch: (batchId: string, targetStatus: 'draft' | 'reviewed', reason: string) => { success: boolean; error?: string };
   addPayrollAuditLog: (action: PayrollAuditLog['action'], period: string, details: string, reason?: string, previousState?: string, newState?: string, batchId?: string) => void;
+
+  // ==========================================
+  // COURSE DURATION METHODS
+  // ==========================================
+  calculateCourseCompletionDate: (params: {
+    startDate: string;
+    durationMode: DurationMode;
+    durationValue: number;
+    classId?: string;
+    extensionPolicy?: ExtensionPolicy;
+  }) => CourseCalculationResult;
+  addCourseDuration: (course: Omit<CourseDurationRecord, 'id'>) => { success: boolean; course?: CourseDurationRecord; error?: string };
+  updateCourseDuration: (id: string, updates: Partial<CourseDurationRecord>, reason?: string) => { success: boolean; error?: string };
+  deleteCourseDuration: (id: string) => { success: boolean; error?: string };
+  recalculateCourseDates: (courseId: string, reason: string) => { success: boolean; updatedDate?: string; error?: string };
+  recalculateAllCourses: () => { success: boolean; updatedCount: number };
+  addCourseHoliday: (holiday: Omit<CourseHoliday, 'id'>) => CourseHoliday;
+  updateCourseHoliday: (id: string, updates: Partial<CourseHoliday>) => void;
+  deleteCourseHoliday: (id: string) => void;
+  addCourseMakeup: (makeup: Omit<CourseMakeupSession, 'id'>) => CourseMakeupSession;
+  updateCourseMakeup: (id: string, updates: Partial<CourseMakeupSession>) => void;
+  deleteCourseMakeup: (id: string) => void;
+  getCourseHistory: (courseId: string) => CourseDurationHistory[];
+
+  // ==========================================
+  // LESSON REPORT METHODS
+  // ==========================================
+  getLessonReportsForDate: (date: string) => LessonReport[];
+  saveLessonReport: (report: LessonReport) => { success: boolean; report?: LessonReport; error?: string };
+  submitLessonReport: (reportId: string) => { success: boolean; report?: LessonReport; error?: string };
+  toggleReportLock: (reportId: string, lock: boolean) => { success: boolean; error?: string };
+  addMakeupClass: (makeup: Omit<MakeupClassSession, 'id'>) => { success: boolean; makeup?: MakeupClassSession; error?: string };
+  deleteMakeupClass: (id: string) => { success: boolean; error?: string };
+  resolveIncompleteReport: (id: string) => { success: boolean; error?: string };
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -890,7 +945,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const newId = `${prefix}-${Date.now().toString().slice(-4)}`;
     const newStaff: StaffMember = { ...staffData, id: newId };
 
-    // Also auto-add base pay rate
     const newRate: StaffPayRate = {
       id: `RATE-${newId}`,
       staffId: newId,
@@ -978,7 +1032,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
 
-      // Mark records for this period as locked
       const updatedAtt = prev.staffAttendance.map(att => {
         const [rYear, rMonth] = att.date.split('-').map(Number);
         if (rYear === year && rMonth === month) {
@@ -1027,7 +1080,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      // Unlock attendance records
       const updatedAtt = prev.staffAttendance.map(att => {
         const [rYear, rMonth] = att.date.split('-').map(Number);
         if (rYear === year && rMonth === month) {
@@ -1158,7 +1210,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  // Staff Pay Rates & Adjustments
   const updateStaffPayRate = (staffId: string, rate: number, effectiveDate: string, notes?: string) => {
     const staff = data.staffList.find(s => s.id === staffId);
     if (!staff) return;
@@ -1187,7 +1238,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatedRates.push(rateObj);
       }
 
-      // Also update baseRate in staff member
       const updatedStaff = prev.staffList.map(s => (s.id === staffId ? { ...s, baseRate: rate } : s));
 
       return {
@@ -1247,7 +1297,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  // Payroll Batches (Draft -> Reviewed -> Approved -> Paid)
   const createPayrollBatch = (month: number, year: number) => {
     const existing = data.payrollBatches.find(b => b.month === month && b.year === year);
     if (existing) {
@@ -1298,7 +1347,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       data.staffPayRates,
       currentUser.name
     );
-    updated.status = existing.status; // keep current status (draft or reviewed)
+    updated.status = existing.status;
 
     setData(prev => ({
       ...prev,
@@ -1363,8 +1412,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const now = new Date().toLocaleString('vi-VN');
-
-    // Automatically lock attendance when approving payroll
     lockAttendancePeriod(existing.month, existing.year);
 
     setData(prev => ({
@@ -1490,6 +1537,543 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
+  // ==========================================
+  // COURSE DURATION ENGINE IMPLEMENTATION
+  // ==========================================
+
+  const calculateCourseCompletionDate = (params: {
+    startDate: string;
+    durationMode: DurationMode;
+    durationValue: number;
+    classId?: string;
+    extensionPolicy?: ExtensionPolicy;
+  }): CourseCalculationResult => {
+    const { startDate, durationMode, durationValue, classId, extensionPolicy = 'scheduled_holidays' } = params;
+
+    const start = new Date(startDate || new Date().toISOString().slice(0, 10));
+    start.setHours(0, 0, 0, 0);
+
+    const holidays = (data.courseHolidays || []).filter(h => h.affectsScheduledLessons);
+    const isHoliday = (d: Date) => {
+      const iso = d.toISOString().slice(0, 10);
+      return holidays.some(h => iso >= h.startDate && iso <= h.endDate);
+    };
+
+    const targetClass = classId ? data.classes.find(c => c.id === classId) : null;
+    const timetables = classId ? data.timetable.filter(t => t.classId === classId) : [];
+    const scheduleDaysSet = new Set<number>();
+
+    if (timetables.length > 0) {
+      timetables.forEach(t => scheduleDaysSet.add(t.dayOfWeek));
+    } else if (targetClass?.scheduleDays) {
+      if (/thứ 2|thứ hai|t2|mon/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(1);
+      if (/thứ 3|thứ ba|t3|tue/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(2);
+      if (/thứ 4|thứ tư|t4|wed/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(3);
+      if (/thứ 5|thứ năm|t5|thu/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(4);
+      if (/thứ 6|thứ sáu|t6|fri/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(5);
+      if (/thứ 7|thứ bảy|t7|sat/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(6);
+      if (/chủ nhật|cn|sun/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(7);
+    }
+
+    // Default to Tue, Thu (2 sessions/week) if no specific class schedule found
+    if (scheduleDaysSet.size === 0) {
+      scheduleDaysSet.add(2);
+      scheduleDaysSet.add(4);
+    }
+
+    const isClassDay = (d: Date) => {
+      const jsDay = d.getDay();
+      const appDay = jsDay === 0 ? 7 : jsDay;
+      return scheduleDaysSet.has(appDay);
+    };
+
+    let currentDate = new Date(start);
+    let scheduledSessionsCount = 0;
+    let holidaysEncounteredCount = 0;
+    const breakdownDates: { date: string; type: string; note: string }[] = [];
+
+    if (durationMode === 'learning_sessions') {
+      const targetSessions = Number(durationValue) || 48;
+
+      while (scheduledSessionsCount < targetSessions) {
+        const iso = currentDate.toISOString().slice(0, 10);
+
+        if (isClassDay(currentDate)) {
+          if (extensionPolicy !== 'none' && isHoliday(currentDate)) {
+            holidaysEncounteredCount++;
+            breakdownDates.push({
+              date: iso,
+              type: 'holiday_skipped',
+              note: 'Trùng ngày nghỉ lễ (Buổi học được tự động gia hạn bù)'
+            });
+          } else {
+            scheduledSessionsCount++;
+            breakdownDates.push({
+              date: iso,
+              type: 'regular',
+              note: `Buổi học số ${scheduledSessionsCount}`
+            });
+          }
+        }
+
+        if (scheduledSessionsCount < targetSessions) {
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+      }
+    } else if (durationMode === 'months') {
+      const targetMonths = Number(durationValue) || 6;
+      currentDate.setMonth(currentDate.getMonth() + targetMonths);
+
+      // Check holidays encountered during this month span
+      let checkDate = new Date(start);
+      while (checkDate <= currentDate) {
+        if (isClassDay(checkDate)) {
+          if (isHoliday(checkDate)) {
+            holidaysEncounteredCount++;
+            breakdownDates.push({
+              date: checkDate.toISOString().slice(0, 10),
+              type: 'holiday_skipped',
+              note: 'Nghỉ lễ trong kỳ học'
+            });
+          } else {
+            scheduledSessionsCount++;
+          }
+        }
+        checkDate.setDate(checkDate.getDate() + 1);
+      }
+
+      // Extension policy by holiday days
+      if (extensionPolicy === 'scheduled_holidays' && holidaysEncounteredCount > 0) {
+        const addedDays = Math.ceil(holidaysEncounteredCount * 3.5);
+        currentDate.setDate(currentDate.getDate() + addedDays);
+      }
+    } else {
+      const targetDays = Number(durationValue) || 60;
+      currentDate.setDate(currentDate.getDate() + targetDays);
+      scheduledSessionsCount = Math.round(targetDays / 3.5);
+    }
+
+    const expectedDateStr = currentDate.toISOString().slice(0, 10);
+    const totalDaysSpan = Math.max(1, Math.round((currentDate.getTime() - start.getTime()) / (1000 * 3600 * 24)));
+
+    const makeupsForClass = classId
+      ? (data.courseMakeups || []).filter(m => m.classId === classId && m.status === 'completed').length
+      : 0;
+
+    const explanation = `Khóa học bắt đầu từ ${startDate.split('-').reverse().join('/')}, kéo dài ${durationValue} ${
+      durationMode === 'months' ? 'tháng lịch' : durationMode === 'learning_sessions' ? 'buổi học thực tế' : 'ngày'
+    }. Dự kiến hoàn thành ngày ${expectedDateStr.split('-').reverse().join('/')} (tổng ${totalDaysSpan} ngày lịch, ${scheduledSessionsCount} buổi học đạt chuẩn${
+      holidaysEncounteredCount > 0 ? `, đã tính bù ${holidaysEncounteredCount} buổi nghỉ lễ` : ''
+    }).`;
+
+    return {
+      expectedCompletionDate: expectedDateStr,
+      totalDaysSpan,
+      explanation,
+      scheduledSessionsCount,
+      holidaysEncounteredCount,
+      makeupsCount: makeupsForClass,
+      breakdownDates
+    };
+  };
+
+  const addCourseDuration = (courseData: Omit<CourseDurationRecord, 'id'>) => {
+    const newId = `CD-${Date.now().toString().slice(-6)}`;
+    const newCourse: CourseDurationRecord = {
+      ...courseData,
+      id: newId,
+      remainingSessions: Math.max(0, courseData.requiredSessions - courseData.completedSessions)
+    };
+
+    setData(prev => ({
+      ...prev,
+      courseDurations: [newCourse, ...(prev.courseDurations || [])]
+    }));
+
+    addActivityLog('Thêm khóa học', `Tạo theo dõi thời gian khóa học ${newCourse.courseName}`);
+    return { success: true, course: newCourse };
+  };
+
+  const updateCourseDuration = (id: string, updates: Partial<CourseDurationRecord>, reason?: string) => {
+    const existing = (data.courseDurations || []).find(c => c.id === id);
+    if (!existing) return { success: false, error: 'Không tìm thấy khóa học!' };
+
+    const updated = {
+      ...existing,
+      ...updates,
+      remainingSessions: updates.requiredSessions !== undefined && updates.completedSessions !== undefined
+        ? Math.max(0, updates.requiredSessions - updates.completedSessions)
+        : existing.remainingSessions
+    };
+
+    // Record audit trail if expected date changed
+    const historyEntries: CourseDurationHistory[] = [];
+    if (updates.currentExpectedCompletionDate && updates.currentExpectedCompletionDate !== existing.currentExpectedCompletionDate) {
+      historyEntries.push({
+        id: `HIST-${Date.now()}`,
+        courseDurationId: id,
+        previousExpectedCompletionDate: existing.currentExpectedCompletionDate,
+        newExpectedCompletionDate: updates.currentExpectedCompletionDate,
+        reason: reason || 'Cập nhật lại ngày hoàn thành khóa học',
+        changedBy: currentUser.name,
+        changedAt: new Date().toLocaleString('vi-VN')
+      });
+    }
+
+    setData(prev => ({
+      ...prev,
+      courseDurations: (prev.courseDurations || []).map(c => (c.id === id ? updated : c)),
+      courseDurationHistory: [...historyEntries, ...(prev.courseDurationHistory || [])]
+    }));
+
+    addActivityLog('Cập nhật khóa học', `Cập nhật thông số khóa học ${existing.courseName}`);
+    return { success: true };
+  };
+
+  const deleteCourseDuration = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      courseDurations: (prev.courseDurations || []).filter(c => c.id !== id),
+      courseDurationHistory: (prev.courseDurationHistory || []).filter(h => h.courseDurationId !== id)
+    }));
+    addActivityLog('Xóa khóa học', `Đã xóa bản ghi thời gian khóa học ${id}`);
+    return { success: true };
+  };
+
+  const recalculateCourseDates = (courseId: string, reason: string) => {
+    const course = (data.courseDurations || []).find(c => c.id === courseId);
+    if (!course) return { success: false, error: 'Không tìm thấy khóa học!' };
+
+    const calc = calculateCourseCompletionDate({
+      startDate: course.courseStartDate,
+      durationMode: course.durationMode,
+      durationValue: course.durationValue,
+      classId: course.classId,
+      extensionPolicy: course.extensionPolicy
+    });
+
+    updateCourseDuration(
+      courseId,
+      {
+        currentExpectedCompletionDate: calc.expectedCompletionDate,
+        calculationExplanation: calc.explanation
+      },
+      reason
+    );
+
+    return { success: true, updatedDate: calc.expectedCompletionDate };
+  };
+
+  const recalculateAllCourses = () => {
+    let count = 0;
+    (data.courseDurations || []).forEach(course => {
+      if (course.status !== 'completed') {
+        recalculateCourseDates(course.id, 'Tự động tính toán lại đồng loạt toàn trung tâm');
+        count++;
+      }
+    });
+    return { success: true, updatedCount: count };
+  };
+
+  const addCourseHoliday = (holidayData: Omit<CourseHoliday, 'id'>) => {
+    const newId = `HOL-${Date.now().toString().slice(-4)}`;
+    const newHoliday: CourseHoliday = { ...holidayData, id: newId };
+    setData(prev => ({
+      ...prev,
+      courseHolidays: [...(prev.courseHolidays || []), newHoliday]
+    }));
+    addActivityLog('Thêm ngày nghỉ', `Thêm ngày nghỉ lễ: ${newHoliday.holidayName}`);
+    return newHoliday;
+  };
+
+  const updateCourseHoliday = (id: string, updates: Partial<CourseHoliday>) => {
+    setData(prev => ({
+      ...prev,
+      courseHolidays: (prev.courseHolidays || []).map(h => (h.id === id ? { ...h, ...updates } : h))
+    }));
+  };
+
+  const deleteCourseHoliday = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      courseHolidays: (prev.courseHolidays || []).filter(h => h.id !== id)
+    }));
+  };
+
+  const addCourseMakeup = (makeupData: Omit<CourseMakeupSession, 'id'>) => {
+    const newId = `MKP-${Date.now().toString().slice(-4)}`;
+    const newMakeup: CourseMakeupSession = { ...makeupData, id: newId };
+    setData(prev => ({
+      ...prev,
+      courseMakeups: [...(prev.courseMakeups || []), newMakeup]
+    }));
+    addActivityLog('Thêm học bù', `Thêm lịch học bù cho lớp ${newMakeup.className} ngày ${newMakeup.makeupDate}`);
+    return newMakeup;
+  };
+
+  const updateCourseMakeup = (id: string, updates: Partial<CourseMakeupSession>) => {
+    setData(prev => ({
+      ...prev,
+      courseMakeups: (prev.courseMakeups || []).map(m => (m.id === id ? { ...m, ...updates } : m))
+    }));
+  };
+
+  const deleteCourseMakeup = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      courseMakeups: (prev.courseMakeups || []).filter(m => m.id !== id)
+    }));
+  };
+
+  const getCourseHistory = (courseId: string): CourseDurationHistory[] => {
+    return (data.courseDurationHistory || []).filter(h => h.courseDurationId === courseId);
+  };
+
+  // ==========================================
+  // LESSON REPORT ENGINE IMPLEMENTATION
+  // ==========================================
+
+  const getLessonReportsForDate = (date: string): LessonReport[] => {
+    const storedReports = data.lessonReports || [];
+    const matched = storedReports.filter(r => r.teachingDate === date);
+
+    // Day of week mapping
+    const targetDt = new Date(date);
+    const jsDay = targetDt.getDay();
+    const appDay = jsDay === 0 ? 7 : jsDay;
+
+    // Scheduled timetable sessions for this day of week
+    const dayTimetables = data.timetable.filter(t => t.dayOfWeek === appDay);
+    const dayMakeups = (data.makeupSessions || []).filter(m => m.date === date);
+
+    const result: LessonReport[] = [...matched];
+    const existingClassIds = new Set(result.map(r => r.classId));
+
+    // Auto-populate reports for scheduled classes if not yet initialized
+    dayTimetables.forEach(tt => {
+      if (!existingClassIds.has(tt.classId)) {
+        const cls = data.classes.find(c => c.id === tt.classId);
+        const classStudents = (cls?.studentIds || []).map(sid => {
+          const stu = data.students.find(s => s.id === sid);
+          return {
+            studentId: sid,
+            studentName: stu?.fullName || 'Học sinh',
+            homeworkStatus: 'Đạt' as HomeworkStatus,
+            previousLessonStatus: 'Đạt' as PreviousLessonStatus,
+            comments: '',
+            assignedHomework: '',
+            notes: '',
+            completed: false
+          };
+        });
+
+        result.push({
+          id: `LR-${tt.classId}-${date}`,
+          classId: tt.classId,
+          className: tt.className,
+          teachingDate: date,
+          scheduledTime: `${tt.startTime} - ${tt.endTime}`,
+          classroom: tt.classroom,
+          teacherId: tt.teacherId,
+          teacherName: tt.teacherName,
+          teachingAssistantName: tt.assistantName || '',
+          lessonProgress: 'Unit 1 – Lesson 1',
+          sessionType: 'regular',
+          status: 'not_started',
+          totalStudents: classStudents.length,
+          completedStudents: 0,
+          completionPercentage: 0,
+          locked: false,
+          studentReports: classStudents
+        });
+      }
+    });
+
+    // Also populate makeups
+    dayMakeups.forEach(mk => {
+      const makeupReportId = `LR-MAKEUP-${mk.id}`;
+      if (!result.some(r => r.id === makeupReportId)) {
+        const cls = data.classes.find(c => c.id === mk.classId);
+        const classStudents = (cls?.studentIds || []).map(sid => {
+          const stu = data.students.find(s => s.id === sid);
+          return {
+            studentId: sid,
+            studentName: stu?.fullName || 'Học sinh',
+            homeworkStatus: 'Đạt' as HomeworkStatus,
+            previousLessonStatus: 'Đạt' as PreviousLessonStatus,
+            comments: '',
+            assignedHomework: '',
+            notes: '',
+            completed: false
+          };
+        });
+
+        result.push({
+          id: makeupReportId,
+          classId: mk.classId,
+          className: mk.className,
+          teachingDate: date,
+          scheduledTime: mk.time,
+          classroom: mk.classroom,
+          teacherId: mk.teacherId,
+          teacherName: mk.teacherName,
+          teachingAssistantName: mk.assistantName || '',
+          lessonProgress: mk.lessonProgress || 'Buổi học bù',
+          sessionType: 'makeup',
+          status: 'not_started',
+          totalStudents: classStudents.length,
+          completedStudents: 0,
+          completionPercentage: 0,
+          locked: false,
+          studentReports: classStudents
+        });
+      }
+    });
+
+    return result;
+  };
+
+  const saveLessonReport = (report: LessonReport) => {
+    const students = report.studentReports || [];
+    const completedCount = students.filter(s => s.comments && s.comments.trim().length > 0).length;
+    const totalCount = students.length;
+    const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+    let nextStatus: LessonReport['status'] = report.status;
+    if (pct === 100) {
+      nextStatus = 'completed';
+    } else if (completedCount > 0) {
+      nextStatus = 'in_progress';
+    }
+
+    const updatedReport: LessonReport = {
+      ...report,
+      completedStudents: completedCount,
+      totalStudents: totalCount,
+      completionPercentage: pct,
+      status: nextStatus
+    };
+
+    setData(prev => {
+      const list = [...(prev.lessonReports || [])];
+      const idx = list.findIndex(r => r.id === report.id);
+      if (idx >= 0) {
+        list[idx] = updatedReport;
+      } else {
+        list.push(updatedReport);
+      }
+
+      // Check if this resolves an incomplete report
+      const incomps = (prev.incompleteReports || []).map(inc => {
+        if (inc.reportId === report.id && pct === 100) {
+          return { ...inc, status: 'resolved' as const, completionPercentage: 100, incompleteStudentCount: 0 };
+        }
+        return inc;
+      });
+
+      return {
+        ...prev,
+        lessonReports: list,
+        incompleteReports: incomps
+      };
+    });
+
+    addActivityLog('Lưu báo cáo bài học', `Lưu báo cáo buổi dạy lớp ${report.className} ngày ${report.teachingDate} (Tiến độ: ${pct}%)`);
+    return { success: true, report: updatedReport };
+  };
+
+  const submitLessonReport = (reportId: string) => {
+    const report = (data.lessonReports || []).find(r => r.id === reportId);
+    if (!report) return { success: false, error: 'Không tìm thấy báo cáo!' };
+
+    const updated = { ...report, status: 'submitted' as const };
+    saveLessonReport(updated);
+    addActivityLog('Nộp báo cáo bài học', `Giáo viên nộp báo cáo lớp ${report.className} ngày ${report.teachingDate}`);
+    return { success: true, report: updated };
+  };
+
+  const toggleReportLock = (reportId: string, lock: boolean) => {
+    const report = (data.lessonReports || []).find(r => r.id === reportId);
+    if (!report) return { success: false, error: 'Không tìm thấy báo cáo!' };
+
+    const now = new Date().toLocaleString('vi-VN');
+    const updated: LessonReport = {
+      ...report,
+      locked: lock,
+      lockedAt: lock ? now : undefined,
+      lockedBy: lock ? currentUser.name : undefined
+    };
+
+    setData(prev => {
+      const list = (prev.lessonReports || []).map(r => (r.id === reportId ? updated : r));
+      const incomps = [...(prev.incompleteReports || [])];
+
+      // If locked and incomplete, automatically create audit tracking record
+      if (lock && updated.completionPercentage < 100) {
+        const incompleteCount = updated.totalStudents - updated.completedStudents;
+        const exists = incomps.find(i => i.reportId === reportId);
+        if (!exists) {
+          incomps.push({
+            id: `INC-${Date.now()}`,
+            reportId,
+            teachingDate: updated.teachingDate,
+            classId: updated.classId,
+            className: updated.className,
+            teacherId: updated.teacherId,
+            teacherName: updated.teacherName,
+            completionPercentage: updated.completionPercentage,
+            incompleteStudentCount: incompleteCount,
+            missingFields: `Thiếu nhận xét của ${incompleteCount} học viên`,
+            lockedAt: now,
+            lockedBy: currentUser.name,
+            status: 'pending'
+          });
+        }
+      }
+
+      return {
+        ...prev,
+        lessonReports: list,
+        incompleteReports: incomps
+      };
+    });
+
+    addActivityLog('Khóa sổ báo cáo', `${lock ? 'Khóa sổ' : 'Mở khóa'} báo cáo lớp ${report.className} ngày ${report.teachingDate}`);
+    return { success: true };
+  };
+
+  const addMakeupClass = (makeupData: Omit<MakeupClassSession, 'id'>) => {
+    const newId = `MKP-CLS-${Date.now().toString().slice(-4)}`;
+    const newMakeup: MakeupClassSession = { ...makeupData, id: newId };
+
+    setData(prev => ({
+      ...prev,
+      makeupSessions: [...(prev.makeupSessions || []), newMakeup]
+    }));
+
+    addActivityLog('Thêm lớp học bù', `Bổ sung lịch học bù lớp ${newMakeup.className} ngày ${newMakeup.date}`);
+    return { success: true, makeup: newMakeup };
+  };
+
+  const deleteMakeupClass = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      makeupSessions: (prev.makeupSessions || []).filter(m => m.id !== id),
+      lessonReports: (prev.lessonReports || []).filter(r => r.id !== `LR-MAKEUP-${id}`)
+    }));
+    return { success: true };
+  };
+
+  const resolveIncompleteReport = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      incompleteReports: (prev.incompleteReports || []).map(inc =>
+        inc.id === id ? { ...inc, status: 'resolved' as const } : inc
+      )
+    }));
+    return { success: true };
+  };
+
   return (
     <DataContext.Provider
       value={{
@@ -1557,7 +2141,31 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         approvePayrollBatch,
         payPayrollBatch,
         reopenPayrollBatch,
-        addPayrollAuditLog
+        addPayrollAuditLog,
+
+        // Course Duration Engine
+        calculateCourseCompletionDate,
+        addCourseDuration,
+        updateCourseDuration,
+        deleteCourseDuration,
+        recalculateCourseDates,
+        recalculateAllCourses,
+        addCourseHoliday,
+        updateCourseHoliday,
+        deleteCourseHoliday,
+        addCourseMakeup,
+        updateCourseMakeup,
+        deleteCourseMakeup,
+        getCourseHistory,
+
+        // Lesson Report Engine
+        getLessonReportsForDate,
+        saveLessonReport,
+        submitLessonReport,
+        toggleReportLock,
+        addMakeupClass,
+        deleteMakeupClass,
+        resolveIncompleteReport
       }}
     >
       {children}
