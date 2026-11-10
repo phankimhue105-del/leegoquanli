@@ -52,6 +52,12 @@ export interface Parent {
 
 export type ClassStatus = 'upcoming' | 'ongoing' | 'completed' | 'cancelled';
 
+export interface ClassScheduleSlot {
+  dayOfWeek: number; // 1: Thứ 2, 2: Thứ 3, 3: Thứ 4, 4: Thứ 5, 5: Thứ 6, 6: Thứ 7, 7: Chủ Nhật
+  startTime: string; // "HH:mm", e.g., "17:30"
+  endTime: string; // "HH:mm", e.g., "19:00"
+}
+
 export interface ClassItem {
   id: string; // e.g. CLS-STA-01
   name: string;
@@ -63,7 +69,8 @@ export interface ClassItem {
   assistantTeacherId?: string;
   classroom: string;
   scheduleDays: string; // e.g., "Thứ 2, Thứ 4"
-  scheduleTime: string; // e.g., "17:30 - 19:00"
+  scheduleTime: string; // e.g., "17:30 - 19:00" or "T2: 17:30-19:00 | T6: 19:30-21:00"
+  weeklySchedule?: ClassScheduleSlot[];
   startDate: string;
   endDate: string;
   maxCapacity: number;
@@ -282,3 +289,4 @@ export interface MonthlyTeachingSchedule {
   updatedBy: string;
   updatedAt: string;
 }
+
