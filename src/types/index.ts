@@ -1,9 +1,13 @@
+# `src/types/index.ts` (Complete Modified File)
+
+```ts
 export type UserRole = 'admin' | 'academic_manager' | 'teacher';
 
 export interface User {
   id: string;
+  username?: string;
   name: string;
-  email: string;
+  email?: string;
   role: UserRole;
   avatar?: string;
   phone?: string;
@@ -167,16 +171,6 @@ export interface AttendanceRecord {
   takenBy: string;
 }
 
-export type AssessmentComponent =
-  | 'Listening'
-  | 'Speaking'
-  | 'Reading'
-  | 'Writing'
-  | 'Reading and Writing'
-  | 'Language Focus'
-  | 'Phonetics'
-  | 'Overall Score';
-
 export interface StudentScoreEntry {
   studentId: string;
   studentName: string;
@@ -187,7 +181,6 @@ export interface StudentScoreEntry {
   grammar: number;
   totalScore: number;
   shields?: number; // 1-5 shields for Cambridge Young Learners
-  componentScores?: Partial<Record<AssessmentComponent, number>>;
   teacherFeedback: string;
   status: 'excellent' | 'good' | 'pass' | 'needs_improvement';
 }
@@ -201,7 +194,6 @@ export interface AssessmentRecord {
   date: string;
   scaleType: '10-point' | 'cambridge-shields' | 'percentage';
   maxScore: number;
-  components?: AssessmentComponent[];
   scores: StudentScoreEntry[];
   evaluatedBy: string;
   reviewedBy?: string;
@@ -291,3 +283,4 @@ export interface MonthlyTeachingSchedule {
   updatedBy: string;
   updatedAt: string;
 }
+```
