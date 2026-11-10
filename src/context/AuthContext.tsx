@@ -1,75 +1,136 @@
+# `src/context/AuthContext.tsx` (Complete Modified File)
+
+```tsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, UserRole } from '../types';
+import { Teacher, User, UserRole } from '../types';
 import { initialUsers } from '../data/initialData';
-import {
-  getStoredUserSession,
-  saveUserSession,
-  clearUserSession
-} from '../services/authService';
+
+export interface AppsScriptAuthUser {
+  userId?: string;
+  id?: string;
+  username?: string;
+  fullName?: string;
+  name?: string;
+  email?: string;
+  role: string;
+  status?: string;
+  teacherId?: string;
+  phone?: string;
+  avatar?: string;
+  lastLogin?: string;
+  createdAt?: string;
+}
 
 interface AuthContextType {
-  currentUser: User | null;
-  isAuthenticated: boolean;
-  switchUser: (userId: string) => void;
+  currentUser: User;
+  switchUser: (userId: string, usersList?: User[]) => void;
   switchRoleQuick: (role: UserRole) => void;
   hasPermission: (permission: string) => boolean;
   canAccessClass: (classId: string, assignedClassIds?: string[]) => boolean;
   canAccessTeacher: (teacherId: string) => boolean;
+  resolveTeacherProfile: (teachers: Teacher[]) => Teacher | null;
   logout: () => void;
-  loginAs: (user: User, rememberMe?: boolean) => void;
+  loginAs: (user: User | AppsScriptAuthUser) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const AUTH_USER_KEY = 'leego_auth_user_v1';
+
+function normalizeUserRole(role: string | undefined): UserRole {
+  const normalized = String(role || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+
+  if (normalized === 'admin') return 'admin';
+  if (normalized === 'academic_manager') return 'academic_manager';
+  return 'teacher';
+}
+
+function sanitizeAuthUser(rawUser: User | AppsScriptAuthUser): User {
+  const role = normalizeUserRole(rawUser.role);
+  const teacherId = role === 'teacher' ? String(rawUser.teacherId || '').trim() || undefined : undefined;
+  const status = String(rawUser.status || 'active').trim().toLowerCase() === 'inactive' ? 'inactive' : 'active';
+
+  return {
+    id: String(rawUser.id || (rawUser as AppsScriptAuthUser).userId || '').trim() || initialUsers[0].id,
+    username: rawUser.username ? String(rawUser.username).trim() : undefined,
+    name: String(rawUser.name || (rawUser as AppsScriptAuthUser).fullName || rawUser.username || '').trim() || 'User',
+    ...(rawUser.email ? { email: String(rawUser.email).trim() } : {}),
+    role,
+    ...(rawUser.avatar ? { avatar: rawUser.avatar } : {}),
+    ...(rawUser.phone ? { phone: rawUser.phone } : {}),
+    ...(teacherId ? { teacherId } : {}),
+    status,
+    ...(rawUser.lastLogin ? { lastLogin: rawUser.lastLogin } : {}),
+    createdAt: rawUser.createdAt || new Date().toISOString().slice(0, 10)
+  };
+}
+
+export function findTeacherForUser(user: User, teachers: Teacher[]): Teacher | null {
+  if (!user || user.role !== 'teacher') return null;
+
+  const linkedTeacherId = String(user.teacherId || '').trim();
+  if (linkedTeacherId) {
+    return teachers.find(t => t.id === linkedTeacherId) || null;
+  }
+
+  // Legacy fallback only when email is explicitly present
+  const userEmail = String(user.email || '').trim().toLowerCase();
+  if (userEmail) {
+    return teachers.find(t => t.email && t.email.trim().toLowerCase() === userEmail) || null;
+  }
+
+  return null;
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Initialize user from stored session
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    return getStoredUserSession();
+  const [currentUser, setCurrentUser] = useState<User>(() => {
+    try {
+      const stored = localStorage.getItem(AUTH_USER_KEY);
+      if (stored) {
+        return sanitizeAuthUser(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    // Default to Admin
+    return initialUsers[0];
   });
 
-  const isAuthenticated = currentUser !== null;
+  useEffect(() => {
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(sanitizeAuthUser(currentUser)));
+  }, [currentUser]);
 
-  const switchUser = (userId: string) => {
-    const user = initialUsers.find(u => u.id === userId);
-    if (user) {
-      saveUserSession(user, true);
-      setCurrentUser(user);
+  const switchUser = (userId: string, usersList?: User[]) => {
+    const sourceUsers = usersList && usersList.length > 0 ? usersList : initialUsers;
+    const user = sourceUsers.find(u => u.id === userId) || initialUsers.find(u => u.id === userId);
+    if (user && user.status === 'active') {
+      setCurrentUser(sanitizeAuthUser(user));
     }
   };
 
   const switchRoleQuick = (role: UserRole) => {
     const targetUser = initialUsers.find(u => u.role === role);
     if (targetUser) {
-      saveUserSession(targetUser, true);
-      setCurrentUser(targetUser);
+      setCurrentUser(sanitizeAuthUser(targetUser));
     }
   };
 
-  const loginAs = (user: User, rememberMe: boolean = true) => {
-    saveUserSession(user, rememberMe);
-    setCurrentUser(user);
+  const loginAs = (user: User | AppsScriptAuthUser) => {
+    setCurrentUser(sanitizeAuthUser(user));
   };
 
   const logout = () => {
-    clearUserSession();
-    setCurrentUser(null);
+    // Revert to demo admin for preview usability
+    setCurrentUser(initialUsers[0]);
   };
 
   /**
-   * RBAC Permission Matrix & Backend Assigned Permissions
+   * RBAC Permission Matrix
    */
   const hasPermission = (permission: string): boolean => {
-    if (!currentUser) {
-      return false;
-    }
-
-    // Explicit custom permissions from backend take precedence
-    if (currentUser.permissions && currentUser.permissions.length > 0) {
-      if (currentUser.permissions.includes(permission) || currentUser.permissions.includes('*')) {
-        return true;
-      }
-    }
-
     const role = currentUser.role;
 
     if (role === 'admin') {
@@ -105,25 +166,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'teaching_schedule.create',
         'teaching_schedule.edit',
         'teaching_schedule.export',
-        'lesson_report.view',
-        'lesson_report.create',
-        'lesson_report.edit',
-        'lesson_report.submit',
-        'lesson_report.lock',
-        'lesson_report.unlock',
-        'lesson_report.export',
-        'lesson_report.view_incomplete',
-        'lesson_report.manage_makeup',
-        // Course Duration Permissions
-        'course_duration.view',
-        'course_duration.create',
-        'course_duration.edit',
-        'course_duration.delete',
-        'course_duration.manage_holidays',
-        'course_duration.manage_makeup',
-        'course_duration.recalculate',
-        'course_duration.view_history',
-        'course_duration.export',
       ];
       return allowedPermissions.includes(permission);
     }
@@ -144,13 +186,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'view_profile',
         'teaching_schedule.view',
         'teaching_schedule.export',
-        'lesson_report.view',
-        'lesson_report.create',
-        'lesson_report.edit',
-        'lesson_report.submit',
-        // Teacher course duration view permission
-        'course_duration.view',
-        'course_duration.export',
       ];
       return teacherAllowed.includes(permission);
     }
@@ -159,17 +194,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccessClass = (classId: string, assignedClassIds?: string[]): boolean => {
-    if (!currentUser) return false;
-
     if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
       return true;
     }
-
     if (currentUser.role === 'teacher') {
-      // Check user-level assignedClasses first if provided from backend
-      if (currentUser.assignedClasses && currentUser.assignedClasses.includes(classId)) {
-        return true;
-      }
       if (!assignedClassIds) return false;
       return assignedClassIds.includes(classId);
     }
@@ -177,27 +205,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccessTeacher = (teacherId: string): boolean => {
-    if (!currentUser) return false;
-
     if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
       return true;
     }
     if (currentUser.role === 'teacher') {
-      return currentUser.teacherId === teacherId;
+      return Boolean(currentUser.teacherId) && currentUser.teacherId === teacherId;
     }
     return false;
+  };
+
+  const resolveTeacherProfile = (teachers: Teacher[]): Teacher | null => {
+    return findTeacherForUser(currentUser, teachers);
   };
 
   return (
     <AuthContext.Provider
       value={{
         currentUser,
-        isAuthenticated,
         switchUser,
         switchRoleQuick,
         hasPermission,
         canAccessClass,
         canAccessTeacher,
+        resolveTeacherProfile,
         logout,
         loginAs
       }}
@@ -214,3 +244,4 @@ export const useAuth = () => {
   }
   return context;
 };
+```
