@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { ToastProvider } from './components/common/Toast';
@@ -26,14 +26,25 @@ import { UserManagementView } from './components/views/UserManagementView';
 import { SettingsView } from './components/views/SettingsView';
 
 const AppContent: React.FC = () => {
-  const { currentUser, isAuthenticated, hasPermission } = useAuth();
+  const { currentUser, isAuthenticated, isLoading } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
 
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setCurrentTab('dashboard');
+      setMobileSidebarOpen(false);
+    }
+  }, [isAuthenticated]);
+
+  if (isLoading) {
+    return null;
+  }
+
   // 1. Unauthenticated gate: Display Login screen
-  if (!isAuthenticated || !currentUser) {
+  if (!isAuthenticated || !currentUser || !currentUser.id) {
     return <LoginPage />;
   }
 
