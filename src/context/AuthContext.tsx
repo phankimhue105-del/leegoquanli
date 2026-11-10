@@ -1,6 +1,12 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import { Teacher, User, UserRole } from '../types';
 import { initialUsers } from '../data/initialData';
+import {
+  clearUserSession,
+  getStoredUserSession,
+  normalizeUserRole as normalizeAuthRole,
+  saveUserSession
+} from '../services/authService';
 
 export interface AppsScriptAuthUser {
   userId?: string;
@@ -12,6 +18,8 @@ export interface AppsScriptAuthUser {
   role: string;
   status?: string;
   teacherId?: string;
+  permissions?: string[];
+  assignedClasses?: string[];
   phone?: string;
   avatar?: string;
   lastLogin?: string;
@@ -20,6 +28,7 @@ export interface AppsScriptAuthUser {
 
 interface AuthContextType {
   currentUser: User;
+  isAuthenticated: boolean;
   switchUser: (userId: string, usersList?: User[]) => void;
   switchRoleQuick: (role: UserRole) => void;
   hasPermission: (permission: string) => boolean;
@@ -27,45 +36,48 @@ interface AuthContextType {
   canAccessTeacher: (teacherId: string) => boolean;
   resolveTeacherProfile: (teachers: Teacher[]) => Teacher | null;
   logout: () => void;
-  loginAs: (user: User | AppsScriptAuthUser) => void;
+  loginAs: (user: User | AppsScriptAuthUser, rememberMe?: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const AUTH_USER_KEY = 'leego_auth_user_v1';
+const REMEMBER_ME_KEY = 'leego_remember_me_v1';
 
-function normalizeUserRole(role: string | undefined): UserRole {
-  const normalized = String(role || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '_');
-
-  if (normalized === 'admin') return 'admin';
-  if (normalized === 'academic_manager') return 'academic_manager';
-  return 'teacher';
-}
+// Inactive placeholder used only to satisfy non-null User typing while unauthenticated;
+// App.tsx gates on !isAuthenticated and renders LoginPage whenever userState is null.
+const UNAUTHENTICATED_PLACEHOLDER: User = {
+  id: '',
+  name: '',
+  email: '',
+  role: 'teacher',
+  status: 'inactive',
+  createdAt: ''
+};
 
 function sanitizeAuthUser(rawUser: User | AppsScriptAuthUser): User {
-  const role = normalizeUserRole(rawUser.role);
+  const role = normalizeAuthRole(rawUser.role);
   const teacherId = role === 'teacher' ? String(rawUser.teacherId || '').trim() || undefined : undefined;
   const status = String(rawUser.status || 'active').trim().toLowerCase() === 'inactive' ? 'inactive' : 'active';
+  const id = String(rawUser.id || (rawUser as AppsScriptAuthUser).userId || '').trim();
 
   return {
-    id: String(rawUser.id || (rawUser as AppsScriptAuthUser).userId || '').trim() || initialUsers[0].id,
+    id: id || `USR-${Date.now()}`,
     username: rawUser.username ? String(rawUser.username).trim() : undefined,
     name: String(rawUser.name || (rawUser as AppsScriptAuthUser).fullName || rawUser.username || '').trim() || 'User',
-    ...(rawUser.email ? { email: String(rawUser.email).trim() } : {}),
+    email: rawUser.email ? String(rawUser.email).trim() : '',
     role,
     ...(rawUser.avatar ? { avatar: rawUser.avatar } : {}),
     ...(rawUser.phone ? { phone: rawUser.phone } : {}),
     ...(teacherId ? { teacherId } : {}),
+    ...(Array.isArray(rawUser.permissions) ? { permissions: rawUser.permissions } : {}),
+    ...(Array.isArray(rawUser.assignedClasses) ? { assignedClasses: rawUser.assignedClasses } : {}),
     status,
     ...(rawUser.lastLogin ? { lastLogin: rawUser.lastLogin } : {}),
     createdAt: rawUser.createdAt || new Date().toISOString().slice(0, 10)
   };
 }
 
-export function findTeacherForUser(user: User, teachers: Teacher[]): Teacher | null {
+export function findTeacherForUser(user: User | null, teachers: Teacher[]): Teacher | null {
   if (!user || user.role !== 'teacher') return null;
 
   const linkedTeacherId = String(user.teacherId || '').trim();
@@ -83,52 +95,66 @@ export function findTeacherForUser(user: User, teachers: Teacher[]): Teacher | n
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    try {
-      const stored = localStorage.getItem(AUTH_USER_KEY);
-      if (stored) {
-        return sanitizeAuthUser(JSON.parse(stored));
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    // Default to Admin
-    return initialUsers[0];
+  const [userState, setUserState] = useState<User | null>(() => {
+    const stored = getStoredUserSession();
+    if (!stored) return null;
+    const sanitized = sanitizeAuthUser(stored);
+    return sanitized.status === 'active' ? sanitized : null;
   });
 
-  useEffect(() => {
-    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(sanitizeAuthUser(currentUser)));
-  }, [currentUser]);
+  const isAuthenticated = Boolean(userState && userState.status === 'active');
+  const currentUser: User = userState || UNAUTHENTICATED_PLACEHOLDER;
+
+  const getRememberPreference = (): boolean => {
+    try {
+      return localStorage.getItem(REMEMBER_ME_KEY) === 'true';
+    } catch {
+      return true;
+    }
+  };
 
   const switchUser = (userId: string, usersList?: User[]) => {
     const sourceUsers = usersList && usersList.length > 0 ? usersList : initialUsers;
     const user = sourceUsers.find(u => u.id === userId) || initialUsers.find(u => u.id === userId);
     if (user && user.status === 'active') {
-      setCurrentUser(sanitizeAuthUser(user));
+      const sanitized = sanitizeAuthUser(user);
+      saveUserSession(sanitized, getRememberPreference());
+      setUserState(sanitized);
     }
   };
 
   const switchRoleQuick = (role: UserRole) => {
     const targetUser = initialUsers.find(u => u.role === role);
-    if (targetUser) {
-      setCurrentUser(sanitizeAuthUser(targetUser));
+    if (targetUser && targetUser.status === 'active') {
+      const sanitized = sanitizeAuthUser(targetUser);
+      saveUserSession(sanitized, getRememberPreference());
+      setUserState(sanitized);
     }
   };
 
-  const loginAs = (user: User | AppsScriptAuthUser) => {
-    setCurrentUser(sanitizeAuthUser(user));
+  const loginAs = (user: User | AppsScriptAuthUser, rememberMe: boolean = true) => {
+    const sanitized = sanitizeAuthUser(user);
+    if (sanitized.status !== 'active') {
+      return;
+    }
+    saveUserSession(sanitized, rememberMe);
+    setUserState(sanitized);
   };
 
   const logout = () => {
-    // Revert to demo admin for preview usability
-    setCurrentUser(initialUsers[0]);
+    clearUserSession();
+    setUserState(null);
   };
 
   /**
    * RBAC Permission Matrix
    */
   const hasPermission = (permission: string): boolean => {
-    const role = currentUser.role;
+    if (!userState || userState.status !== 'active') {
+      return false;
+    }
+
+    const role = userState.role;
 
     if (role === 'admin') {
       return true; // Admin has full access to all system features
@@ -191,10 +217,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccessClass = (classId: string, assignedClassIds?: string[]): boolean => {
-    if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
+    if (!userState || userState.status !== 'active') {
+      return false;
+    }
+    if (userState.role === 'admin' || userState.role === 'academic_manager') {
       return true;
     }
-    if (currentUser.role === 'teacher') {
+    if (userState.role === 'teacher') {
       if (!assignedClassIds) return false;
       return assignedClassIds.includes(classId);
     }
@@ -202,23 +231,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccessTeacher = (teacherId: string): boolean => {
-    if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
+    if (!userState || userState.status !== 'active') {
+      return false;
+    }
+    if (userState.role === 'admin' || userState.role === 'academic_manager') {
       return true;
     }
-    if (currentUser.role === 'teacher') {
-      return Boolean(currentUser.teacherId) && currentUser.teacherId === teacherId;
+    if (userState.role === 'teacher') {
+      return Boolean(userState.teacherId) && userState.teacherId === teacherId;
     }
     return false;
   };
 
   const resolveTeacherProfile = (teachers: Teacher[]): Teacher | null => {
-    return findTeacherForUser(currentUser, teachers);
+    return findTeacherForUser(userState, teachers);
   };
 
   return (
     <AuthContext.Provider
       value={{
         currentUser,
+        isAuthenticated,
         switchUser,
         switchRoleQuick,
         hasPermission,
