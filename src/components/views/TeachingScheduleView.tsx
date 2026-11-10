@@ -36,7 +36,9 @@ import { useToast } from '../common/Toast';
 import { MonthlyTeachingSchedule, TeachingSession } from '../../types';
 import {
   exportTeachingScheduleToWord,
-  exportTeachingScheduleToExcel
+  exportTeachingScheduleToExcel,
+  getClassWeeklySchedule,
+  formatScheduleTimeSummary
 } from '../../services/dataService';
 
 const MONTH_NAMES = [
@@ -703,7 +705,13 @@ export const TeachingScheduleView: React.FC = () => {
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
             <div>
               <span className="font-bold">Time: </span>
-              <span>{currentSchedule?.defaultTime || currentClass?.scheduleTime || '17:30 – 19:00'}</span>
+              <span>
+                {currentSchedule?.defaultTime ||
+                  (currentClass
+                    ? formatScheduleTimeSummary(getClassWeeklySchedule(currentClass)) || currentClass.scheduleTime
+                    : '') ||
+                  '17:30 – 19:00'}
+              </span>
             </div>
             <div>
               <span className="font-bold">Class Room: </span>
