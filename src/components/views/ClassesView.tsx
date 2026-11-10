@@ -14,28 +14,26 @@ import {
   UserPlus,
   X,
   Eye,
-  GraduationCap,
-  RefreshCw,
-  Search
+  GraduationCap
 } from 'lucide-react';
-import { ClassItem, ClassStatus } from '../../types';
+import { ClassItem, ClassScheduleSlot, ClassStatus } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
+import {
+  WEEKDAY_OPTIONS,
+  getClassWeeklySchedule,
+  formatScheduleDaysLabel,
+  formatScheduleTimeSummary,
+  getWeekdayLabel,
+  isValidTimeRange,
+  doWeeklySchedulesOverlap
+} from '../../services/dataService';
 
-// 7 weekdays for schedule selector
-const WEEKDAYS = [
-  { id: 'T2', label: 'Thứ 2' },
-  { id: 'T3', label: 'Thứ 3' },
-  { id: 'T4', label: 'Thứ 4' },
-  { id: 'T5', label: 'Thứ 5' },
-  { id: 'T6', label: 'Thứ 6' },
-  { id: 'T7', label: 'Thứ 7' },
-  { id: 'CN', label: 'Chủ Nhật' },
+const DEFAULT_WEEKLY_SLOTS: ClassScheduleSlot[] = [
+  { dayOfWeek: 1, startTime: '17:30', endTime: '19:00' },
+  { dayOfWeek: 3, startTime: '17:30', endTime: '19:00' }
 ];
-
-// Simplified Academic Programs
-const ACADEMIC_PROGRAMS = ['4 Skills', 'Grammar', 'IELTS'] as const;
 
 export const ClassesView: React.FC = () => {
   const { currentUser } = useAuth();
@@ -55,29 +53,28 @@ export const ClassesView: React.FC = () => {
   const [formData, setFormData] = useState<Omit<ClassItem, 'id'>>({
     name: '',
     code: '',
-    level: '',
-    courseId: '4 Skills',
-    curriculum: '4 Skills',
-    teacherId: '',
-    assistantTeacherId: '',
-    classroom: '',
-    scheduleDays: '',
-    scheduleTime: '',
-    startDate: new Date().toISOString().slice(0, 10),
+    level: 'Pre A1 Starters',
+    courseId: 'PROG-STA',
+    curriculum: 'Cambridge YLE Starters',
+    teacherId: 'TCH-001',
+    assistantTeacherId: 'TA-001',
+    classroom: 'Phòng 101 - Smart Room',
+    scheduleDays: formatScheduleDaysLabel(DEFAULT_WEEKLY_SLOTS),
+    scheduleTime: formatScheduleTimeSummary(DEFAULT_WEEKLY_SLOTS),
+    weeklySchedule: DEFAULT_WEEKLY_SLOTS,
+    startDate: '2025-03-01',
     endDate: '2025-08-30',
-    maxCapacity: 15,
+    maxCapacity: 14,
     studentIds: [],
     status: 'ongoing',
     tuitionFee: 6500000
   });
 
-  // Schedule Day multi-select picker state
-  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
-  const [tempSelectedDays, setTempSelectedDays] = useState<string[]>([]);
-
-  // Student roster selection state & search
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
-  const [rosterSearchQuery, setRosterSearchQuery] = useState('');
+  const [cachedDaySlots, setCachedDaySlots] = useState<Record<number, { startTime: string; endTime: string }>>({
+    1: { startTime: '17:30', endTime: '19:00' },
+    3: { startTime: '17:30', endTime: '19:00' }
+  });
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
 
   // Schedule conflict warning inside modal
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
@@ -90,32 +87,43 @@ export const ClassesView: React.FC = () => {
   });
 
   const openAddModal = () => {
+    const initialSlots = DEFAULT_WEEKLY_SLOTS.map(s => ({ ...s }));
     setFormData({
       name: '',
       code: '',
-      level: '',
-      courseId: '4 Skills',
-      curriculum: '4 Skills',
+      level: 'Pre A1 Starters',
+      courseId: data.programs[0]?.id || 'PROG-STA',
+      curriculum: 'Cambridge YLE Starters',
       teacherId: data.teachers[0]?.id || '',
       assistantTeacherId: data.teachingAssistants[0]?.id || '',
       classroom: data.settings.classrooms[0] || 'Phòng 101 - Smart Room',
-      scheduleDays: '',
-      scheduleTime: '',
+      scheduleDays: formatScheduleDaysLabel(initialSlots),
+      scheduleTime: formatScheduleTimeSummary(initialSlots),
+      weeklySchedule: initialSlots,
       startDate: new Date().toISOString().slice(0, 10),
       endDate: '2025-08-31',
-      maxCapacity: data.settings.maxClassCapacityDefault || 15,
+      maxCapacity: 14,
       studentIds: [],
       status: 'ongoing',
       tuitionFee: 6500000
     });
+    setCachedDaySlots({
+      1: { startTime: '17:30', endTime: '19:00' },
+      3: { startTime: '17:30', endTime: '19:00' }
+    });
+    setScheduleError(null);
     setEditingClass(null);
     setConflictWarning(null);
-    setShowSchedulePicker(false);
-    setTempSelectedDays([]);
     setShowAddModal(true);
   };
 
   const openEditModal = (cls: ClassItem) => {
+    const restoredSlots = getClassWeeklySchedule(cls);
+    const cacheMap: Record<number, { startTime: string; endTime: string }> = {};
+    restoredSlots.forEach(s => {
+      cacheMap[s.dayOfWeek] = { startTime: s.startTime, endTime: s.endTime };
+    });
+
     setEditingClass(cls);
     setFormData({
       name: cls.name,
@@ -126,8 +134,9 @@ export const ClassesView: React.FC = () => {
       teacherId: cls.teacherId,
       assistantTeacherId: cls.assistantTeacherId,
       classroom: cls.classroom,
-      scheduleDays: cls.scheduleDays,
-      scheduleTime: cls.scheduleTime,
+      scheduleDays: restoredSlots.length > 0 ? formatScheduleDaysLabel(restoredSlots) : cls.scheduleDays,
+      scheduleTime: restoredSlots.length > 0 ? formatScheduleTimeSummary(restoredSlots) : cls.scheduleTime,
+      weeklySchedule: restoredSlots,
       startDate: cls.startDate,
       endDate: cls.endDate,
       maxCapacity: cls.maxCapacity,
@@ -135,60 +144,131 @@ export const ClassesView: React.FC = () => {
       status: cls.status,
       tuitionFee: cls.tuitionFee
     });
+    setCachedDaySlots(cacheMap);
+    setScheduleError(null);
     setConflictWarning(null);
-    setShowSchedulePicker(false);
-    // Parse existing schedule days for picker
-    const currentDays = WEEKDAYS.map(w => w.label).filter(day => cls.scheduleDays?.includes(day));
-    setTempSelectedDays(currentDays);
     setShowAddModal(true);
+  };
+
+  const handleToggleWeekday = (dayOfWeek: number) => {
+    setScheduleError(null);
+    setFormData(prev => {
+      const currentSlots = prev.weeklySchedule || [];
+      const exists = currentSlots.some(s => s.dayOfWeek === dayOfWeek);
+
+      let nextSlots: ClassScheduleSlot[];
+      if (exists) {
+        nextSlots = currentSlots.filter(s => s.dayOfWeek !== dayOfWeek);
+      } else {
+        const cached = cachedDaySlots[dayOfWeek] || { startTime: '17:30', endTime: '19:00' };
+        nextSlots = [
+          ...currentSlots,
+          { dayOfWeek, startTime: cached.startTime, endTime: cached.endTime }
+        ].sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+      }
+
+      return {
+        ...prev,
+        weeklySchedule: nextSlots,
+        scheduleDays: formatScheduleDaysLabel(nextSlots),
+        scheduleTime: formatScheduleTimeSummary(nextSlots)
+      };
+    });
+  };
+
+  const handleSlotTimeChange = (
+    dayOfWeek: number,
+    field: 'startTime' | 'endTime',
+    value: string
+  ) => {
+    setScheduleError(null);
+    setCachedDaySlots(prev => ({
+      ...prev,
+      [dayOfWeek]: {
+        startTime: field === 'startTime' ? value : (prev[dayOfWeek]?.startTime || '17:30'),
+        endTime: field === 'endTime' ? value : (prev[dayOfWeek]?.endTime || '19:00')
+      }
+    }));
+
+    setFormData(prev => {
+      const nextSlots = (prev.weeklySchedule || []).map(slot =>
+        slot.dayOfWeek === dayOfWeek ? { ...slot, [field]: value } : slot
+      );
+      return {
+        ...prev,
+        weeklySchedule: nextSlots,
+        scheduleDays: formatScheduleDaysLabel(nextSlots),
+        scheduleTime: formatScheduleTimeSummary(nextSlots)
+      };
+    });
   };
 
   const handleSaveClass = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim()) {
-      showToast('Vui lòng nhập tên lớp học', 'error');
+    if (!formData.name.trim() || !formData.code.trim()) {
+      showToast('Vui lòng nhập tên lớp và mã lớp', 'error');
       return;
     }
 
-    // Auto-generate code if creating new class to preserve internal compatibility
-    const codeToSave = editingClass
-      ? (formData.code || editingClass.code)
-      : (formData.code?.trim() || `CLS-${Date.now().toString().slice(-4)}`);
+    const activeSlots = [...(formData.weeklySchedule || [])].sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+    if (activeSlots.length === 0) {
+      const msg = 'Vui lòng chọn ít nhất một ngày học trong tuần.';
+      setScheduleError(msg);
+      showToast(msg, 'error');
+      return;
+    }
 
-    const maxCapacityToSave = editingClass
-      ? (formData.maxCapacity || editingClass.maxCapacity)
-      : (formData.maxCapacity || data.settings.maxClassCapacityDefault || 15);
+    for (const slot of activeSlots) {
+      if (!slot.startTime || !slot.endTime) {
+        const msg = `Vui lòng nhập đầy đủ giờ bắt đầu và giờ kết thúc cho ${getWeekdayLabel(slot.dayOfWeek)}.`;
+        setScheduleError(msg);
+        showToast(msg, 'error');
+        return;
+      }
+      if (!isValidTimeRange(slot.startTime, slot.endTime)) {
+        const msg = `Giờ kết thúc của ${getWeekdayLabel(slot.dayOfWeek)} phải sau giờ bắt đầu.`;
+        setScheduleError(msg);
+        showToast(msg, 'error');
+        return;
+      }
+    }
 
-    const classDataToSave: Omit<ClassItem, 'id'> = {
-      ...formData,
-      code: codeToSave,
-      maxCapacity: maxCapacityToSave
-    };
+    // Check if another class is using same room and overlapping weekday + time
+    let overlappingSlot: ClassScheduleSlot | null = null;
+    const roomConflict = data.classes.find(c => {
+      if (editingClass && c.id === editingClass.id) return false;
+      if (c.classroom !== formData.classroom) return false;
+      const overlap = doWeeklySchedulesOverlap(getClassWeeklySchedule(c), activeSlots);
+      if (overlap) {
+        overlappingSlot = overlap;
+        return true;
+      }
+      return false;
+    });
 
-    // Check if another class is using same room and time
-    const roomConflict = data.classes.find(
-      c =>
-        (!editingClass || c.id !== editingClass.id) &&
-        c.classroom === formData.classroom &&
-        c.scheduleDays === formData.scheduleDays &&
-        c.scheduleTime === formData.scheduleTime
-    );
-
-    if (roomConflict) {
+    if (roomConflict && overlappingSlot) {
+      const conflictSlot = overlappingSlot as ClassScheduleSlot;
       if (
         !window.confirm(
-          `Cảnh báo: ${formData.classroom} có thể trùng lịch với lớp "${roomConflict.name}". Bạn vẫn muốn tiếp tục?`
+          `Cảnh báo: ${formData.classroom} có thể trùng lịch ${getWeekdayLabel(conflictSlot.dayOfWeek)} (${conflictSlot.startTime} - ${conflictSlot.endTime}) với lớp "${roomConflict.name}". Bạn vẫn muốn tiếp tục?`
         )
       ) {
         return;
       }
     }
 
+    const payload: Omit<ClassItem, 'id'> = {
+      ...formData,
+      weeklySchedule: activeSlots,
+      scheduleDays: formatScheduleDaysLabel(activeSlots),
+      scheduleTime: formatScheduleTimeSummary(activeSlots)
+    };
+
     if (editingClass) {
-      updateClass(editingClass.id, classDataToSave);
-      showToast(`Đã cập nhật lớp học "${formData.name}"`, 'success');
+      updateClass(editingClass.id, payload);
+      showToast(`Đã cập nhật lớp học "${payload.name}"`, 'success');
     } else {
-      const created = addClass(classDataToSave);
+      const created = addClass(payload);
       showToast(`Đã tạo thành công lớp học "${created.name}"`, 'success');
     }
     setShowAddModal(false);
@@ -201,11 +281,12 @@ export const ClassesView: React.FC = () => {
     }
   };
 
-  // Student roster modal handlers
+  // Student roster selection state
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+
   const openRosterManager = (cls: ClassItem) => {
     setManagingRosterClass(cls);
     setSelectedStudentIds([...cls.studentIds]);
-    setRosterSearchQuery('');
   };
 
   const toggleStudentInRoster = (studentId: string) => {
@@ -220,67 +301,12 @@ export const ClassesView: React.FC = () => {
     }
   };
 
-  // Synchronize students automatically from Student Management
-  const handleSyncStudents = () => {
-    if (!managingRosterClass) return;
-
-    const targetClassId = managingRosterClass.id;
-    const targetClassName = managingRosterClass.name.toLowerCase().trim();
-    const targetClassCode = managingRosterClass.code ? managingRosterClass.code.toLowerCase().trim() : '';
-
-    // Match students who have this class in classIds or mentioned in notes
-    const matchedStudents = data.students.filter(student => {
-      // 1. Check classIds array
-      if (student.classIds && Array.isArray(student.classIds) && student.classIds.includes(targetClassId)) {
-        return true;
-      }
-      // 2. Check notes for class name or code match
-      if (student.notes) {
-        const lowerNotes = student.notes.toLowerCase();
-        if (lowerNotes.includes(targetClassName) || (targetClassCode && lowerNotes.includes(targetClassCode))) {
-          return true;
-        }
-      }
-      return false;
-    });
-
-    const matchedIds = matchedStudents.map(s => s.id);
-    const newlyAdded = matchedIds.filter(id => !selectedStudentIds.includes(id));
-
-    if (matchedIds.length === 0) {
-      showToast('Không tìm thấy học sinh nào có thông tin thuộc lớp này trong danh sách học sinh.', 'info');
-      return;
-    }
-
-    const updatedIds = Array.from(new Set([...selectedStudentIds, ...matchedIds]));
-    setSelectedStudentIds(updatedIds);
-
-    if (newlyAdded.length > 0) {
-      showToast(`Đã đồng bộ thành công: thêm ${newlyAdded.length} học sinh từ danh sách học sinh!`, 'success');
-    } else {
-      showToast(`Đã đồng bộ dữ liệu: tất cả ${matchedIds.length} học sinh phù hợp đã có trong danh sách được chọn.`, 'info');
-    }
-  };
-
   const handleSaveRoster = () => {
     if (!managingRosterClass) return;
     assignStudentsToClass(managingRosterClass.id, selectedStudentIds);
     showToast(`Đã cập nhật sĩ số lớp: ${selectedStudentIds.length} học sinh`, 'success');
     setManagingRosterClass(null);
   };
-
-  // Filter students in Roster Manager modal
-  const filteredStudentsForRoster = data.students.filter(student => {
-    if (!rosterSearchQuery.trim()) return true;
-    const q = rosterSearchQuery.toLowerCase();
-    return (
-      student.fullName.toLowerCase().includes(q) ||
-      student.id.toLowerCase().includes(q) ||
-      (student.school && student.school.toLowerCase().includes(q)) ||
-      (student.parentPhone && student.parentPhone.includes(q)) ||
-      (student.currentLevel && student.currentLevel.toLowerCase().includes(q))
-    );
-  });
 
   return (
     <div className="space-y-6">
@@ -345,8 +371,8 @@ export const ClassesView: React.FC = () => {
 
                 {/* Name & Level */}
                 <h3 className="font-extrabold text-slate-900 text-base">{cls.name}</h3>
-                <div className="text-xs text-red-600 font-semibold mt-0.5">{cls.level || 'Chưa phân cấp độ'}</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">{cls.curriculum || cls.courseId}</div>
+                <div className="text-xs text-red-600 font-semibold mt-0.5">{cls.level}</div>
+                <div className="text-[11px] text-slate-400 mt-0.5">{cls.curriculum}</div>
 
                 {/* Teacher & TA */}
                 <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 text-xs">
@@ -368,18 +394,42 @@ export const ClassesView: React.FC = () => {
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400 flex items-center gap-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-slate-400 flex items-center gap-1.5 shrink-0">
                       <Calendar className="w-3.5 h-3.5 text-purple-500" /> Lịch học:
                     </span>
-                    <span className="font-medium text-slate-700">{cls.scheduleDays || 'Chưa thiết lập'}</span>
+                    <span className="font-medium text-slate-700 text-right">{cls.scheduleDays}</span>
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400 flex items-center gap-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-slate-400 flex items-center gap-1.5 shrink-0">
                       <Clock className="w-3.5 h-3.5 text-amber-500" /> Ca học:
                     </span>
-                    <span className="font-medium text-slate-700">{cls.scheduleTime || 'Chưa thiết lập'}</span>
+                    <div className="font-medium text-slate-700 text-right">
+                      {(() => {
+                        const slots = getClassWeeklySchedule(cls);
+                        const hasDistinctTimes =
+                          slots.length > 1 &&
+                          slots.some(
+                            s => s.startTime !== slots[0].startTime || s.endTime !== slots[0].endTime
+                          );
+                        if (!hasDistinctTimes) {
+                          return <span>{cls.scheduleTime}</span>;
+                        }
+                        return (
+                          <div className="space-y-0.5">
+                            {slots.map(s => (
+                              <div key={s.dayOfWeek} className="text-[11px]">
+                                <span className="font-semibold text-slate-800">
+                                  {getWeekdayLabel(s.dayOfWeek)}:
+                                </span>{' '}
+                                {s.startTime} - {s.endTime}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between">
@@ -455,7 +505,7 @@ export const ClassesView: React.FC = () => {
         })}
       </div>
 
-      {/* ROSTER MANAGER MODAL ("XẾP HỌC SINH") */}
+      {/* ROSTER MANAGER MODAL */}
       {managingRosterClass && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
@@ -463,7 +513,6 @@ export const ClassesView: React.FC = () => {
             onClick={() => setManagingRosterClass(null)}
           />
           <div className="relative bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl z-10 border border-slate-200">
-            {/* Modal Header */}
             <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div>
                 <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
@@ -482,83 +531,42 @@ export const ClassesView: React.FC = () => {
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-4 overflow-y-auto flex-1 space-y-3 text-xs">
-              {/* Synchronization Banner & Action */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-red-50/70 border border-red-200 rounded-xl">
-                <div>
-                  <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                    <RefreshCw className="w-3.5 h-3.5 text-red-600" />
-                    Đồng bộ tự động từ danh sách học sinh
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    Tự động tìm kiếm và thêm học sinh đã được phân bổ vào lớp này từ module Quản lý học sinh.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSyncStudents}
-                  className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shrink-0 transition-colors shadow-xs"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Đồng bộ từ DS học sinh</span>
-                </button>
-              </div>
-
-              {/* Search Bar for manual selection */}
-              <div className="relative">
-                <input
-                  type="text"
-                  value={rosterSearchQuery}
-                  onChange={e => setRosterSearchQuery(e.target.value)}
-                  placeholder="Tìm học sinh theo tên, mã học sinh, trường, SĐT..."
-                  className="w-full px-3 py-2 pl-9 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-red-500 focus:outline-none"
-                />
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              </div>
-
-              {/* Student Checkbox List */}
-              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
-                {filteredStudentsForRoster.length === 0 ? (
-                  <div className="p-6 text-center text-slate-400 italic">
-                    Không tìm thấy học sinh nào phù hợp.
-                  </div>
-                ) : (
-                  filteredStudentsForRoster.map(student => {
-                    const isChecked = selectedStudentIds.includes(student.id);
-                    return (
-                      <label
-                        key={student.id}
-                        className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
-                          isChecked ? 'bg-red-50/70 text-slate-900 font-semibold' : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => toggleStudentInRoster(student.id)}
-                            className="w-4 h-4 text-red-600 rounded border-slate-300 focus:ring-red-500"
-                          />
-                          <div>
-                            <div className="font-bold text-slate-900">
-                              {student.fullName} <span className="font-mono text-slate-400 font-normal">({student.id})</span>
-                            </div>
-                            <div className="text-[11px] text-slate-400">
-                              {student.currentLevel} • {student.school || 'Chưa cập nhật trường'} • PH: {student.parentPhone}
-                            </div>
+            <div className="p-4 overflow-y-auto flex-1 space-y-2 text-xs">
+              <p className="text-slate-500 mb-2">
+                Chọn học sinh để thêm hoặc bớt khỏi danh sách lớp. Hệ thống sẽ tự động cập nhật lịch học của học sinh.
+              </p>
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                {data.students.map(student => {
+                  const isChecked = selectedStudentIds.includes(student.id);
+                  return (
+                    <label
+                      key={student.id}
+                      className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
+                        isChecked ? 'bg-red-50/70 text-slate-900 font-semibold' : 'hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleStudentInRoster(student.id)}
+                          className="w-4 h-4 text-red-600 rounded border-slate-300 focus:ring-red-500"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900">{student.fullName} ({student.id})</div>
+                          <div className="text-[11px] text-slate-400">
+                            {student.currentLevel} • {student.school} • PH: {student.parentPhone}
                           </div>
                         </div>
+                      </div>
 
-                        {isChecked && <CheckCircle2 className="w-4 h-4 text-red-600 shrink-0" />}
-                      </label>
-                    );
-                  })
-                )}
+                      {isChecked && <CheckCircle2 className="w-4 h-4 text-red-600 shrink-0" />}
+                    </label>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Modal Footer */}
             <div className="p-4 border-t border-slate-200 flex justify-end gap-2 bg-slate-50">
               <button
                 onClick={() => setManagingRosterClass(null)}
@@ -568,7 +576,7 @@ export const ClassesView: React.FC = () => {
               </button>
               <button
                 onClick={handleSaveRoster}
-                className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs shadow-xs shadow-red-950/20"
+                className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs"
               >
                 Lưu danh sách học sinh
               </button>
@@ -585,7 +593,6 @@ export const ClassesView: React.FC = () => {
             onClick={() => setShowAddModal(false)}
           />
           <div className="relative bg-white rounded-2xl max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl z-10 border border-slate-200">
-            {/* Modal Header */}
             <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <h3 className="font-bold text-slate-800 text-base">
                 {editingClass ? `Sửa thông tin: ${editingClass.name}` : 'Mở lớp học mới'}
@@ -598,10 +605,8 @@ export const ClassesView: React.FC = () => {
               </button>
             </div>
 
-            {/* Modal Form */}
             <form onSubmit={handleSaveClass} className="p-6 overflow-y-auto space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* 1. Tên lớp học */}
                 <div>
                   <label className="font-semibold text-slate-700 block mb-1">
                     Tên lớp học <span className="text-red-600">*</span>
@@ -616,67 +621,50 @@ export const ClassesView: React.FC = () => {
                   />
                 </div>
 
-                {/* 2. Cấp độ học thuật – Manual Input */}
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Cấp độ học thuật</label>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Mã lớp (Code) <span className="text-red-600">*</span>
+                  </label>
                   <input
                     type="text"
-                    value={formData.level}
-                    onChange={e => setFormData({ ...formData, level: e.target.value })}
-                    placeholder="Nhập cấp độ học thuật..."
+                    required
+                    value={formData.code}
+                    onChange={e => setFormData({ ...formData, code: e.target.value })}
+                    placeholder="VD: STA-E02"
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
                   />
                 </div>
 
-                {/* 3. Chương trình học – Simplified Selection (4 Skills, Grammar, IELTS) */}
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Cấp độ học thuật</label>
+                  <select
+                    value={formData.level}
+                    onChange={e => setFormData({ ...formData, level: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
+                  >
+                    <option value="Pre A1 Starters">Pre A1 Starters</option>
+                    <option value="A1 Movers">A1 Movers</option>
+                    <option value="A2 Flyers">A2 Flyers</option>
+                    <option value="A2 Key for Schools (KET)">A2 Key for Schools (KET)</option>
+                    <option value="B1 Preliminary (PET)">B1 Preliminary (PET)</option>
+                  </select>
+                </div>
+
                 <div>
                   <label className="font-semibold text-slate-700 block mb-1">Chương trình học</label>
                   <select
-                    value={
-                      formData.curriculum === 'Grammar' || formData.courseId === 'Grammar'
-                        ? 'Grammar'
-                        : formData.curriculum === 'IELTS' || formData.courseId === 'IELTS'
-                        ? 'IELTS'
-                        : '4 Skills'
-                    }
-                    onChange={e => {
-                      const prog = e.target.value;
-                      const matchedProg = data.programs.find(
-                        p => p.name.toLowerCase().includes(prog.toLowerCase()) || p.id === prog
-                      );
-                      setFormData({
-                        ...formData,
-                        courseId: matchedProg ? matchedProg.id : prog,
-                        curriculum: prog
-                      });
-                    }}
+                    value={formData.courseId}
+                    onChange={e => setFormData({ ...formData, courseId: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
                   >
-                    {ACADEMIC_PROGRAMS.map(prog => (
-                      <option key={prog} value={prog}>
-                        {prog}
+                    {data.programs.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                {/* 4. Phòng học */}
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Phòng học</label>
-                  <select
-                    value={formData.classroom}
-                    onChange={e => setFormData({ ...formData, classroom: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
-                  >
-                    {data.settings.classrooms.map(rm => (
-                      <option key={rm} value={rm}>
-                        {rm}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 5. Giáo viên đứng lớp */}
                 <div>
                   <label className="font-semibold text-slate-700 block mb-1">
                     Giáo viên đứng lớp <span className="text-red-600">*</span>
@@ -695,7 +683,6 @@ export const ClassesView: React.FC = () => {
                   </select>
                 </div>
 
-                {/* 6. Trợ giảng (TA) */}
                 <div>
                   <label className="font-semibold text-slate-700 block mb-1">Trợ giảng (TA)</label>
                   <select
@@ -712,96 +699,145 @@ export const ClassesView: React.FC = () => {
                   </select>
                 </div>
 
-                {/* 7. Khung giờ học – Manual Input */}
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Khung giờ học</label>
+                  <label className="font-semibold text-slate-700 block mb-1">Phòng học</label>
+                  <select
+                    value={formData.classroom}
+                    onChange={e => setFormData({ ...formData, classroom: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
+                  >
+                    {data.settings.classrooms.map(rm => (
+                      <option key={rm} value={rm}>
+                        {rm}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Sĩ số tối đa</label>
                   <input
-                    type="text"
-                    value={formData.scheduleTime}
-                    onChange={e => setFormData({ ...formData, scheduleTime: e.target.value })}
-                    placeholder="Ví dụ: 17:30 - 19:00"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                    type="number"
+                    min={6}
+                    max={25}
+                    value={formData.maxCapacity}
+                    onChange={e => setFormData({ ...formData, maxCapacity: Number(e.target.value) })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
                   />
                 </div>
 
-                {/* 8. Lịch học trong tuần – Flexible Day Selection (7 days multi-checkbox) */}
-                <div className="sm:col-span-2">
-                  <label className="font-semibold text-slate-700 block mb-1">Lịch học trong tuần</label>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!showSchedulePicker) {
-                          const current = WEEKDAYS.map(w => w.label).filter(day => formData.scheduleDays?.includes(day));
-                          setTempSelectedDays(current);
-                        }
-                        setShowSchedulePicker(prev => !prev);
-                      }}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-left flex items-center justify-between focus:outline-none focus:ring-2 focus:ring-red-500 hover:bg-slate-100 transition-colors"
-                    >
-                      <span className={formData.scheduleDays ? 'text-slate-800 font-medium' : 'text-slate-400'}>
-                        {formData.scheduleDays || 'Chọn các thứ trong tuần...'}
+                <div className="sm:col-span-2 space-y-3 pt-1">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="font-semibold text-slate-700">
+                        Lịch học trong tuần <span className="text-red-600">*</span>
+                      </label>
+                      <span className="text-[11px] text-slate-500">
+                        Đã chọn:{' '}
+                        <strong className="text-red-600">{(formData.weeklySchedule || []).length}</strong> ngày
                       </span>
-                      <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
-                    </button>
-
-                    {showSchedulePicker && (
-                      <div className="mt-2 p-3 bg-white rounded-xl border border-slate-200 shadow-xl space-y-3">
-                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                          Chọn các ngày học trong tuần:
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          {WEEKDAYS.map(day => {
-                            const isChecked = tempSelectedDays.includes(day.label);
-                            return (
-                              <label
-                                key={day.id}
-                                className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-colors text-xs ${
-                                  isChecked
-                                    ? 'border-red-500 bg-red-50/80 text-red-900 font-bold'
-                                    : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => {
-                                    setTempSelectedDays(prev =>
-                                      prev.includes(day.label)
-                                        ? prev.filter(d => d !== day.label)
-                                        : [...prev, day.label]
-                                    );
-                                  }}
-                                  className="w-4 h-4 text-red-600 rounded border-slate-300 focus:ring-red-500"
-                                />
-                                <span>{day.label}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                          <span className="text-[11px] text-slate-500">
-                            Đã chọn: <strong className="text-red-600">{tempSelectedDays.length}</strong> ngày
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const ordered = WEEKDAYS.map(w => w.label).filter(label => tempSelectedDays.includes(label));
-                              setFormData(prev => ({ ...prev, scheduleDays: ordered.join(', ') }));
-                              setShowSchedulePicker(false);
-                            }}
-                            className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-xs shadow-xs"
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                      {WEEKDAY_OPTIONS.map(day => {
+                        const isChecked = (formData.weeklySchedule || []).some(
+                          s => s.dayOfWeek === day.dayOfWeek
+                        );
+                        return (
+                          <label
+                            key={day.dayOfWeek}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors select-none ${
+                              isChecked
+                                ? 'bg-red-50 border-red-300 text-red-800 font-semibold'
+                                : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                            }`}
                           >
-                            Xong
-                          </button>
-                        </div>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => handleToggleWeekday(day.dayOfWeek)}
+                              className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-500 accent-red-600"
+                            />
+                            <span className="text-xs">{day.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1.5">
+                      Khung giờ học theo từng ngày <span className="text-red-600">*</span>
+                    </label>
+
+                    {(formData.weeklySchedule || []).length > 0 ? (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                        <table className="w-full text-xs text-left">
+                          <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                            <tr>
+                              <th className="py-2 px-3">Ngày</th>
+                              <th className="py-2 px-3">Giờ bắt đầu</th>
+                              <th className="py-2 px-3">Giờ kết thúc</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {(formData.weeklySchedule || []).map(slot => {
+                              const invalidRange =
+                                Boolean(slot.startTime && slot.endTime) &&
+                                !isValidTimeRange(slot.startTime, slot.endTime);
+                              return (
+                                <tr
+                                  key={slot.dayOfWeek}
+                                  className={invalidRange ? 'bg-red-50/50' : 'hover:bg-slate-50/70'}
+                                >
+                                  <td className="py-2 px-3 font-semibold text-slate-800 whitespace-nowrap">
+                                    {getWeekdayLabel(slot.dayOfWeek)}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <input
+                                      type="time"
+                                      required
+                                      value={slot.startTime}
+                                      onChange={e =>
+                                        handleSlotTimeChange(slot.dayOfWeek, 'startTime', e.target.value)
+                                      }
+                                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                                    />
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <input
+                                      type="time"
+                                      required
+                                      value={slot.endTime}
+                                      onChange={e =>
+                                        handleSlotTimeChange(slot.dayOfWeek, 'endTime', e.target.value)
+                                      }
+                                      className={`w-full px-2.5 py-1.5 bg-slate-50 border rounded-lg font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                                        invalidRange ? 'border-red-400' : 'border-slate-200'
+                                      }`}
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
+                    ) : (
+                      <div className="p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-500 text-center">
+                        Chưa chọn ngày học nào. Hãy tích chọn ít nhất một ngày ở trên để thiết lập giờ học.
+                      </div>
+                    )}
+
+                    {scheduleError && (
+                      <p className="mt-1.5 text-[11px] font-medium text-red-600 flex items-center gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{scheduleError}</span>
+                      </p>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Modal Actions */}
               <div className="p-4 border-t border-slate-200 flex justify-end gap-2 bg-slate-50 -mx-6 -mb-6 mt-4">
                 <button
                   type="button"
@@ -836,9 +872,7 @@ export const ClassesView: React.FC = () => {
                   {viewingClass.code}
                 </span>
                 <h3 className="font-extrabold text-slate-900 text-lg mt-1">{viewingClass.name}</h3>
-                <p className="text-slate-500">
-                  {viewingClass.level || 'Chưa phân cấp'} • {viewingClass.curriculum || viewingClass.courseId}
-                </p>
+                <p className="text-slate-500">{viewingClass.level} • {viewingClass.curriculum}</p>
               </div>
               <button onClick={() => setViewingClass(null)} className="p-1 text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
@@ -848,10 +882,26 @@ export const ClassesView: React.FC = () => {
             <div className="py-4 space-y-4">
               <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
                 <div>
-                  <span className="text-slate-400 block">Lịch & Giờ học:</span>
-                  <span className="font-semibold text-slate-800">
-                    {viewingClass.scheduleDays || 'Chưa thiết lập'} ({viewingClass.scheduleTime || 'Chưa thiết lập'})
-                  </span>
+                  <span className="text-slate-400 block mb-0.5">Lịch & Giờ học:</span>
+                  {(() => {
+                    const slots = getClassWeeklySchedule(viewingClass);
+                    if (slots.length === 0) {
+                      return (
+                        <span className="font-semibold text-slate-800">
+                          {viewingClass.scheduleDays} ({viewingClass.scheduleTime})
+                        </span>
+                      );
+                    }
+                    return (
+                      <div className="space-y-0.5">
+                        {slots.map(s => (
+                          <div key={s.dayOfWeek} className="font-semibold text-slate-800">
+                            {getWeekdayLabel(s.dayOfWeek)}: {s.startTime} - {s.endTime}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div>
                   <span className="text-slate-400 block">Phòng học:</span>
@@ -876,26 +926,22 @@ export const ClassesView: React.FC = () => {
                   Danh sách học sinh ({viewingClass.studentIds.length}/{viewingClass.maxCapacity})
                 </h4>
                 <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
-                  {viewingClass.studentIds.length === 0 ? (
-                    <div className="p-4 text-center text-slate-400 italic">Chưa có học sinh trong lớp này.</div>
-                  ) : (
-                    viewingClass.studentIds.map((sid, idx) => {
-                      const st = data.students.find(s => s.id === sid);
-                      if (!st) return null;
-                      return (
-                        <div key={sid} className="p-2.5 flex items-center justify-between bg-white hover:bg-slate-50">
-                          <div className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-bold flex items-center justify-center text-[10px]">
-                              {idx + 1}
-                            </span>
-                            <span className="font-bold text-slate-800">{st.fullName}</span>
-                            <span className="text-slate-400 font-mono">({st.id})</span>
-                          </div>
-                          <span className="text-slate-500 font-medium">PH: {st.parentPhone}</span>
+                  {viewingClass.studentIds.map((sid, idx) => {
+                    const st = data.students.find(s => s.id === sid);
+                    if (!st) return null;
+                    return (
+                      <div key={sid} className="p-2.5 flex items-center justify-between bg-white hover:bg-slate-50">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-bold flex items-center justify-center text-[10px]">
+                            {idx + 1}
+                          </span>
+                          <span className="font-bold text-slate-800">{st.fullName}</span>
+                          <span className="text-slate-400">({st.id})</span>
                         </div>
-                      );
-                    })
-                  )}
+                        <span className="text-slate-500 font-medium">PH: {st.parentPhone}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -903,7 +949,7 @@ export const ClassesView: React.FC = () => {
             <div className="pt-4 border-t border-slate-200 flex justify-end">
               <button
                 onClick={() => setViewingClass(null)}
-                className="px-4 py-2 bg-slate-800 text-white rounded-xl font-semibold hover:bg-slate-700"
+                className="px-4 py-2 bg-slate-800 text-white rounded-xl font-semibold"
               >
                 Đóng
               </button>
