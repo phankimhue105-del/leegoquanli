@@ -1,6 +1,3 @@
-# `src/data/initialData.ts` (Complete Modified File)
-
-```ts
 import {
   Student,
   ClassItem,
@@ -1765,4 +1762,3 @@ export const initialTeachingSchedules: MonthlyTeachingSchedule[] = [
     ]
   }
 ];
-```
