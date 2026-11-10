@@ -5,7 +5,7 @@ import { User, UserRole } from '../types';
  * LEEGO CENTER MANAGEMENT – AUTHENTICATION SERVICE
  * =========================================================================
  * Connects the frontend to the Google Apps Script Web App API.
- * Google Sheet: leegologin (Columns: User ID, Username, Password Hash, Full Name, Role, Status)
+ * Google Sheet: leegologin (Columns: User ID, Username, Password Hash, Full Name, Role, Status, Teacher ID)
  */
 
 const SESSION_STORAGE_KEY = 'leego_auth_user_v1';
@@ -35,7 +35,7 @@ export interface AuthResponse {
  * Normalize role returned from Google Apps Script to internal LeeGo UserRole
  */
 export function normalizeUserRole(roleInput?: string): UserRole {
-  const r = (roleInput || '').trim().toLowerCase();
+  const r = (roleInput || '').trim().toLowerCase().replace(/\s+/g, '_');
   if (r === 'admin' || r === 'administrator') return 'admin';
   if (r === 'academic_manager' || r === 'manager' || r === 'academic') return 'academic_manager';
   if (r === 'teacher' || r === 'teaching_assistant' || r === 'assistant' || r === 'ta') return 'teacher';
@@ -147,16 +147,18 @@ export async function loginWithCredentials(
       }
 
       const role = normalizeUserRole(data.user.role);
+      const linkedTeacherId =
+        role === 'teacher' ? String(data.user.teacherId || '').trim() || undefined : undefined;
 
-      // Construct verified User profile
+      // Construct verified User profile (never falls back to userId as teacherId)
       const userProfile: User = {
         id: String(data.user.userId || data.user.id || `USR-${Date.now()}`),
         name: String(data.user.fullName || data.user.name || username),
         username: String(data.user.username || username),
-        email: data.user.email || `${username.replace(/\s+/g, '.').toLowerCase()}@leego.edu.vn`,
+        email: data.user.email ? String(data.user.email).trim() : '',
         role,
         status: 'active',
-        teacherId: data.user.teacherId || (role === 'teacher' ? String(data.user.userId) : undefined),
+        ...(linkedTeacherId ? { teacherId: linkedTeacherId } : {}),
         permissions: Array.isArray(data.user.permissions) ? data.user.permissions : [],
         assignedClasses: Array.isArray(data.user.assignedClasses) ? data.user.assignedClasses : [],
         avatar: data.user.avatar || undefined,
@@ -194,7 +196,11 @@ export async function loginWithCredentials(
  */
 export function saveUserSession(user: User, rememberMe: boolean): void {
   try {
-    const serialized = JSON.stringify(user);
+    const safeUser = { ...user } as Record<string, unknown>;
+    delete safeUser.password;
+    delete safeUser.passwordHash;
+
+    const serialized = JSON.stringify(safeUser);
     if (rememberMe) {
       localStorage.setItem(SESSION_STORAGE_KEY, serialized);
       localStorage.setItem(REMEMBER_ME_KEY, 'true');
@@ -216,12 +222,18 @@ export function getStoredUserSession(): User | null {
   try {
     const fromLocal = localStorage.getItem(SESSION_STORAGE_KEY);
     if (fromLocal) {
-      return JSON.parse(fromLocal);
+      const parsed = JSON.parse(fromLocal) as User;
+      if (parsed && parsed.id && parsed.role && parsed.status === 'active') {
+        return parsed;
+      }
     }
 
     const fromSession = sessionStorage.getItem(SESSION_STORAGE_KEY);
     if (fromSession) {
-      return JSON.parse(fromSession);
+      const parsed = JSON.parse(fromSession) as User;
+      if (parsed && parsed.id && parsed.role && parsed.status === 'active') {
+        return parsed;
+      }
     }
   } catch (err) {
     console.error('Failed to parse user session', err);
