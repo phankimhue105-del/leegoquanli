@@ -216,16 +216,22 @@ export function saveUserSession(user: User, rememberMe: boolean): void {
 }
 
 /**
- * Retrieve active user session from localStorage or sessionStorage
+ * Retrieve active user session from localStorage (only if Remember Me was enabled) or sessionStorage
  */
 export function getStoredUserSession(): User | null {
   try {
-    const fromLocal = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (fromLocal) {
-      const parsed = JSON.parse(fromLocal) as User;
-      if (parsed && parsed.id && parsed.role && parsed.status === 'active') {
-        return parsed;
+    const rememberEnabled = localStorage.getItem(REMEMBER_ME_KEY) === 'true';
+    if (rememberEnabled) {
+      const fromLocal = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (fromLocal) {
+        const parsed = JSON.parse(fromLocal) as User;
+        if (parsed && parsed.id && parsed.role && parsed.status === 'active') {
+          return parsed;
+        }
       }
+    } else {
+      // Clear any leftover unremembered localStorage entry (e.g. from legacy preview state)
+      localStorage.removeItem(SESSION_STORAGE_KEY);
     }
 
     const fromSession = sessionStorage.getItem(SESSION_STORAGE_KEY);
