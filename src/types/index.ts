@@ -1,17 +1,16 @@
-# `src/types/index.ts` (Complete Modified File)
-
-```ts
 export type UserRole = 'admin' | 'academic_manager' | 'teacher';
 
 export interface User {
   id: string;
   username?: string;
   name: string;
-  email?: string;
+  email: string;
   role: UserRole;
   avatar?: string;
   phone?: string;
   teacherId?: string; // Links to teacher record if role is teacher
+  permissions?: string[];
+  assignedClasses?: string[];
   status: 'active' | 'inactive';
   lastLogin?: string;
   createdAt: string;
@@ -283,4 +282,3 @@ export interface MonthlyTeachingSchedule {
   updatedBy: string;
   updatedAt: string;
 }
-```
