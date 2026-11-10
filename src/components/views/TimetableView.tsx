@@ -18,12 +18,12 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
 
 export const TimetableView: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, resolveTeacherProfile } = useAuth();
   const { data, addTimetableSession, updateTimetableSession, deleteTimetableSession, checkScheduleConflict } = useData();
   const { showToast } = useToast();
 
   const isTeacher = currentUser.role === 'teacher';
-  const teacherObj = isTeacher ? data.teachers.find(t => t.id === currentUser.teacherId || t.email === currentUser.email) : null;
+  const teacherObj = isTeacher ? resolveTeacherProfile(data.teachers) : null;
 
   // Filters
   const [filterMode, setFilterMode] = useState<'all' | 'teacher' | 'classroom' | 'class'>('all');
@@ -66,9 +66,9 @@ export const TimetableView: React.FC = () => {
 
   // Filter sessions
   const filteredSessions = data.timetable.filter(session => {
-    // If logged in as teacher, show only their sessions by default
+    // If logged in as teacher, show only their sessions (fail closed if unlinked)
     if (isTeacher) {
-      if (teacherObj && session.teacherId !== teacherObj.id) return false;
+      if (!teacherObj || session.teacherId !== teacherObj.id) return false;
     }
 
     if (filterMode === 'teacher' && selectedFilterValue !== 'all') {
