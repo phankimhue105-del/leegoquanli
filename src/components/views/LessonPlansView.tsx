@@ -19,13 +19,13 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
 
 export const LessonPlansView: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, resolveTeacherProfile } = useAuth();
   const { data, submitLessonPlan, reviewLessonPlan } = useData();
   const { showToast } = useToast();
 
   const isTeacher = currentUser.role === 'teacher';
   const isManager = currentUser.role === 'academic_manager' || currentUser.role === 'admin';
-  const teacherObj = isTeacher ? data.teachers.find(t => t.id === currentUser.teacherId || t.email === currentUser.email) : null;
+  const teacherObj = isTeacher ? resolveTeacherProfile(data.teachers) : null;
   const teacherClassIds = teacherObj ? teacherObj.assignedClassIds : [];
 
   const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -67,10 +67,15 @@ export const LessonPlansView: React.FC = () => {
     const cls = data.classes.find(c => c.id === formData.classId);
     if (!cls) return;
 
+    if (isTeacher && !teacherObj) {
+      showToast('Tài khoản của bạn chưa được liên kết với hồ sơ Giáo viên', 'error');
+      return;
+    }
+
     submitLessonPlan({
       classId: cls.id,
       className: cls.name,
-      teacherId: teacherObj?.id || 'TCH-001',
+      teacherId: teacherObj?.id || cls.teacherId || '',
       teacherName: teacherObj?.fullName || currentUser.name,
       date: formData.date,
       lessonNumber: Number(formData.lessonNumber),
