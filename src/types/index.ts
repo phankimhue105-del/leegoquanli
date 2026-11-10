@@ -167,6 +167,16 @@ export interface AttendanceRecord {
   takenBy: string;
 }
 
+export type AssessmentComponent =
+  | 'Listening'
+  | 'Speaking'
+  | 'Reading'
+  | 'Writing'
+  | 'Reading and Writing'
+  | 'Language Focus'
+  | 'Phonetics'
+  | 'Overall Score';
+
 export interface StudentScoreEntry {
   studentId: string;
   studentName: string;
@@ -177,6 +187,7 @@ export interface StudentScoreEntry {
   grammar: number;
   totalScore: number;
   shields?: number; // 1-5 shields for Cambridge Young Learners
+  componentScores?: Partial<Record<AssessmentComponent, number>>;
   teacherFeedback: string;
   status: 'excellent' | 'good' | 'pass' | 'needs_improvement';
 }
@@ -190,6 +201,7 @@ export interface AssessmentRecord {
   date: string;
   scaleType: '10-point' | 'cambridge-shields' | 'percentage';
   maxScore: number;
+  components?: AssessmentComponent[];
   scores: StudentScoreEntry[];
   evaluatedBy: string;
   reviewedBy?: string;
@@ -278,310 +290,4 @@ export interface MonthlyTeachingSchedule {
   createdAt: string;
   updatedBy: string;
   updatedAt: string;
-}
-
-// ==========================================
-// STAFF ATTENDANCE & PAYROLL V2 TYPES
-// ==========================================
-
-export type StaffPosition = 'teacher' | 'teaching_assistant' | 'academic_manager' | 'admin_staff' | 'admissions' | 'other';
-export type StaffEmploymentType = 'full_time' | 'part_time' | 'contract';
-export type StaffPayType = 'hourly' | 'per_session' | 'monthly_fixed';
-
-export interface StaffMember {
-  id: string;
-  fullName: string;
-  vietnameseName?: string;
-  position: StaffPosition;
-  employmentType: StaffEmploymentType;
-  payType: StaffPayType;
-  baseRate: number;
-  email: string;
-  phone: string;
-  startDate?: string;
-  bankAccount?: string;
-  bankName?: string;
-  status: 'active' | 'leave' | 'resigned';
-}
-
-export interface WorkingShift {
-  id: string;
-  name: string;
-  startTime: string;
-  endTime: string;
-  standardSessions: number;
-  standardHours: number;
-}
-
-export type StaffAttendanceStatus = 'present' | 'absent_unexcused' | 'absent_excused' | 'late' | 'leave';
-
-export interface StaffAttendanceRecord {
-  id: string;
-  date: string;
-  staffId: string;
-  staffName: string;
-  position: StaffPosition;
-  shiftId: string;
-  shiftName: string;
-  status: StaffAttendanceStatus;
-  workingSessions: number;
-  workingHours: number;
-  notes?: string;
-  isLocked: boolean;
-  recordedBy: string;
-  recordedAt: string;
-  updatedBy?: string;
-  updatedAt?: string;
-}
-
-export interface StaffPayRate {
-  id: string;
-  staffId: string;
-  staffName: string;
-  position: StaffPosition;
-  payType: StaffPayType;
-  rate: number;
-  effectiveDate: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface StaffPayrollAdjustment {
-  id: string;
-  staffId: string;
-  staffName: string;
-  month: number;
-  year: number;
-  adjustmentType: 'bonus' | 'allowance' | 'deduction' | 'tax' | 'insurance';
-  amount: number;
-  reason: string;
-  createdBy: string;
-  createdAt: string;
-}
-
-export interface StaffPayrollItem {
-  staffId: string;
-  staffName: string;
-  position: StaffPosition;
-  payType: StaffPayType;
-  baseRate: number;
-  totalSessions: number;
-  totalHours: number;
-  baseSalary: number;
-  allowances: number;
-  bonuses: number;
-  deductions: number;
-  netSalary: number;
-  paymentStatus: 'pending' | 'paid';
-  paidDate?: string;
-  paymentMethod?: 'bank_transfer' | 'cash' | 'other';
-  paymentReference?: string;
-}
-
-export interface StaffPayrollBatch {
-  id: string;
-  month: number;
-  year: number;
-  period: string;
-  staffCount: number;
-  totalPayable: number;
-  status: 'draft' | 'reviewed' | 'approved' | 'paid';
-  items: StaffPayrollItem[];
-  createdAt: string;
-  createdBy: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-  reviewNotes?: string;
-  approvedAt?: string;
-  approvedBy?: string;
-  approvalNotes?: string;
-  paidAt?: string;
-  paidBy?: string;
-  paymentMethod?: string;
-  paymentReference?: string;
-  paymentNotes?: string;
-  isPayrollLocked: boolean;
-  isAttendanceLocked: boolean;
-}
-
-export interface AttendancePeriodLock {
-  id: string;
-  month: number;
-  year: number;
-  isLocked: boolean;
-  lockedAt?: string;
-  lockedBy?: string;
-  reopenedAt?: string;
-  reopenedBy?: string;
-  reopenReason?: string;
-}
-
-export interface PayrollAuditLog {
-  id: string;
-  timestamp: string;
-  period: string;
-  batchId?: string;
-  userId: string;
-  userName: string;
-  action:
-    | 'attendance_lock'
-    | 'attendance_unlock'
-    | 'rate_updated'
-    | 'adjustment_added'
-    | 'payroll_created'
-    | 'payroll_recalculated'
-    | 'payroll_reviewed'
-    | 'payroll_approved'
-    | 'payroll_paid'
-    | 'payroll_reopened';
-  previousState?: string;
-  newState?: string;
-  reason?: string;
-  details: string;
-}
-
-// ==========================================
-// COURSE DURATION MODULE TYPES
-// ==========================================
-
-export type DurationMode = 'months' | 'calendar_days' | 'learning_days' | 'learning_sessions';
-
-export type CourseStatus = 'not_started' | 'in_progress' | 'near_completion' | 'completed' | 'extended' | 'on_hold';
-
-export type ExtensionPolicy = 'none' | 'scheduled_holidays' | 'all_non_study_days' | 'missed_scheduled_lessons' | 'custom';
-
-export type HolidayType = 'tet' | 'national' | 'center' | 'suspension' | 'teacher_absence' | 'other';
-
-export interface CourseHoliday {
-  id: string;
-  holidayName: string;
-  startDate: string;
-  endDate: string;
-  holidayType: HolidayType;
-  reason?: string;
-  affectsScheduledLessons: boolean;
-  notes?: string;
-}
-
-export interface CourseMakeupSession {
-  id: string;
-  classId: string;
-  className?: string;
-  courseDurationId?: string;
-  originalMissedDate?: string;
-  makeupDate: string;
-  time?: string;
-  classroom?: string;
-  teacherId?: string;
-  teacherName?: string;
-  reason?: string;
-  countsTowardCourseProgress: boolean;
-  status: 'scheduled' | 'completed' | 'cancelled';
-}
-
-export interface CourseDurationHistory {
-  id: string;
-  courseDurationId: string;
-  previousExpectedCompletionDate: string;
-  newExpectedCompletionDate: string;
-  reason: string;
-  changedBy: string;
-  changedAt: string;
-}
-
-export interface CourseDurationRecord {
-  id: string;
-  courseName: string;
-  classId?: string;
-  className?: string;
-  courseBook?: string;
-  teacherId?: string;
-  teacherName?: string;
-  durationMode: DurationMode;
-  durationValue: number;
-  courseStartDate: string;
-  originalExpectedCompletionDate: string;
-  currentExpectedCompletionDate: string;
-  extensionPolicy: ExtensionPolicy;
-  requiredSessions: number;
-  completedSessions: number;
-  remainingSessions?: number;
-  progressPercentage: number;
-  status: CourseStatus;
-  notes?: string;
-  calculationExplanation?: string;
-}
-
-// ==========================================
-// LESSON REPORT MODULE TYPES
-// ==========================================
-
-export type HomeworkStatus = 'Đạt' | 'Chưa đạt' | 'Chưa hoàn thành' | 'Không giao BVN';
-
-export type PreviousLessonStatus = 'Đạt' | 'Chưa đạt' | 'Chưa thuộc bài' | 'Chưa chuẩn bị';
-
-export interface StudentLessonReportEntry {
-  studentId: string;
-  studentName: string;
-  homeworkStatus: HomeworkStatus;
-  previousLessonStatus: PreviousLessonStatus;
-  comments: string;
-  assignedHomework: string;
-  notes: string;
-  completed?: boolean;
-}
-
-export interface LessonReport {
-  id: string;
-  classId: string;
-  className: string;
-  teachingDate: string;
-  scheduledTime: string;
-  classroom: string;
-  teacherId: string;
-  teacherName: string;
-  teachingAssistantId?: string;
-  teachingAssistantName?: string;
-  lessonProgress: string;
-  sessionType?: 'regular' | 'makeup';
-  status: 'not_started' | 'in_progress' | 'submitted' | 'completed';
-  totalStudents: number;
-  completedStudents: number;
-  completionPercentage: number;
-  locked: boolean;
-  lockedAt?: string;
-  lockedBy?: string;
-  studentReports: StudentLessonReportEntry[];
-}
-
-export interface IncompleteReportRecord {
-  id: string;
-  reportId: string;
-  teachingDate: string;
-  classId: string;
-  className: string;
-  teacherId: string;
-  teacherName: string;
-  completionPercentage: number;
-  incompleteStudentCount: number;
-  missingFields: string;
-  lockedAt: string;
-  lockedBy: string;
-  status: 'pending' | 'resolved';
-}
-
-export interface MakeupClassSession {
-  id: string;
-  classId: string;
-  className: string;
-  date: string;
-  time: string;
-  classroom: string;
-  teacherId: string;
-  teacherName: string;
-  assistantId?: string;
-  assistantName?: string;
-  lessonProgress: string;
-  notes?: string;
 }
