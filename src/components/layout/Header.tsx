@@ -9,9 +9,9 @@ import {
   RotateCcw,
   CheckCircle2,
   Database,
-  ExternalLink,
   Menu,
-  Clock
+  Clock,
+  LogOut
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
@@ -33,7 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   searchQuery,
   setSearchQuery
 }) => {
-  const { currentUser, switchUser } = useAuth();
+  const { currentUser, logout } = useAuth();
   const { data, resetAllData } = useData();
   const { showToast } = useToast();
 
@@ -59,15 +59,10 @@ export const Header: React.FC<HeaderProps> = ({
     settings: { title: 'Cài Đặt Hệ Thống (Settings)', subtitle: 'Năm học, phòng học, kết nối database và dữ liệu mẫu' }
   };
 
-  const handleRoleChange = (userId: string) => {
-    const targetUser = data.users.find(u => u.id === userId);
-    if (targetUser && targetUser.status !== 'active') {
-      showToast(`Tài khoản "${targetUser.name}" đang tạm khóa`, 'error');
-      return;
-    }
-    switchUser(userId, data.users);
+  const handleLogout = () => {
     setShowRoleMenu(false);
-    showToast(`Đã chuyển sang tài khoản: ${targetUser?.name || userId}`, 'info');
+    logout();
+    showToast('Đã đăng xuất khỏi hệ thống', 'info');
   };
 
   const handleResetData = () => {
@@ -136,14 +131,14 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          {/* ROLE SWITCHER DROPDOWN */}
+          {/* USER PROFILE DROPDOWN */}
           <div className="relative">
             <button
               onClick={() => setShowRoleMenu(!showRoleMenu)}
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 transition-all text-xs font-semibold"
             >
               <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold bg-red-600">
-                {currentUser.name.charAt(0)}
+                {(currentUser.name || 'U').charAt(0)}
               </div>
               <div className="text-left hidden md:block">
                 <div className="text-xs font-bold leading-tight truncate max-w-[140px] text-slate-900">
@@ -162,68 +157,57 @@ export const Header: React.FC<HeaderProps> = ({
 
             {showRoleMenu && (
               <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
-                <div className="px-4 py-2 border-b border-slate-100">
-                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                    Chuyển tài khoản & Phân quyền
-                  </p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Thử nghiệm hệ thống với các vai trò thực tế:
-                  </p>
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-3">
+                  <div
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                      currentUser.role === 'admin'
+                        ? 'bg-amber-100 text-amber-800'
+                        : currentUser.role === 'academic_manager'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-emerald-100 text-emerald-800'
+                    }`}
+                  >
+                    {currentUser.role === 'admin' ? (
+                      <Shield className="w-4 h-4" />
+                    ) : currentUser.role === 'academic_manager' ? (
+                      <Briefcase className="w-4 h-4" />
+                    ) : (
+                      <GraduationCap className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold text-slate-900 text-xs truncate">{currentUser.name}</div>
+                    <div className="text-[11px] text-slate-500 truncate">
+                      {currentUser.username || currentUser.email || currentUser.id}
+                      {currentUser.role === 'teacher' && currentUser.teacherId
+                        ? ` • ${currentUser.teacherId}`
+                        : ''}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="p-1 space-y-1">
-                  {data.users.map(u => {
-                    const isSelected = currentUser.id === u.id;
-                    return (
-                      <button
-                        key={u.id}
-                        onClick={() => handleRoleChange(u.id)}
-                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left text-xs transition-colors ${
-                          isSelected ? 'bg-red-50 text-red-700 font-bold' : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${
-                              u.role === 'admin'
-                                ? 'bg-amber-100 text-amber-800'
-                                : u.role === 'academic_manager'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-emerald-100 text-emerald-800'
-                            }`}
-                          >
-                            {u.role === 'admin' ? (
-                              <Shield className="w-3.5 h-3.5" />
-                            ) : u.role === 'academic_manager' ? (
-                              <Briefcase className="w-3.5 h-3.5" />
-                            ) : (
-                              <GraduationCap className="w-3.5 h-3.5" />
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-slate-900">{u.name}</div>
-                            <div className="text-[11px] text-slate-500">
-                              {u.username || u.email || u.id}
-                              {u.role === 'teacher' && u.teacherId ? ` • ${u.teacherId}` : ''}
-                            </div>
-                          </div>
-                        </div>
-                        {isSelected && <CheckCircle2 className="w-4 h-4 text-red-600" />}
-                      </button>
-                    );
-                  })}
-                </div>
+                {currentUser.role === 'admin' && (
+                  <div className="pt-1 px-1">
+                    <button
+                      onClick={() => {
+                        setShowRoleMenu(false);
+                        handleResetData();
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Khôi phục dữ liệu mẫu ban đầu</span>
+                    </button>
+                  </div>
+                )}
 
                 <div className="border-t border-slate-100 mt-1 pt-1 px-1">
                   <button
-                    onClick={() => {
-                      setShowRoleMenu(false);
-                      handleResetData();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-600 hover:bg-red-50 rounded-lg transition-colors font-bold"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Khôi phục dữ liệu mẫu ban đầu</span>
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Đăng xuất</span>
                   </button>
                 </div>
               </div>
