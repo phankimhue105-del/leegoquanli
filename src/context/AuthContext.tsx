@@ -29,6 +29,7 @@ export interface AppsScriptAuthUser {
 interface AuthContextType {
   currentUser: User;
   isAuthenticated: boolean;
+  isLoading: boolean;
   switchUser: (userId: string, usersList?: User[]) => void;
   switchRoleQuick: (role: UserRole) => void;
   hasPermission: (permission: string) => boolean;
@@ -97,19 +98,20 @@ export function findTeacherForUser(user: User | null, teachers: Teacher[]): Teac
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [userState, setUserState] = useState<User | null>(() => {
     const stored = getStoredUserSession();
-    if (!stored) return null;
+    if (!stored || !stored.id) return null;
     const sanitized = sanitizeAuthUser(stored);
-    return sanitized.status === 'active' ? sanitized : null;
+    return sanitized.status === 'active' && sanitized.id ? sanitized : null;
   });
 
-  const isAuthenticated = Boolean(userState && userState.status === 'active');
+  const isLoading = false;
+  const isAuthenticated = Boolean(userState && userState.id && userState.status === 'active');
   const currentUser: User = userState || UNAUTHENTICATED_PLACEHOLDER;
 
   const getRememberPreference = (): boolean => {
     try {
       return localStorage.getItem(REMEMBER_ME_KEY) === 'true';
     } catch {
-      return true;
+      return false;
     }
   };
 
@@ -134,7 +136,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginAs = (user: User | AppsScriptAuthUser, rememberMe: boolean = true) => {
     const sanitized = sanitizeAuthUser(user);
-    if (sanitized.status !== 'active') {
+    if (!sanitized.id || sanitized.status !== 'active') {
       return;
     }
     saveUserSession(sanitized, rememberMe);
@@ -252,6 +254,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         currentUser,
         isAuthenticated,
+        isLoading,
         switchUser,
         switchRoleQuick,
         hasPermission,
