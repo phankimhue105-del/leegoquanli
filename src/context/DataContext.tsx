@@ -18,7 +18,16 @@ import {
   MonthlyTeachingSchedule,
   TeachingSession
 } from '../types';
-import { loadInitialStorage, saveStorage, resetStorage, AppDataStore } from '../services/dataService';
+import {
+  loadInitialStorage,
+  saveStorage,
+  resetStorage,
+  AppDataStore,
+  getClassWeeklySchedule,
+  formatScheduleDaysLabel,
+  formatScheduleTimeSummary,
+  getWeekdayLabel
+} from '../services/dataService';
 import { useAuth } from './AuthContext';
 
 export interface ScheduleConflictResult {
@@ -318,10 +327,97 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
   };
 
+  // Helper to keep TimetableSession entries in sync with a class's weeklySchedule
+  const syncTimetableForClass = (
+    prevTimetable: TimetableSession[],
+    classItem: ClassItem,
+    teachers: Teacher[],
+    assistants: TeachingAssistant[],
+    previousClass?: ClassItem
+  ): TimetableSession[] => {
+    const slots = getClassWeeklySchedule(classItem);
+    if (slots.length === 0) return prevTimetable;
+
+    const teacher = teachers.find(t => t.id === classItem.teacherId);
+    const assistant = assistants.find(ta => ta.id === classItem.assistantTeacherId);
+
+    const otherSessions = prevTimetable.filter(s => s.classId !== classItem.id);
+    const existingByDay = new Map<number, TimetableSession>();
+    prevTimetable
+      .filter(s => s.classId === classItem.id)
+      .forEach(s => {
+        if (!existingByDay.has(s.dayOfWeek)) {
+          existingByDay.set(s.dayOfWeek, s);
+        }
+      });
+
+    const teacherChanged = Boolean(previousClass && previousClass.teacherId !== classItem.teacherId);
+    const assistantChanged = Boolean(
+      previousClass && (previousClass.assistantTeacherId || '') !== (classItem.assistantTeacherId || '')
+    );
+
+    const syncedSessions: TimetableSession[] = slots.map(slot => {
+      const existing = existingByDay.get(slot.dayOfWeek);
+      if (existing) {
+        return {
+          ...existing,
+          className: classItem.name,
+          classroom: classItem.classroom,
+          dayOfWeek: slot.dayOfWeek,
+          dayName: getWeekdayLabel(slot.dayOfWeek),
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          ...(teacherChanged || !existing.teacherId
+            ? {
+                teacherId: classItem.teacherId,
+                teacherName: teacher?.fullName || existing.teacherName
+              }
+            : {}),
+          ...(assistantChanged
+            ? {
+                assistantId: classItem.assistantTeacherId || undefined,
+                assistantName: assistant?.fullName || undefined
+              }
+            : {})
+        };
+      }
+
+      return {
+        id: `SES-${classItem.id}-D${slot.dayOfWeek}`,
+        classId: classItem.id,
+        className: classItem.name,
+        teacherId: classItem.teacherId,
+        teacherName: teacher?.fullName || '',
+        assistantId: classItem.assistantTeacherId || undefined,
+        assistantName: assistant?.fullName || undefined,
+        classroom: classItem.classroom,
+        dayOfWeek: slot.dayOfWeek,
+        dayName: getWeekdayLabel(slot.dayOfWeek),
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        status: 'scheduled'
+      };
+    });
+
+    return [...otherSessions, ...syncedSessions];
+  };
+
   // 3. Classes
   const addClass = (clsData: Omit<ClassItem, 'id'>): ClassItem => {
     const newId = `CLS-${Date.now().toString().slice(-4)}`;
-    const newClass: ClassItem = { ...clsData, id: newId };
+    const slots = getClassWeeklySchedule(clsData);
+    const newClass: ClassItem = {
+      ...clsData,
+      id: newId,
+      ...(slots.length > 0
+        ? {
+            weeklySchedule: slots,
+            scheduleDays: formatScheduleDaysLabel(slots),
+            scheduleTime: formatScheduleTimeSummary(slots)
+          }
+        : {})
+    };
+
     setData(prev => {
       // also update teacher's assignedClassIds
       const updatedTeachers = prev.teachers.map(t => {
@@ -335,10 +431,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return t;
       });
 
+      const updatedTimetable = syncTimetableForClass(
+        prev.timetable,
+        newClass,
+        updatedTeachers,
+        prev.teachingAssistants
+      );
+
       return {
         ...prev,
         classes: [newClass, ...prev.classes],
-        teachers: updatedTeachers
+        teachers: updatedTeachers,
+        timetable: updatedTimetable
       };
     });
 
@@ -348,10 +452,68 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateClass = (id: string, updates: Partial<ClassItem>) => {
     setData(prev => {
-      const updatedClasses = prev.classes.map(c => (c.id === id ? { ...c, ...updates } : c));
+      const existingClass = prev.classes.find(c => c.id === id);
+      if (!existingClass) return prev;
+
+      const merged: ClassItem = { ...existingClass, ...updates };
+      if (
+        updates.weeklySchedule !== undefined ||
+        updates.scheduleDays !== undefined ||
+        updates.scheduleTime !== undefined
+      ) {
+        const slots = getClassWeeklySchedule(merged);
+        if (slots.length > 0) {
+          merged.weeklySchedule = slots;
+          merged.scheduleDays = formatScheduleDaysLabel(slots);
+          merged.scheduleTime = formatScheduleTimeSummary(slots);
+        }
+      }
+
+      const updatedClasses = prev.classes.map(c => (c.id === id ? merged : c));
+
+      let updatedTeachers = prev.teachers;
+      if (updates.teacherId !== undefined && updates.teacherId !== existingClass.teacherId) {
+        updatedTeachers = prev.teachers.map(t => {
+          if (t.id === existingClass.teacherId) {
+            return {
+              ...t,
+              assignedClassIds: t.assignedClassIds.filter(cid => cid !== id)
+            };
+          }
+          if (t.id === updates.teacherId && !t.assignedClassIds.includes(id)) {
+            return {
+              ...t,
+              assignedClassIds: [...t.assignedClassIds, id]
+            };
+          }
+          return t;
+        });
+      }
+
+      const shouldSyncTimetable =
+        updates.weeklySchedule !== undefined ||
+        updates.scheduleDays !== undefined ||
+        updates.scheduleTime !== undefined ||
+        updates.teacherId !== undefined ||
+        updates.assistantTeacherId !== undefined ||
+        updates.classroom !== undefined ||
+        updates.name !== undefined;
+
+      const updatedTimetable = shouldSyncTimetable
+        ? syncTimetableForClass(
+            prev.timetable,
+            merged,
+            updatedTeachers,
+            prev.teachingAssistants,
+            existingClass
+          )
+        : prev.timetable;
+
       return {
         ...prev,
-        classes: updatedClasses
+        classes: updatedClasses,
+        teachers: updatedTeachers,
+        timetable: updatedTimetable
       };
     });
     addActivityLog('Cập nhật lớp học', `Đã cập nhật thông tin lớp học mã ${id}`);
@@ -725,51 +887,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 10. Users
   const addUser = (userData: Omit<User, 'id' | 'createdAt'>): User => {
-    const existingNums = data.users
-      .map(u => {
-        const match = /^USR-(\d+)$/.exec(u.id);
-        return match ? Number(match[1]) : 0;
-      });
-    const nextNum = (existingNums.length > 0 ? Math.max(...existingNums) : data.users.length) + 1;
-    const newId = `USR-${String(nextNum).padStart(3, '0')}`;
-    const normalizedTeacherId =
-      userData.role === 'teacher' ? userData.teacherId?.trim() || undefined : undefined;
-
+    const newId = `USR-${String(data.users.length + 1).padStart(3, '0')}`;
     const newUser: User = {
       ...userData,
       id: newId,
-      username: userData.username?.trim() || undefined,
-      teacherId: normalizedTeacherId,
       createdAt: new Date().toISOString().slice(0, 10)
     };
     setData(prev => ({
       ...prev,
       users: [...prev.users, newUser]
     }));
-    addActivityLog(
-      'Tạo tài khoản',
-      `Đã tạo tài khoản cho ${newUser.name} (${newUser.username || newUser.email || newUser.id})`
-    );
+    addActivityLog('Tạo tài khoản', `Đã tạo tài khoản cho ${newUser.name} (${newUser.email})`);
     return newUser;
   };
 
   const updateUser = (id: string, updates: Partial<User>) => {
     setData(prev => ({
       ...prev,
-      users: prev.users.map(u => {
-        if (u.id !== id) return u;
-        const nextRole = updates.role ?? u.role;
-        const nextTeacherId =
-          nextRole === 'teacher'
-            ? (updates.teacherId !== undefined ? updates.teacherId.trim() || undefined : u.teacherId)
-            : undefined;
-        return {
-          ...u,
-          ...updates,
-          username: updates.username !== undefined ? updates.username.trim() || undefined : u.username,
-          teacherId: nextTeacherId
-        };
-      })
+      users: prev.users.map(u => (u.id === id ? { ...u, ...updates } : u))
     }));
     addActivityLog('Cập nhật tài khoản', `Đã cập nhật tài khoản ${id}`);
   };
@@ -777,17 +912,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const toggleUserStatus = (id: string) => {
     setData(prev => ({
       ...prev,
-      users: prev.users.map(u => {
-        if (u.id !== id) return u;
-        const nextStatus = u.status === 'active' ? 'inactive' : 'active';
-        if (nextStatus === 'active' && u.role === 'teacher') {
-          const linkedTeacher = prev.teachers.find(t => t.id === u.teacherId && t.status === 'active');
-          if (!linkedTeacher) {
-            return u;
-          }
-        }
-        return { ...u, status: nextStatus };
-      })
+      users: prev.users.map(u =>
+        u.id === id ? { ...u, status: u.status === 'active' ? 'inactive' : 'active' } : u
+      )
     }));
   };
 
@@ -824,36 +951,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           taId: t.assistantId || assistant?.id,
         };
       });
-    } else if (cls?.scheduleDays) {
-      const lower = cls.scheduleDays.toLowerCase();
-      const defaultTime = cls.scheduleTime || '7:30 – 9:00pm';
+    } else if (cls) {
+      const weeklySlots = getClassWeeklySchedule(cls);
       const defaultRoom = cls.classroom || '1A';
       const defaultTchName = teacher?.vietnameseName || teacher?.fullName || 'Giáo viên';
       const defaultTchId = teacher?.id || '';
       const defaultTaName = assistant?.fullName;
       const defaultTaId = assistant?.id;
 
-      if (lower.includes('thứ 2') || lower.includes('t2') || lower.includes('monday') || lower.includes('mon')) {
-        activeDaysMap[1] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
-      }
-      if (lower.includes('thứ 3') || lower.includes('t3') || lower.includes('tuesday') || lower.includes('tue')) {
-        activeDaysMap[2] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
-      }
-      if (lower.includes('thứ 4') || lower.includes('t4') || lower.includes('wednesday') || lower.includes('wed')) {
-        activeDaysMap[3] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
-      }
-      if (lower.includes('thứ 5') || lower.includes('t5') || lower.includes('thursday') || lower.includes('thu')) {
-        activeDaysMap[4] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
-      }
-      if (lower.includes('thứ 6') || lower.includes('t6') || lower.includes('friday') || lower.includes('fri')) {
-        activeDaysMap[5] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
-      }
-      if (lower.includes('thứ 7') || lower.includes('t7') || lower.includes('saturday') || lower.includes('sat')) {
-        activeDaysMap[6] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
-      }
-      if (lower.includes('chủ nhật') || lower.includes('cn') || lower.includes('sunday') || lower.includes('sun')) {
-        activeDaysMap[7] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
-      }
+      weeklySlots.forEach(slot => {
+        activeDaysMap[slot.dayOfWeek] = {
+          time: `${slot.startTime} – ${slot.endTime}`,
+          classroom: defaultRoom,
+          teacherName: defaultTchName,
+          teacherId: defaultTchId,
+          taName: defaultTaName,
+          taId: defaultTaId,
+        };
+      });
     }
 
     const totalDays = new Date(year, month, 0).getDate();
@@ -928,7 +1043,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       teacherName: defaultTeacherLabel,
       teachingAssistantId: cls?.assistantTeacherId,
       teachingAssistantName: defaultTALabel,
-      defaultTime: cls?.scheduleTime || '7:30 – 9:00pm, Monday/Thursday',
+      defaultTime: cls
+        ? formatScheduleTimeSummary(getClassWeeklySchedule(cls)) || cls.scheduleTime || '7:30 – 9:00pm, Monday/Thursday'
+        : '7:30 – 9:00pm, Monday/Thursday',
       defaultClassroom: cls?.classroom || '1A',
       courseBook: cls?.curriculum || program?.textbook || 'GET READY FOR STARTERS',
       generatedFromTimetable: true,
