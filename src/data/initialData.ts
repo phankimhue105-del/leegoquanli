@@ -1,3 +1,6 @@
+# `src/data/initialData.ts` (Complete Modified File)
+
+```ts
 import {
   Student,
   ClassItem,
@@ -13,19 +16,13 @@ import {
   ActivityLog,
   Parent,
   MonthlyTeachingSchedule,
-  TeachingSession,
-  LessonReport,
-  IncompleteReportRecord,
-  MakeupClassSession,
-  CourseDurationRecord,
-  CourseHoliday,
-  CourseMakeupSession,
-  CourseDurationHistoryEntry
+  TeachingSession
 } from '../types';
 
 export const initialUsers: User[] = [
   {
     id: 'USR-001',
+    username: 'admin',
     name: 'Nguyễn Quản Trị (Admin)',
     email: 'admin@leego.edu.vn',
     role: 'admin',
@@ -36,6 +33,7 @@ export const initialUsers: User[] = [
   },
   {
     id: 'USR-002',
+    username: 'academic',
     name: 'Trần Học Thuật (Academic Manager)',
     email: 'academic@leego.edu.vn',
     role: 'academic_manager',
@@ -46,6 +44,7 @@ export const initialUsers: User[] = [
   },
   {
     id: 'USR-003',
+    username: 'Teacher 01',
     name: 'Mr. David Miller (Teacher)',
     email: 'david.miller@leego.edu.vn',
     role: 'teacher',
@@ -57,6 +56,7 @@ export const initialUsers: User[] = [
   },
   {
     id: 'USR-004',
+    username: 'Teacher 02',
     name: 'Cô Lê Thu Trang (Teacher)',
     email: 'trang.le@leego.edu.vn',
     role: 'teacher',
@@ -356,7 +356,7 @@ export const initialClasses: ClassItem[] = [
   },
   {
     id: 'CLS-FLY-01',
-    name: 'Step 5 (Flyers Challenger 01)',
+    name: 'Flyers Challenger 01',
     code: 'FLY-C01',
     level: 'A2 Flyers',
     courseId: 'PROG-FLY',
@@ -1007,36 +1007,6 @@ export const initialParents: Parent[] = [
 
 export const initialTimetableSessions: TimetableSession[] = [
   {
-    id: 'SES-FLY-FRI',
-    classId: 'CLS-FLY-01',
-    className: 'Step 5',
-    teacherId: 'TCH-006',
-    teacherName: 'Ms.D.Huyền',
-    assistantId: 'TA-001',
-    assistantName: 'Nguyễn Thảo Linh',
-    classroom: 'Phòng 202 - Focus Room',
-    dayOfWeek: 5,
-    dayName: 'Thứ 6 (Friday)',
-    startTime: '19:15',
-    endTime: '20:45',
-    status: 'scheduled'
-  },
-  {
-    id: 'SES-STA-FRI',
-    classId: 'CLS-STA-02',
-    className: 'Star 2',
-    teacherId: 'TCH-001',
-    teacherName: 'David Miller',
-    assistantId: 'TA-003',
-    assistantName: 'Thiên',
-    classroom: 'Phòng 101 - Smart Room',
-    dayOfWeek: 5,
-    dayName: 'Thứ 6 (Friday)',
-    startTime: '17:30',
-    endTime: '19:00',
-    status: 'scheduled'
-  },
-  {
     id: 'SES-001',
     classId: 'CLS-STA-01',
     className: 'Star 1 (Starters Explorer 01)',
@@ -1099,7 +1069,7 @@ export const initialTimetableSessions: TimetableSession[] = [
   {
     id: 'SES-005',
     classId: 'CLS-FLY-01',
-    classname: 'Step 5 (Flyers Challenger 01)',
+    className: 'Flyers Challenger 01',
     teacherId: 'TCH-003',
     teacherName: 'Nguyễn Văn Minh',
     assistantId: 'TA-001',
@@ -1114,7 +1084,7 @@ export const initialTimetableSessions: TimetableSession[] = [
   {
     id: 'SES-006',
     classId: 'CLS-FLY-01',
-    classname: 'Step 5 (Flyers Challenger 01)',
+    className: 'Flyers Challenger 01',
     teacherId: 'TCH-003',
     teacherName: 'Nguyễn Văn Minh',
     assistantId: 'TA-001',
@@ -1364,7 +1334,7 @@ export const initialAssessments: AssessmentRecord[] = [
   {
     id: 'ASM-2025-FLY-MID',
     classId: 'CLS-FLY-01',
-    classname: 'Step 5 (Flyers Challenger 01)',
+    className: 'Flyers Challenger 01',
     title: 'Kiểm tra Năng lực Định kỳ Cambridge Flyers (10-Point)',
     examType: 'Monthly',
     date: '2025-02-28',
@@ -1795,447 +1765,4 @@ export const initialTeachingSchedules: MonthlyTeachingSchedule[] = [
     ]
   }
 ];
-
-
-
-export const initialLessonReports: LessonReport[] = [
-  {
-    id: 'LR-CLS-FLY-01-2026-11-06',
-    classId: 'CLS-FLY-01',
-    className: 'Step 5',
-    teachingDate: '2026-11-06',
-    sessionType: 'regular',
-    teacherId: 'TCH-006',
-    teacherName: 'Ms.D.Huyền',
-    teachingAssistantId: 'TA-001',
-    teachingAssistantName: 'Nguyễn Thảo Linh',
-    scheduledTime: '19:15 - 20:45',
-    classroom: 'Phòng 202 - Focus Room',
-    lessonProgress: 'Unit 3 – Lesson 2',
-    status: 'in_progress',
-    locked: false,
-    completionPercentage: 80,
-    totalStudents: 10,
-    completedStudents: 8,
-    createdBy: 'Ms.D.Huyền',
-    createdAt: '2026-11-06 20:50',
-    updatedBy: 'Ms.D.Huyền',
-    updatedAt: '2026-11-06 21:30',
-    studentReports: [
-      {
-        studentId: 'LG-STU-017',
-        studentName: 'Trịnh Hoàng Long',
-        homeworkStatus: 'Đạt',
-        previousLessonStatus: 'Đạt',
-        comments: 'Con nắm được từ vựng và cấu trúc câu, thực hành chính xác cấu trúc Unit 3.',
-        assignedHomework: 'Ôn tập từ vựng Unit 3, hoàn thành WB trang 26–27.',
-        notes: 'Speaking Test: 8.5/10',
-        completed: true
-      },
-      {
-        studentId: 'LG-STU-018',
-        studentName: 'Đặng Mai Phương',
-        homeworkStatus: 'Đạt',
-        previousLessonStatus: 'Đạt',
-        comments: 'Con rất hăng hái, tập trung và thực hành tốt mẫu câu hỏi đáp.',
-        assignedHomework: 'Hoàn thành bài tập viết WB/28 và quay video phát âm 5 từ mới.',
-        notes: 'Vocabulary Test: 9/10',
-        completed: true
-      },
-      {
-        studentId: 'LG-STU-019',
-        studentName: 'Bùi Gia Huy',
-        homeworkStatus: 'Đạt',
-        previousLessonStatus: 'Chưa đạt',
-        comments: 'Con làm bài tập về nhà đầy đủ nhưng cần ôn lại cách dùng thì quá khứ.',
-        assignedHomework: 'Luyện viết 5 câu quá khứ đơn, học thuộc bảng động từ bất quy tắc.',
-        notes: 'Grammar Quiz: 6.5/10',
-        completed: true
-      },
-      {
-        studentId: 'LG-STU-020',
-        studentName: 'Nguyễn Thùy Linh',
-        homeworkStatus: 'Chưa đạt',
-        previousLessonStatus: 'Đạt',
-        comments: 'Con chưa hoàn thành hết bài tập trong sách bài tập, cần rèn tính tự giác hơn.',
-        assignedHomework: 'Làm bù bài tập trang 25 và nộp lại cho cô vào buổi sau.',
-        notes: 'Cần phụ huynh nhắc nhở làm BVN',
-        completed: true
-      },
-      {
-        studentId: 'LG-STU-021',
-        studentName: 'Phạm Đức Anh',
-        homeworkStatus: 'Đạt',
-        previousLessonStatus: 'Đạt',
-        comments: 'Con phản xạ speaking nhanh nhẹn, tự tin phát biểu trước lớp.',
-        assignedHomework: 'Đọc đoạn văn Unit 3 và trả lời 4 câu hỏi đọc hiểu.',
-        notes: 'Speaking Test: 9.0/10',
-        completed: true
-      },
-      {
-        studentId: 'LG-STU-022',
-        studentName: 'Vũ Hải Yến',
-        homeworkStatus: 'Đạt',
-        previousLessonStatus: 'Đạt',
-        comments: 'Con chăm chỉ, ghi chép bài cẩn thận, phát âm âm cuối rất tốt.',
-        assignedHomework: 'Ôn tập từ vựng và chuẩn bị bài mới Unit 4.',
-        notes: 'Written Test: 18/20',
-        completed: true
-      },
-      {
-        studentId: 'LG-STU-023',
-        studentName: 'Lý Quốc Bảo',
-        homeworkStatus: 'Chưa hoàn thành',
-        previousLessonStatus: 'Chưa thuộc bài',
-        comments: 'Con còn lơ là, chưa thuộc từ vựng bài cũ và quên mang sách bài tập.',
-        assignedHomework: 'Chép phạt từ vựng 2 lần, làm lại WB trang 26.',
-        notes: 'Đã trao đổi trực tiếp với phụ huynh',
-        completed: true
-      },
-      {
-        studentId: 'LG-STU-024',
-        studentName: 'Hoàng Kim Ngân',
-        homeworkStatus: 'Đạt',
-        previousLessonStatus: 'Đạt',
-        comments: 'Con tiếp thu nhanh, giọng đọc truyền cảm và rõ ràng.',
-        assignedHomework: 'Luyện nghe audio track 15 và làm bài tập trắc nghiệm.',
-        notes: 'Listening Score: 10/10',
-        completed: true
-      },
-      {
-        studentId: 'LG-STU-025',
-        studentName: 'Dương Văn Phong',
-        homeworkStatus: 'Đạt',
-        previousLessonStatus: 'Chưa chuẩn bị',
-        comments: '',
-        assignedHomework: 'Ôn tập Unit 3.',
-        notes: '',
-        completed: false
-      },
-      {
-        studentId: 'LG-STU-026',
-        studentName: 'Tô Minh Châu',
-        homeworkStatus: '',
-        previousLessonStatus: '',
-        comments: '',
-        assignedHomework: '',
-        notes: '',
-        completed: false
-      }
-    ]
-  },
-  {
-    id: 'LR-CLS-STA-02-2026-11-06',
-    classId: 'CLS-STA-02',
-    className: 'Star 2',
-    teachingDate: '2026-11-06',
-    sessionType: 'regular',
-    teacherId: 'TCH-001',
-    teacherName: 'David Miller',
-    teachingAssistantId: 'TA-003',
-    teachingAssistantName: 'Thiên',
-    scheduledTime: '17:30 - 19:00',
-    classroom: 'Phòng 101 - Smart Room',
-    lessonProgress: 'Unit 2 – Lesson 1',
-    status: 'not_started',
-    locked: false,
-    completionPercentage: 0,
-    totalStudents: 12,
-    completedStudents: 0,
-    createdBy: 'David Miller',
-    createdAt: '2026-11-06 17:00',
-    updatedBy: 'David Miller',
-    updatedAt: '2026-11-06 17:00',
-    studentReports: [
-      { studentId: 'LG-STU-001', studentName: 'Nguyễn Bảo Nam', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-002', studentName: 'Trần Hà My', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-003', studentName: 'Lê Quang Dũng', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-004', studentName: 'Hoàng Minh Khôi', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-005', studentName: 'Phạm Ngọc Diệp', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-006', studentName: 'Vũ Gia Khiêm', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-007', studentName: 'Trịnh Bảo Châu', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-008', studentName: 'Ngô Tuấn Hưng', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-009', studentName: 'Đặng Tuấn Kiệt', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-010', studentName: 'Bùi Anh Thư', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-011', studentName: 'Trần Minh Trí', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false },
-      { studentId: 'LG-STU-012', studentName: 'Đỗ Thảo Vy', homeworkStatus: '', previousLessonStatus: '', comments: '', assignedHomework: '', notes: '', completed: false }
-    ]
-  }
-];
-
-export const initialIncompleteReports: IncompleteReportRecord[] = [
-  {
-    id: 'INC-20261106-01',
-    teacherId: 'TCH-006',
-    teacherName: 'Ms.D.Huyền',
-    classId: 'CLS-FLY-01',
-    className: 'Step 5',
-    teachingDate: '2026-11-06',
-    scheduledTime: '19:15 - 20:45',
-    reportId: 'LR-CLS-FLY-01-2026-11-06',
-    completionPercentage: 80,
-    incompleteStudentCount: 2,
-    missingFields: '2 học sinh (Dương Văn Phong, Tô Minh Châu) chưa điền nhận xét hoặc tình hình bài tập',
-    lockedAt: '2026-11-06 22:00',
-    lockedBy: 'Trần Học Thuật (Academic Manager)',
-    status: 'pending'
-  },
-  {
-    id: 'INC-20261106-02',
-    teacherId: 'TCH-001',
-    teacherName: 'David Miller',
-    classId: 'CLS-STA-02',
-    className: 'Star 2',
-    teachingDate: '2026-11-06',
-    scheduledTime: '17:30 - 19:00',
-    reportId: 'LR-CLS-STA-02-2026-11-06',
-    completionPercentage: 0,
-    incompleteStudentCount: 12,
-    missingFields: 'Chưa khởi tạo báo cáo (12 học sinh chưa có dữ liệu)',
-    lockedAt: '2026-11-06 22:00',
-    lockedBy: 'Trần Học Thuật (Academic Manager)',
-    status: 'pending'
-  }
-];
-
-export const initialMakeupSessions: MakeupClassSession[] = [
-  {
-    id: 'MK-20261106-01',
-    classId: 'CLS-STA-01',
-    className: 'Star 1',
-    date: '2026-11-06',
-    time: '18:00 - 19:30',
-    classroom: '1A',
-    teacherId: 'TCH-006',
-    teacherName: 'Ms.D.Huyền',
-    assistantId: 'TA-003',
-    assistantName: 'Thiên',
-    lessonProgress: 'Unit 2 – Lesson 2 (Học bù buổi nghỉ lễ)',
-    notes: 'Lớp học bù cho buổi nghỉ lễ 02/09',
-    createdAt: '2026-11-04 10:00',
-    createdBy: 'Trần Học Thuật (Academic Manager)'
-  }
-];
-// ==========================================
-// COURSE DURATION MANAGER INITIAL DATA
-// ==========================================
-
-export const initialCourseHolidays: CourseHoliday[] = [
-  {
-    id: 'HOL-001',
-    holidayName: 'Tết Nguyên Đán 2027 (Đinh Mùi)',
-    startDate: '2027-02-05',
-    endDate: '2027-02-15',
-    holidayType: 'tet',
-    reason: 'Kỳ nghỉ Tết cổ truyền theo thông báo của Bộ LĐTBXH',
-    affectsScheduledLessons: true,
-    notes: 'Toàn bộ các lớp dừng học trong thời gian này. Hệ thống tự động tính ngày bù.',
-    createdAt: '2026-11-01 08:00',
-    createdBy: 'Trần Học Thuật (Academic Manager)'
-  },
-  {
-    id: 'HOL-002',
-    holidayName: 'Lễ Giáng Sinh & Hoạt Động Ngoại Khóa',
-    startDate: '2026-12-24',
-    endDate: '2026-12-25',
-    holidayType: 'center',
-    reason: 'Sự kiện Noel và hoạt động ngoại khóa tại trung tâm LeeGo',
-    affectsScheduledLessons: true,
-    notes: 'Các lớp học trong 2 ngày này được tạm hoãn',
-    createdAt: '2026-11-02 09:30',
-    createdBy: 'Trần Học Thuật (Academic Manager)'
-  },
-  {
-    id: 'HOL-003',
-    holidayName: 'Ngày Giải Phóng & Quốc Tế Lao Động',
-    startDate: '2027-04-30',
-    endDate: '2027-05-02',
-    holidayType: 'national',
-    reason: 'Nghỉ lễ 30/4 và 1/5 theo lịch quốc gia',
-    affectsScheduledLessons: true,
-    notes: 'Nghỉ 3 ngày lễ chính thức',
-    createdAt: '2026-11-01 08:00',
-    createdBy: 'Trần Học Thuật (Academic Manager)'
-  },
-  {
-    id: 'HOL-004',
-    holidayName: 'Bảo Trì Cơ Sở Vật Chất & Kỷ Niệm 20/11',
-    startDate: '2026-11-20',
-    endDate: '2026-11-20',
-    holidayType: 'center',
-    reason: 'Ngày Nhà giáo Việt Nam và nâng cấp trang thiết bị phòng Lab',
-    affectsScheduledLessons: true,
-    notes: 'Chỉ nghỉ các lớp học trong ngày 20/11',
-    createdAt: '2026-11-03 14:00',
-    createdBy: 'Trần Học Thuật (Academic Manager)'
-  }
-];
-
-export const initialCourseMakeups: CourseMakeupSession[] = [
-  {
-    id: 'MK-CD-001',
-    classId: 'CLS-FLY-01',
-    className: 'Step 5 (Flyers Challenger 01)',
-    courseDurationId: 'CD-FLY-01',
-    originalMissedDate: '2026-10-19',
-    makeupDate: '2026-10-25',
-    time: '09:00 - 10:30',
-    classroom: '101',
-    teacherId: 'TCH-003',
-    teacherName: 'Michael Chang',
-    reason: 'Bù buổi nghỉ do sự cố mất điện khu vực ngày 19/10',
-    notes: 'Đã hoàn thành 100% học viên tham dự',
-    countsTowardCourseProgress: true,
-    status: 'completed',
-    createdAt: '2026-10-20 09:00',
-    createdBy: 'Trần Học Thuật (Academic Manager)'
-  },
-  {
-    id: 'MK-CD-002',
-    classId: 'CLS-STA-01',
-    className: 'Star 1 (Starters Explorer 01)',
-    courseDurationId: 'CD-STA-01',
-    originalMissedDate: '2026-11-20',
-    makeupDate: '2026-11-22',
-    time: '18:00 - 19:30',
-    classroom: '1A',
-    teacherId: 'TCH-001',
-    teacherName: 'David Miller',
-    reason: 'Học bù buổi nghỉ ngày Nhà giáo Việt Nam 20/11',
-    notes: 'Xếp lịch vào Chủ Nhật để phụ huynh tiện đưa đón',
-    countsTowardCourseProgress: true,
-    status: 'scheduled',
-    createdAt: '2026-11-05 14:00',
-    createdBy: 'Trần Học Thuật (Academic Manager)'
-  }
-];
-
-export const initialCourseDurationHistory: CourseDurationHistoryEntry[] = [
-  {
-    id: 'HIST-CD-001',
-    courseDurationId: 'CD-MOV-01',
-    originalStartDate: '2026-12-01',
-    previousExpectedCompletionDate: '2027-06-01',
-    newExpectedCompletionDate: '2027-06-15',
-    reason: 'Tự động tính thêm 3 buổi bị ảnh hưởng bởi kỳ nghỉ Tết Nguyên Đán (áp dụng chính sách gia hạn ngày nghỉ lễ)',
-    changedBy: 'Trần Học Thuật (Academic Manager)',
-    changedAt: '2026-11-02 11:15'
-  },
-  {
-    id: 'HIST-CD-002',
-    courseDurationId: 'CD-FLY-01',
-    originalStartDate: '2026-10-01',
-    previousExpectedCompletionDate: '2027-03-15',
-    newExpectedCompletionDate: '2027-03-22',
-    reason: 'Điều chỉnh lịch hoàn thành sau khi chốt lịch thi chứng chỉ Cambridge Flyers',
-    changedBy: 'Trần Học Thuật (Academic Manager)',
-    changedAt: '2026-10-28 16:40'
-  }
-];
-
-export const initialCourseDurations: CourseDurationRecord[] = [
-  {
-    id: 'CD-MOV-01',
-    courseName: 'Cambridge Movers (Adventurer 01)',
-    classId: 'CLS-MOV-01',
-    className: 'Movers Adventurer 01',
-    courseBook: "Kid's Box 3 (Second Edition)",
-    teacherId: 'TCH-001',
-    teacherName: 'David Miller',
-    academicProgramId: 'PROG-002',
-    durationMode: 'months',
-    durationValue: 6,
-    courseStartDate: '2026-12-01',
-    originalExpectedCompletionDate: '2027-06-01',
-    currentExpectedCompletionDate: '2027-06-15',
-    extensionPolicy: 'scheduled_holidays',
-    requiredSessions: 72,
-    completedSessions: 36,
-    progressPercentage: 50,
-    remainingSessions: 36,
-    calculationExplanation: 'Tính theo lịch 6 tháng: 01/12/2026 + 6 tháng = 01/06/2027. Do áp dụng chính sách gia hạn theo ngày nghỉ lễ (Tết Nguyên Đán 3 buổi), ngày hoàn thành dự kiến chuyển sang 15/06/2027.',
-    notes: 'Lớp học theo lịch Thứ 3 & Thứ 5. Đã hoàn thành 50% thời lượng bài thi Movers.',
-    status: 'in_progress',
-    createdBy: 'Trần Học Thuật (Academic Manager)',
-    createdAt: '2026-11-01 09:00',
-    updatedAt: '2026-11-02 11:15'
-  },
-  {
-    id: 'CD-STA-01',
-    courseName: 'Cambridge Starters (Star 1)',
-    classId: 'CLS-STA-01',
-    className: 'Star 1 (Starters Explorer 01)',
-    courseBook: "Kid's Box 1 (Second Edition)",
-    teacherId: 'TCH-001',
-    teacherName: 'David Miller',
-    academicProgramId: 'PROG-001',
-    durationMode: 'learning_sessions',
-    durationValue: 36,
-    courseStartDate: '2026-09-01',
-    originalExpectedCompletionDate: '2026-12-15',
-    currentExpectedCompletionDate: '2026-12-17',
-    extensionPolicy: 'scheduled_holidays',
-    requiredSessions: 36,
-    completedSessions: 34,
-    progressPercentage: 94,
-    remainingSessions: 2,
-    calculationExplanation: 'Tổng 36 buổi học (Thứ 2, Thứ 5 lúc 19:30). Đã học 34 buổi, còn lại 2 buổi. Khóa học sắp kết thúc (< 30 ngày).',
-    notes: 'Lớp chuẩn bị thi lấy chứng chỉ Pre-A1 Starters của Cambridge.',
-    status: 'near_completion',
-    createdBy: 'Trần Học Thuật (Academic Manager)',
-    createdAt: '2026-09-01 08:30',
-    updatedAt: '2026-11-05 14:00'
-  },
-  {
-    id: 'CD-FLY-01',
-    courseName: 'Cambridge Flyers (Step 5)',
-    classId: 'CLS-FLY-01',
-    className: 'Step 5 (Flyers Challenger 01)',
-    courseBook: "Kid's Box 5 & Cambridge Flyers Practice Tests",
-    teacherId: 'TCH-003',
-    teacherName: 'Michael Chang',
-    academicProgramId: 'PROG-003',
-    durationMode: 'learning_days',
-    durationValue: 48,
-    courseStartDate: '2026-10-01',
-    originalExpectedCompletionDate: '2027-03-15',
-    currentExpectedCompletionDate: '2027-03-22',
-    extensionPolicy: 'all_non_study_days',
-    requiredSessions: 48,
-    completedSessions: 20,
-    progressPercentage: 42,
-    remainingSessions: 28,
-    calculationExplanation: 'Yêu cầu 48 ngày học thực tế (Thứ 2, Thứ 6 lúc 19:15). Đã học bù 1 buổi ngày 25/10/2026; dự kiến kết thúc ngày 22/03/2027.',
-    notes: 'Lớp nâng cao Flyers, chuẩn bị chuyển tiếp sang khung Cambridge KET (A2 Key).',
-    status: 'in_progress',
-    createdBy: 'Trần Học Thuật (Academic Manager)',
-    createdAt: '2026-10-01 08:00',
-    updatedAt: '2026-10-28 16:40'
-  },
-  {
-    id: 'CD-KET-01',
-    courseName: 'Cambridge KET Intensive',
-    classId: 'CLS-KET-01',
-    className: 'KET Intensive Mastery',
-    courseBook: 'Complete Key for Schools (B1 Preliminary Preparation)',
-    teacherId: 'TCH-002',
-    teacherName: 'Sarah Jenkins',
-    academicProgramId: 'PROG-004',
-    durationMode: 'months',
-    durationValue: 3,
-    courseStartDate: '2026-11-10',
-    originalExpectedCompletionDate: '2027-02-10',
-    currentExpectedCompletionDate: '2027-02-10',
-    extensionPolicy: 'none',
-    requiredSessions: 36,
-    completedSessions: 0,
-    progressPercentage: 0,
-    remainingSessions: 36,
-    calculationExplanation: 'Khóa học cấp tốc 3 tháng: 10/11/2026 đến 10/02/2027. Chính sách không kéo dài ngày kết thúc.',
-    notes: 'Lớp sắp khai giảng vào ngày 10/11/2026.',
-    status: 'not_started',
-    createdBy: 'Trần Học Thuật (Academic Manager)',
-    createdAt: '2026-11-04 15:30',
-    updatedAt: '2026-11-04 15:30'
-  }
-];
+```
