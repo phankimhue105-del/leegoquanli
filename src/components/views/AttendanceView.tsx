@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ClipboardCheck,
   CheckCircle2,
@@ -11,94 +11,19 @@ import {
   Search,
   Check,
   Download,
-  Filter,
-  UserCheck,
-  ChevronLeft,
-  ChevronRight
+  Filter
 } from 'lucide-react';
-import { AttendanceStatus, StudentAttendanceEntry, AttendanceRecord } from '../../types';
+import { AttendanceStatus, StudentAttendanceEntry } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import { exportAttendanceReportToExcel } from '../../services/dataService';
-
-interface ScheduledClassCard {
-  classId: string;
-  className: string;
-  teacherName: string;
-  assistantName?: string;
-  timeSlot: string;
-  timeMinutes: number;
-  isAttended: boolean;
-  attendanceRecord?: AttendanceRecord;
-}
-
-// Helper to convert time strings (e.g. "17:30", "7:30pm", "17:30 - 19:00") into minutes from midnight for sorting
-const parseStartTimeToMinutes = (timeStr?: string): number => {
-  if (!timeStr) return 9999;
-  const clean = timeStr.trim();
-  const isPM = clean.toLowerCase().includes('pm');
-  const isAM = clean.toLowerCase().includes('am');
-
-  const match = clean.match(/(\d{1,2}):(\d{2})/);
-  if (!match) {
-    const hourMatch = clean.match(/(\d{1,2})/);
-    if (hourMatch) {
-      let h = parseInt(hourMatch[1], 10);
-      if (isPM && h < 12) h += 12;
-      if (isAM && h === 12) h = 0;
-      return h * 60;
-    }
-    return 9999;
-  }
-
-  let hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2], 10);
-
-  if (isPM && hours < 12) {
-    hours += 12;
-  } else if (isAM && hours === 12) {
-    hours = 0;
-  }
-
-  return hours * 60 + minutes;
-};
-
-// Helper to parse day of week and formatted date string safely without timezone offsets
-const getDayInfo = (dateStr: string) => {
-  if (!dateStr) return { dayOfWeek: 1, dayName: 'Thứ 2', formattedDate: '' };
-  const [year, month, day] = dateStr.split('-').map(Number);
-  const dateObj = new Date(year, month - 1, day);
-  const jsDay = dateObj.getDay(); // 0 is Sunday, 1 is Monday ... 6 is Saturday
-  const dayOfWeek = jsDay === 0 ? 7 : jsDay; // 1 = Thứ 2 ... 7 = Chủ Nhật
-  const dayName = dayOfWeek === 7 ? 'Chủ Nhật' : `Thứ ${dayOfWeek + 1}`;
-  const formattedDate = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
-  return { dayOfWeek, dayName, formattedDate };
-};
-
-// Helper to match class scheduleDays string with target day of week
-const matchScheduleDay = (scheduleDays: string, targetDay: number): boolean => {
-  if (!scheduleDays) return false;
-  const lower = scheduleDays.toLowerCase();
-  switch (targetDay) {
-    case 1:
-      return lower.includes('thứ 2') || lower.includes('t2') || lower.includes('monday') || lower.includes('mon');
-    case 2:
-      return lower.includes('thứ 3') || lower.includes('t3') || lower.includes('tuesday') || lower.includes('tue');
-    case 3:
-      return lower.includes('thứ 4') || lower.includes('t4') || lower.includes('wednesday') || lower.includes('wed');
-    case 4:
-      return lower.includes('thứ 5') || lower.includes('t5') || lower.includes('thursday') || lower.includes('thu');
-    case 5:
-      return lower.includes('thứ 6') || lower.includes('t6') || lower.includes('friday') || lower.includes('fri');
-    case 6:
-      return lower.includes('thứ 7') || lower.includes('t7') || lower.includes('saturday') || lower.includes('sat');
-    case 7:
-      return lower.includes('chủ nhật') || lower.includes('cn') || lower.includes('sunday') || lower.includes('sun');
-    default:
-      return false;
-  }
-};
+import {
+  exportAttendanceReportToExcel,
+  getSessionTimeForDate,
+  getDayOfWeekFromDateString,
+  getWeekdayLabel,
+  getClassWeeklySchedule
+} from '../../services/dataService';
 
 export const AttendanceView: React.FC = () => {
   const { currentUser } = useAuth();
@@ -145,7 +70,7 @@ export const AttendanceView: React.FC = () => {
   });
 
   // Re-sync attendance entries when class or date changes
-  useEffect(() => {
+  React.useEffect(() => {
     if (existingRecord) {
       setAttendanceEntries(existingRecord.records);
     } else if (selectedClass) {
@@ -195,11 +120,12 @@ export const AttendanceView: React.FC = () => {
       return;
     }
 
+    const sessionTime = getSessionTimeForDate(selectedClass, selectedDate);
     saveAttendance(
       selectedClassId,
       selectedDate,
       attendanceEntries,
-      selectedClass.scheduleTime
+      sessionTime
     );
 
     showToast(`Đã lưu điểm danh lớp ${selectedClass.name} ngày ${selectedDate}!`, 'success');
@@ -209,157 +135,6 @@ export const AttendanceView: React.FC = () => {
     exportAttendanceReportToExcel(data.attendance);
     showToast('Đã xuất báo cáo điểm danh ra file Excel', 'success');
   };
-
-  // -------------------------------------------------------------
-  // ADMIN DAILY CLASS ATTENDANCE OVERVIEW LOGIC
-  // -------------------------------------------------------------
-  const { dayOfWeek, dayName, formattedDate } = useMemo(
-    () => getDayInfo(selectedDate),
-    [selectedDate]
-  );
-
-  // Identify all classes scheduled for the selected date from Timetable, Class schedules & Monthly Teaching Schedules
-  const scheduledClassCards = useMemo(() => {
-    if (isTeacher) return [];
-
-    const cardsMap = new Map<string, ScheduledClassCard>();
-
-    // 1. Scan timetable sessions active on this day of week (or explicitly on this date)
-    data.timetable.forEach(session => {
-      if (session.status === 'cancelled') return;
-
-      const isMatchingDay = session.date
-        ? session.date === selectedDate
-        : session.dayOfWeek === dayOfWeek;
-
-      if (!isMatchingDay) return;
-
-      const cls = data.classes.find(c => c.id === session.classId);
-      if (cls && cls.status === 'cancelled') return;
-
-      const className = session.className || cls?.name || session.classId;
-      const teacherName =
-        session.teacherName ||
-        (cls ? data.teachers.find(t => t.id === cls.teacherId)?.fullName : '') ||
-        'Chưa xếp GV';
-      const assistantName =
-        session.assistantName ||
-        (cls && cls.assistantTeacherId
-          ? data.teachingAssistants.find(ta => ta.id === cls.assistantTeacherId)?.fullName
-          : undefined);
-
-      const timeSlot = session.startTime && session.endTime
-        ? `${session.startTime} – ${session.endTime}`
-        : cls?.scheduleTime || session.startTime || '17:30 – 19:00';
-
-      const timeMinutes = parseStartTimeToMinutes(session.startTime || timeSlot);
-
-      // Check attendance status using existing attendance records
-      const attRecord = data.attendance.find(
-        a => a.classId === session.classId && a.date === selectedDate
-      );
-      const isAttended = Boolean(attRecord);
-
-      cardsMap.set(session.classId, {
-        classId: session.classId,
-        className,
-        teacherName,
-        assistantName: assistantName?.trim() || undefined,
-        timeSlot,
-        timeMinutes,
-        isAttended,
-        attendanceRecord: attRecord
-      });
-    });
-
-    // 2. Scan classes whose scheduleDays match this day of week (for classes not explicitly in timetable)
-    data.classes.forEach(cls => {
-      if (cls.status === 'cancelled') return;
-      if (cardsMap.has(cls.id)) return; // already added from timetable
-
-      if (matchScheduleDay(cls.scheduleDays, dayOfWeek)) {
-        const teacher = data.teachers.find(t => t.id === cls.teacherId);
-        const assistant = cls.assistantTeacherId
-          ? data.teachingAssistants.find(ta => ta.id === cls.assistantTeacherId)
-          : undefined;
-
-        const timeSlot = cls.scheduleTime || '17:30 – 19:00';
-        const timeMinutes = parseStartTimeToMinutes(timeSlot);
-
-        const attRecord = data.attendance.find(
-          a => a.classId === cls.id && a.date === selectedDate
-        );
-        const isAttended = Boolean(attRecord);
-
-        cardsMap.set(cls.id, {
-          classId: cls.id,
-          className: cls.name,
-          teacherName: teacher?.fullName || 'Chưa xếp GV',
-          assistantName: assistant?.fullName?.trim() || undefined,
-          timeSlot,
-          timeMinutes,
-          isAttended,
-          attendanceRecord: attRecord
-        });
-      }
-    });
-
-    // 3. Scan monthly teaching schedules sessions for any specific date session
-    if (data.monthlyTeachingSchedules) {
-      data.monthlyTeachingSchedules.forEach(mSchedule => {
-        if (cardsMap.has(mSchedule.classId)) return;
-        const matchingSession = mSchedule.sessions?.find(s => s.date === selectedDate);
-        if (matchingSession) {
-          const cls = data.classes.find(c => c.id === mSchedule.classId);
-          if (cls && cls.status === 'cancelled') return;
-
-          const timeSlot = matchingSession.time || cls?.scheduleTime || '17:30 – 19:00';
-          const timeMinutes = parseStartTimeToMinutes(timeSlot);
-
-          const attRecord = data.attendance.find(
-            a => a.classId === mSchedule.classId && a.date === selectedDate
-          );
-          const isAttended = Boolean(attRecord);
-
-          cardsMap.set(mSchedule.classId, {
-            classId: mSchedule.classId,
-            className: mSchedule.className || cls?.name || mSchedule.classId,
-            teacherName: matchingSession.teacherName || mSchedule.teacherName || 'Chưa xếp GV',
-            assistantName:
-              matchingSession.teachingAssistantName ||
-              mSchedule.teachingAssistantName ||
-              undefined,
-            timeSlot,
-            timeMinutes,
-            isAttended,
-            attendanceRecord: attRecord
-          });
-        }
-      });
-    }
-
-    // Sort cards chronologically from earliest to latest start time (left to right)
-    // Secondary sort: alphabetical class name for deterministic order
-    return Array.from(cardsMap.values()).sort((a, b) => {
-      if (a.timeMinutes !== b.timeMinutes) {
-        return a.timeMinutes - b.timeMinutes;
-      }
-      return a.className.localeCompare(b.className);
-    });
-  }, [
-    isTeacher,
-    data.timetable,
-    data.classes,
-    data.teachers,
-    data.teachingAssistants,
-    data.monthlyTeachingSchedules,
-    data.attendance,
-    selectedDate,
-    dayOfWeek
-  ]);
-
-  const attendedOverviewCount = scheduledClassCards.filter(c => c.isAttended).length;
-  const unattendedOverviewCount = scheduledClassCards.length - attendedOverviewCount;
 
   return (
     <div className="space-y-6">
@@ -383,190 +158,6 @@ export const AttendanceView: React.FC = () => {
           <span>Xuất báo cáo điểm danh Excel</span>
         </button>
       </div>
-
-      {/* ========================================================= */}
-      {/* PART 1 & 2: ADMIN DAILY CLASS ATTENDANCE OVERVIEW SECTION */}
-      {/* ========================================================= */}
-      {!isTeacher && (
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-          {/* Overview Header & Date Selector Sync */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-red-600" />
-                Tổng quan các lớp học trong ngày ({dayName}, {formattedDate})
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
-                <span>
-                  Tiến độ: <strong className="text-emerald-700 font-bold">{attendedOverviewCount} đã điểm danh</strong> / {scheduledClassCards.length} lớp
-                </span>
-                {unattendedOverviewCount > 0 && (
-                  <span className="text-red-600 font-semibold">
-                    ({unattendedOverviewCount} lớp chưa điểm danh)
-                  </span>
-                )}
-                <span className="text-slate-400">• Bấm vào lớp để mở điểm danh</span>
-              </p>
-            </div>
-
-            {/* Date Navigator Controls */}
-            <div className="flex items-center gap-1.5 self-start md:self-auto">
-              <button
-                type="button"
-                onClick={() => {
-                  const [y, m, d] = selectedDate.split('-').map(Number);
-                  const prev = new Date(y, m - 1, d - 1);
-                  setSelectedDate(prev.toISOString().slice(0, 10));
-                }}
-                className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 transition-colors"
-                title="Ngày hôm trước"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={e => setSelectedDate(e.target.value)}
-                className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
-              />
-
-              <button
-                type="button"
-                onClick={() => {
-                  const [y, m, d] = selectedDate.split('-').map(Number);
-                  const next = new Date(y, m - 1, d + 1);
-                  setSelectedDate(next.toISOString().slice(0, 10));
-                }}
-                className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 transition-colors"
-                title="Ngày tiếp theo"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSelectedDate(new Date().toISOString().slice(0, 10))}
-                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
-              >
-                Hôm nay
-              </button>
-            </div>
-          </div>
-
-          {/* Chronological Left-to-Right Class Cards */}
-          {scheduledClassCards.length === 0 ? (
-            <div className="p-8 bg-slate-50/70 border border-slate-200/80 rounded-2xl text-center text-xs text-slate-500">
-              <Calendar className="w-6 h-6 mx-auto mb-2 text-slate-400" />
-              Không có lớp học nào được xếp lịch vào <strong>{dayName} ({formattedDate})</strong>.
-              <div className="text-[11px] text-slate-400 mt-1">
-                Bạn có thể chuyển sang ngày khác hoặc chọn lớp trực tiếp trong danh sách bên dưới.
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
-              {scheduledClassCards.map(card => {
-                const isSelected = selectedClassId === card.classId;
-
-                return (
-                  <button
-                    key={card.classId}
-                    type="button"
-                    onClick={() => setSelectedClassId(card.classId)}
-                    className={`p-4 rounded-2xl text-left transition-all border flex flex-col justify-between shadow-xs hover:shadow-md cursor-pointer relative ${
-                      card.isAttended
-                        ? 'bg-emerald-50/90 border-emerald-300 hover:border-emerald-400'
-                        : 'bg-red-50/90 border-red-300 hover:border-red-400'
-                    } ${
-                      isSelected
-                        ? 'ring-2 ring-red-600 ring-offset-2'
-                        : ''
-                    }`}
-                  >
-                    <div>
-                      {/* Top Row: Time Slot & Attendance Status Badge */}
-                      <div className="flex items-center justify-between gap-1.5 mb-2.5">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[11px] font-bold ${
-                            card.isAttended
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}
-                        >
-                          <Clock className="w-3 h-3" />
-                          <span>{card.timeSlot}</span>
-                        </span>
-
-                        <span
-                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold shadow-xs shrink-0 ${
-                            card.isAttended
-                              ? 'bg-emerald-600 text-white'
-                              : 'bg-red-600 text-white'
-                          }`}
-                        >
-                          {card.isAttended ? (
-                            <>
-                              <CheckCircle2 className="w-3 h-3" />
-                              <span>Đã điểm danh</span>
-                            </>
-                          ) : (
-                            <>
-                              <XCircle className="w-3 h-3" />
-                              <span>Chưa điểm danh</span>
-                            </>
-                          )}
-                        </span>
-                      </div>
-
-                      {/* Class Name */}
-                      <div className="font-extrabold text-slate-900 text-sm mb-2.5 line-clamp-2">
-                        {card.className}
-                      </div>
-                    </div>
-
-                    {/* Teacher & Teaching Assistant Details */}
-                    <div className="space-y-1.5 text-xs pt-2.5 border-t border-slate-200/60 mt-1">
-                      <div className="flex items-center gap-1.5">
-                        <UserCheck
-                          className={`w-3.5 h-3.5 shrink-0 ${
-                            card.isAttended ? 'text-emerald-700' : 'text-red-600'
-                          }`}
-                        />
-                        <span className="text-slate-500">Giáo viên:</span>
-                        <span className="font-semibold text-slate-800 truncate">
-                          {card.teacherName}
-                        </span>
-                      </div>
-
-                      {card.assistantName && (
-                        <div className="flex items-center gap-1.5">
-                          <Users
-                            className={`w-3.5 h-3.5 shrink-0 ${
-                              card.isAttended ? 'text-emerald-600' : 'text-red-500'
-                            }`}
-                          />
-                          <span className="text-slate-500">Trợ giảng:</span>
-                          <span className="font-semibold text-slate-800 truncate">
-                            {card.assistantName}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Selected Indicator */}
-                      {isSelected && (
-                        <div className="pt-1 text-[11px] font-bold text-red-600 flex items-center gap-1">
-                          <Check className="w-3 h-3" />
-                          <span>Đang mở điểm danh</span>
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Control Selector Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
@@ -593,6 +184,33 @@ export const AttendanceView: React.FC = () => {
             onChange={e => setSelectedDate(e.target.value)}
             className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 focus:ring-2 focus:ring-red-500"
           />
+          {selectedClass && (
+            <div className="mt-1 text-[11px] text-slate-500">
+              {(() => {
+                const dayNum = getDayOfWeekFromDateString(selectedDate);
+                const slots = getClassWeeklySchedule(selectedClass);
+                const matched = dayNum !== null ? slots.find(s => s.dayOfWeek === dayNum) : undefined;
+                if (matched) {
+                  return (
+                    <span>
+                      Ca học <strong className="text-slate-700">{getWeekdayLabel(matched.dayOfWeek)}</strong>:{' '}
+                      <strong className="text-red-600">
+                        {matched.startTime} - {matched.endTime}
+                      </strong>
+                    </span>
+                  );
+                }
+                return (
+                  <span>
+                    {dayNum !== null ? `${getWeekdayLabel(dayNum)} (Ngoài lịch cố định)` : 'Ca học'}:{' '}
+                    <span className="font-medium text-slate-700">
+                      {getSessionTimeForDate(selectedClass, selectedDate)}
+                    </span>
+                  </span>
+                );
+              })()}
+            </div>
+          )}
         </div>
 
         <div className="flex items-end justify-between gap-2">
