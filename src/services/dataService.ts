@@ -12,6 +12,7 @@ import {
   BorderStyle,
   PageOrientation,
   VerticalAlign,
+  VerticalMergeType,
   ShadingType
 } from 'docx';
 import {
@@ -739,4 +740,461 @@ export function doWeeklySchedulesOverlap(
     }
   }
   return null;
+}
+
+export interface CourseDurationExportItem {
+  id: string;
+  courseName: string;
+  classId?: string;
+  className?: string;
+  courseBook?: string;
+  teacherId?: string;
+  teacherName?: string;
+  durationMode?: string;
+  durationValue?: number;
+  courseStartDate?: string;
+  originalExpectedCompletionDate?: string;
+  currentExpectedCompletionDate?: string;
+  extensionPolicy?: string;
+  requiredSessions?: number;
+  completedSessions?: number;
+  remainingSessions?: number;
+  progressPercentage?: number;
+  status?: string;
+  calculationExplanation?: string;
+  notes?: string;
+}
+
+export interface StudentLessonReportExportEntry {
+  studentId: string;
+  studentName: string;
+  homeworkStatus?: string;
+  previousLessonStatus?: string;
+  comments?: string;
+  assignedHomework?: string;
+  notes?: string;
+  completed?: boolean;
+}
+
+export interface LessonReportExportItem {
+  id: string;
+  classId: string;
+  className: string;
+  teachingDate: string;
+  scheduledTime?: string;
+  classroom?: string;
+  teacherId?: string;
+  teacherName?: string;
+  teachingAssistantName?: string;
+  lessonProgress?: string;
+  studentReports?: StudentLessonReportExportEntry[];
+}
+
+function getCourseDurationModeLabel(mode?: string): string {
+  switch (mode) {
+    case 'months':
+      return 'Tháng lịch';
+    case 'calendar_days':
+      return 'Ngày lịch';
+    case 'learning_days':
+      return 'Ngày học thực tế';
+    case 'learning_sessions':
+      return 'Số buổi học';
+    default:
+      return mode || '';
+  }
+}
+
+function getCourseExtensionPolicyLabel(policy?: string): string {
+  switch (policy) {
+    case 'none':
+      return 'Không gia hạn';
+    case 'scheduled_holidays':
+      return 'Gia hạn theo ngày lễ trung tâm';
+    case 'all_non_study_days':
+      return 'Gia hạn mọi ngày nghỉ';
+    case 'missed_scheduled_lessons':
+      return 'Gia hạn buổi nghỉ có phép';
+    case 'custom':
+      return 'Tùy chỉnh';
+    default:
+      return policy || 'Theo lịch chuẩn';
+  }
+}
+
+function getCourseStatusLabel(status?: string): string {
+  switch (status) {
+    case 'not_started':
+      return 'Chưa bắt đầu';
+    case 'in_progress':
+      return 'Đang học';
+    case 'near_completion':
+      return 'Sắp hoàn thành';
+    case 'completed':
+      return 'Đã hoàn thành';
+    case 'extended':
+      return 'Đã gia hạn';
+    case 'on_hold':
+      return 'Tạm hoãn';
+    default:
+      return status || '';
+  }
+}
+
+function formatIsoDateVN(isoDate?: string): string {
+  if (!isoDate) return '';
+  const parts = isoDate.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return isoDate;
+}
+
+/**
+ * Export Course Duration tracking records to Microsoft Excel (.xlsx)
+ */
+export function exportCourseDurationsToExcel(
+  courseDurations: CourseDurationExportItem[],
+  programs: AcademicProgram[] = []
+): void {
+  const programById = new Map(programs.map(p => [p.id, p]));
+  const rows = (courseDurations || []).map((course, idx) => {
+    const required = Number(course.requiredSessions || 0);
+    const completed = Number(course.completedSessions || 0);
+    const remaining =
+      course.remainingSessions !== undefined
+        ? course.remainingSessions
+        : Math.max(0, required - completed);
+    const linkedProgram = course.classId ? programById.get(course.classId) : undefined;
+
+    return {
+      'STT': idx + 1,
+      'Mã khóa học': course.id || '',
+      'Tên khóa học': course.courseName || '',
+      'Lớp học': course.className || '',
+      'Giáo trình': course.courseBook || linkedProgram?.textbook || '',
+      'Giáo viên': course.teacherName || '',
+      'Ngày bắt đầu': formatIsoDateVN(course.courseStartDate),
+      'Chế độ thời lượng': getCourseDurationModeLabel(course.durationMode),
+      'Thời lượng': course.durationValue ?? '',
+      'Hoàn thành dự kiến ban đầu': formatIsoDateVN(course.originalExpectedCompletionDate),
+      'Hoàn thành dự kiến hiện tại': formatIsoDateVN(course.currentExpectedCompletionDate),
+      'Chính sách gia hạn': getCourseExtensionPolicyLabel(course.extensionPolicy),
+      'Số buổi yêu cầu': required,
+      'Số buổi đã học': completed,
+      'Số buổi còn lại': remaining,
+      'Tiến độ (%)': `${course.progressPercentage ?? 0}%`,
+      'Trạng thái': getCourseStatusLabel(course.status),
+      'Giải thích cách tính': course.calculationExplanation || '',
+      'Ghi chú': course.notes || ''
+    };
+  });
+
+  const exportRows =
+    rows.length > 0
+      ? rows
+      : [
+          {
+            'STT': '',
+            'Mã khóa học': '',
+            'Tên khóa học': '',
+            'Lớp học': '',
+            'Giáo trình': '',
+            'Giáo viên': '',
+            'Ngày bắt đầu': '',
+            'Chế độ thời lượng': '',
+            'Thời lượng': '',
+            'Hoàn thành dự kiến ban đầu': '',
+            'Hoàn thành dự kiến hiện tại': '',
+            'Chính sách gia hạn': '',
+            'Số buổi yêu cầu': '',
+            'Số buổi đã học': '',
+            'Số buổi còn lại': '',
+            'Tiến độ (%)': '',
+            'Trạng thái': '',
+            'Giải thích cách tính': '',
+            'Ghi chú': ''
+          }
+        ];
+
+  const worksheet = XLSX.utils.json_to_sheet(exportRows);
+  worksheet['!cols'] = [
+    { wch: 6 },
+    { wch: 16 },
+    { wch: 28 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 20 },
+    { wch: 14 },
+    { wch: 18 },
+    { wch: 12 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 28 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 12 },
+    { wch: 18 },
+    { wch: 36 },
+    { wch: 28 }
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Thoi_gian_khoa_hoc');
+  XLSX.writeFile(
+    workbook,
+    `LeeGo_Thoi_Gian_Khoa_Hoc_${new Date().toISOString().slice(0, 10)}.xlsx`
+  );
+}
+
+/**
+ * Export Lesson Report to Microsoft Word (.docx) matching the Parent Report layout
+ */
+export async function exportLessonReportToWord(report: LessonReportExportItem): Promise<void> {
+  const displayDate = formatIsoDateVN(report.teachingDate) || report.teachingDate || '';
+  const classTitle = (report.className || '').toUpperCase();
+  const studentRows = report.studentReports || [];
+
+  const borderSingle = {
+    top: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    bottom: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    left: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+    right: { style: BorderStyle.SINGLE, size: 4, color: '000000' },
+  };
+
+  const makeCell = (
+    text: string,
+    options?: {
+      bold?: boolean;
+      color?: string;
+      align?: (typeof AlignmentType)[keyof typeof AlignmentType];
+      isHeader?: boolean;
+      verticalMerge?: (typeof VerticalMergeType)[keyof typeof VerticalMergeType];
+    }
+  ) => {
+    const lines = String(text || '').split('\n');
+    return new TableCell({
+      borders: borderSingle,
+      verticalAlign: VerticalAlign.CENTER,
+      verticalMerge: options?.verticalMerge,
+      shading: options?.isHeader ? { fill: 'F3F4F6', type: ShadingType.CLEAR } : undefined,
+      children: lines.map(
+        line =>
+          new Paragraph({
+            alignment: options?.align || AlignmentType.LEFT,
+            spacing: { before: 40, after: 40, line: 240 },
+            children: [
+              new TextRun({
+                text: line,
+                font: 'Times New Roman',
+                size: 20, // 10pt
+                bold: options?.bold ?? false,
+                color: options?.color || '000000',
+              }),
+            ],
+          })
+      ),
+    });
+  };
+
+  const headerRow = new TableRow({
+    children: [
+      makeCell('Lớp', { bold: true, align: AlignmentType.CENTER, isHeader: true }),
+      makeCell('Học viên', { bold: true, align: AlignmentType.CENTER, isHeader: true }),
+      makeCell('Tình hình làm BVN', { bold: true, align: AlignmentType.CENTER, isHeader: true }),
+      makeCell('Tình hình học bài cũ', { bold: true, align: AlignmentType.CENTER, isHeader: true }),
+      makeCell('Nhận xét', { bold: true, align: AlignmentType.CENTER, isHeader: true }),
+      makeCell('Giao BVN', { bold: true, align: AlignmentType.CENTER, isHeader: true }),
+      makeCell('Ghi chú', { bold: true, align: AlignmentType.CENTER, isHeader: true }),
+    ],
+  });
+
+  const bodyRows =
+    studentRows.length > 0
+      ? studentRows.map(
+          (student, idx) =>
+            new TableRow({
+              children: [
+                makeCell(idx === 0 ? report.className || '' : '', {
+                  bold: idx === 0,
+                  align: AlignmentType.CENTER,
+                  verticalMerge:
+                    idx === 0 ? VerticalMergeType.RESTART : VerticalMergeType.CONTINUE,
+                }),
+                makeCell(student.studentName || '', { bold: true }),
+                makeCell(student.homeworkStatus || '—', { align: AlignmentType.CENTER }),
+                makeCell(student.previousLessonStatus || '—', { align: AlignmentType.CENTER }),
+                makeCell(student.comments || '—'),
+                makeCell(student.assignedHomework || '—'),
+                makeCell(student.notes || '', { bold: Boolean(student.notes), color: 'DC2626' }),
+              ],
+            })
+        )
+      : [
+          new TableRow({
+            children: [
+              makeCell(report.className || '', { bold: true, align: AlignmentType.CENTER }),
+              makeCell('Chưa có dữ liệu học viên', { align: AlignmentType.CENTER }),
+              makeCell('—', { align: AlignmentType.CENTER }),
+              makeCell('—', { align: AlignmentType.CENTER }),
+              makeCell('—'),
+              makeCell('—'),
+              makeCell(''),
+            ],
+          }),
+        ];
+
+  const table = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: borderSingle,
+    rows: [headerRow, ...bodyRows],
+  });
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: {
+          page: {
+            size: {
+              orientation: PageOrientation.LANDSCAPE,
+            },
+            margin: {
+              top: 720,
+              bottom: 720,
+              left: 720,
+              right: 720,
+            },
+          },
+        },
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 80, after: 80 },
+            children: [
+              new TextRun({
+                text: `BÁO CÁO TÌNH HÌNH HỌC TẬP CỦA LỚP ${classTitle}`,
+                font: 'Times New Roman',
+                size: 30, // 15pt
+                bold: true,
+                color: 'DC2626',
+              }),
+            ],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 40, after: 40 },
+            children: [
+              new TextRun({
+                text: `BUỔI HỌC NGÀY ${displayDate}`,
+                font: 'Times New Roman',
+                size: 24, // 12pt
+                bold: true,
+                color: '1E293B',
+              }),
+            ],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 40, after: 140 },
+            children: [
+              new TextRun({
+                text: `TIẾN ĐỘ BÀI HỌC: ${report.lessonProgress || 'Chưa cập nhật'}`,
+                font: 'Times New Roman',
+                size: 22, // 11pt
+                bold: true,
+                color: '1D4ED8',
+              }),
+            ],
+          }),
+          table,
+          new Paragraph({
+            spacing: { before: 160, after: 40 },
+            children: [
+              new TextRun({
+                text: `Trung tâm Anh ngữ LeeGo Center • www.leego.edu.vn   |   Giáo viên phụ trách: ${report.teacherName || ''}`,
+                font: 'Times New Roman',
+                size: 18,
+                italics: true,
+                color: '475569',
+              }),
+            ],
+          }),
+        ],
+      },
+    ],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const cleanClassName = (report.className || report.classId || 'Lop').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filename = `Bao_Cao_Hoc_Tap_${cleanClassName}_${report.teachingDate || new Date().toISOString().slice(0, 10)}.docx`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Export Lesson Report to Microsoft Excel (.xlsx)
+ */
+export function exportLessonReportToExcel(report: LessonReportExportItem): void {
+  const displayDate = formatIsoDateVN(report.teachingDate) || report.teachingDate || '';
+  const classTitle = (report.className || '').toUpperCase();
+  const studentRows = report.studentReports || [];
+
+  const metaLine = [
+    `Buổi học ngày: ${displayDate}`,
+    report.scheduledTime ? `Ca học: ${report.scheduledTime}` : '',
+    report.classroom ? `Phòng: ${report.classroom}` : '',
+    report.teacherName ? `Giáo viên: ${report.teacherName}` : '',
+    report.teachingAssistantName ? `Trợ giảng: ${report.teachingAssistantName}` : ''
+  ]
+    .filter(Boolean)
+    .join(' | ');
+
+  const aoa: any[][] = [
+    [`BÁO CÁO TÌNH HÌNH HỌC TẬP CỦA LỚP ${classTitle}`],
+    [metaLine],
+    [`TIẾN ĐỘ BÀI HỌC: ${report.lessonProgress || 'Chưa cập nhật'}`],
+    [],
+    ['STT', 'Lớp', 'Học viên', 'Tình hình làm BVN', 'Tình hình học bài cũ', 'Nhận xét', 'Giao BVN', 'Ghi chú']
+  ];
+
+  studentRows.forEach((student, idx) => {
+    aoa.push([
+      idx + 1,
+      report.className || '',
+      student.studentName || '',
+      student.homeworkStatus || '—',
+      student.previousLessonStatus || '—',
+      student.comments || '—',
+      student.assignedHomework || '—',
+      student.notes || ''
+    ]);
+  });
+
+  const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+  worksheet['!cols'] = [
+    { wch: 6 },
+    { wch: 22 },
+    { wch: 24 },
+    { wch: 18 },
+    { wch: 20 },
+    { wch: 40 },
+    { wch: 30 },
+    { wch: 24 }
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Bao_cao_hoc_tap');
+  const cleanClassName = (report.className || report.classId || 'Lop').replace(/[^a-zA-Z0-9_-]/g, '_');
+  XLSX.writeFile(
+    workbook,
+    `LeeGo_Bao_Cao_Hoc_Tap_${cleanClassName}_${report.teachingDate || new Date().toISOString().slice(0, 10)}.xlsx`
+  );
 }
