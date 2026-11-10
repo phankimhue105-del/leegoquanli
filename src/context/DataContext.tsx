@@ -1,6 +1,3 @@
-# `src/context/DataContext.tsx` (Complete Modified File)
-
-```tsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   Student,
@@ -1116,4 +1113,3 @@ export const useData = () => {
   }
   return context;
 };
-```
