@@ -1,6 +1,3 @@
-# `src/context/AuthContext.tsx` (Complete Modified File)
-
-```tsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Teacher, User, UserRole } from '../types';
 import { initialUsers } from '../data/initialData';
@@ -244,4 +241,3 @@ export const useAuth = () => {
   }
   return context;
 };
-```
