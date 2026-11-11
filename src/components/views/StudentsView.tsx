@@ -29,6 +29,8 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
 import { exportStudentsToExcel, parseExcelToStudents } from '../../services/dataService';
 
+const WAITLIST_OPTION = 'Chờ lớp';
+
 export const StudentsView: React.FC = () => {
   const { currentUser } = useAuth();
   const { data, addStudent, updateStudent, deleteStudent, transferStudentClass, importStudents } = useData();
@@ -89,6 +91,22 @@ export const StudentsView: React.FC = () => {
     });
   }, [data.students, isTeacher, teacherClassIds, searchTerm, selectedClassFilter, selectedGradeFilter, selectedStatusFilter]);
 
+  // Valid existing classes for "Lớp phù hợp" dropdown
+  const suitableClassOptions = useMemo(() => {
+    return data.classes.filter(c => {
+      const isValid = c.status !== 'cancelled';
+      const isCurrentlySelected = editingStudent?.suitableClassId === c.id;
+      return isValid || isCurrentlySelected;
+    });
+  }, [data.classes, editingStudent]);
+
+  const resolveSuitableClassLabel = (suitableClassId?: string): string => {
+    if (!suitableClassId) return '';
+    if (suitableClassId === WAITLIST_OPTION) return WAITLIST_OPTION;
+    const matched = data.classes.find(c => c.id === suitableClassId);
+    return matched ? matched.name : suitableClassId;
+  };
+
   // Form State for Add / Edit
   const [formData, setFormData] = useState<Omit<Student, 'id'>>({
     fullName: '',
@@ -102,7 +120,9 @@ export const StudentsView: React.FC = () => {
     parentEmail: '',
     address: '',
     enrollmentDate: new Date().toISOString().slice(0, 10),
-    currentLevel: 'A1 Movers',
+    currentLevel: '',
+    entryTestResult: '',
+    suitableClassId: '',
     classIds: [],
     status: 'studying',
     notes: ''
@@ -121,7 +141,9 @@ export const StudentsView: React.FC = () => {
       parentEmail: '',
       address: '',
       enrollmentDate: new Date().toISOString().slice(0, 10),
-      currentLevel: 'A1 Movers',
+      currentLevel: '',
+      entryTestResult: '',
+      suitableClassId: '',
       classIds: [],
       status: 'studying',
       notes: ''
@@ -145,6 +167,8 @@ export const StudentsView: React.FC = () => {
       address: student.address,
       enrollmentDate: student.enrollmentDate,
       currentLevel: student.currentLevel,
+      entryTestResult: student.entryTestResult ?? '',
+      suitableClassId: student.suitableClassId ?? '',
       classIds: [...student.classIds],
       status: student.status,
       notes: student.notes
@@ -163,11 +187,17 @@ export const StudentsView: React.FC = () => {
       return;
     }
 
+    const payload: Omit<Student, 'id'> = {
+      ...formData,
+      entryTestResult: (formData.entryTestResult || '').trim(),
+      suitableClassId: formData.suitableClassId || ''
+    };
+
     if (editingStudent) {
-      updateStudent(editingStudent.id, formData);
-      showToast(`Đã cập nhật thông tin học sinh ${formData.fullName}`, 'success');
+      updateStudent(editingStudent.id, payload);
+      showToast(`Đã cập nhật thông tin học sinh ${payload.fullName}`, 'success');
     } else {
-      const created = addStudent(formData);
+      const created = addStudent(payload);
       showToast(`Đã thêm thành công học sinh ${created.fullName} (${created.id})`, 'success');
     }
     setShowAddModal(false);
@@ -367,6 +397,7 @@ export const StudentsView: React.FC = () => {
               ) : (
                 filteredStudents.map(student => {
                   const assignedClasses = data.classes.filter(c => student.classIds.includes(c.id));
+                  const suitableClassLabel = resolveSuitableClassLabel(student.suitableClassId);
                   return (
                     <tr key={student.id} className="hover:bg-slate-50/60 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-slate-700">
@@ -388,7 +419,15 @@ export const StudentsView: React.FC = () => {
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <span className="font-semibold text-slate-800 block">{student.currentLevel}</span>
+                        {student.currentLevel && (
+                          <span className="font-semibold text-slate-800 block">{student.currentLevel}</span>
+                        )}
+                        {student.entryTestResult && (
+                          <span className="text-[11px] text-slate-700 block">
+                            <span className="text-slate-400">Test đầu vào:</span>{' '}
+                            <span className="font-semibold">{student.entryTestResult}</span>
+                          </span>
+                        )}
                         <div className="flex flex-wrap gap-1 mt-1">
                           {assignedClasses.length > 0 ? (
                             assignedClasses.map(c => (
@@ -403,6 +442,19 @@ export const StudentsView: React.FC = () => {
                             <span className="text-[10px] text-slate-400 italic">Chưa xếp lớp</span>
                           )}
                         </div>
+                        {suitableClassLabel && (
+                          <div className="mt-1">
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                                student.suitableClassId === WAITLIST_OPTION
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-blue-50 text-blue-700 border-blue-200'
+                              }`}
+                            >
+                              Lớp phù hợp: {suitableClassLabel}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-800">{student.parentName}</div>
@@ -503,8 +555,9 @@ export const StudentsView: React.FC = () => {
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {viewingStudent.vietnameseName && `${viewingStudent.vietnameseName} • `}
-                    {viewingStudent.currentLevel} • {viewingStudent.grade}
+                    {[viewingStudent.vietnameseName, viewingStudent.currentLevel, viewingStudent.grade]
+                      .filter(Boolean)
+                      .join(' • ')}
                   </p>
                 </div>
               </div>
@@ -565,6 +618,8 @@ export const StudentsView: React.FC = () => {
                     <div><span className="text-slate-400">Trường đang học:</span> <span className="font-semibold text-slate-700">{viewingStudent.school || 'Chưa cập nhật'}</span></div>
                     <div><span className="text-slate-400">Khối lớp:</span> <span className="font-semibold text-slate-700">{viewingStudent.grade}</span></div>
                     <div><span className="text-slate-400">Ngày nhập học:</span> <span className="font-semibold text-slate-700">{viewingStudent.enrollmentDate}</span></div>
+                    <div><span className="text-slate-400">Kết quả test đầu vào:</span> <span className="font-semibold text-slate-700">{viewingStudent.entryTestResult || 'Chưa cập nhật'}</span></div>
+                    <div><span className="text-slate-400">Lớp phù hợp:</span> <span className="font-semibold text-slate-700">{resolveSuitableClassLabel(viewingStudent.suitableClassId) || 'Chưa cập nhật'}</span></div>
                     <div><span className="text-slate-400">Trạng thái học:</span> <span className="font-semibold text-emerald-700">{viewingStudent.status}</span></div>
                   </div>
 
@@ -797,22 +852,34 @@ export const StudentsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Trình độ xếp lớp</label>
-                  <select
-                    value={formData.currentLevel}
-                    onChange={e => setFormData({ ...formData, currentLevel: e.target.value })}
+                  <label className="font-semibold text-slate-700 block mb-1">Kết quả test đầu vào</label>
+                  <input
+                    type="text"
+                    value={formData.entryTestResult ?? ''}
+                    onChange={e => setFormData({ ...formData, entryTestResult: e.target.value })}
+                    placeholder="Nhập kết quả test đầu vào..."
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
-                  >
-                    <option value="Pre A1 Starters">Pre A1 Starters</option>
-                    <option value="A1 Movers">A1 Movers</option>
-                    <option value="A2 Flyers">A2 Flyers</option>
-                    <option value="A2 Key for Schools (KET)">A2 Key for Schools (KET)</option>
-                    <option value="B1 Preliminary (PET)">B1 Preliminary (PET)</option>
-                    <option value="IELTS Foundation">IELTS Foundation</option>
-                  </select>
+                  />
                 </div>
 
                 <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Lớp phù hợp</label>
+                  <select
+                    value={formData.suitableClassId ?? ''}
+                    onChange={e => setFormData({ ...formData, suitableClassId: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                  >
+                    <option value="">-- Chọn lớp phù hợp --</option>
+                    {suitableClassOptions.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                    <option value={WAITLIST_OPTION}>{WAITLIST_OPTION}</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
                   <label className="font-semibold text-slate-700 block mb-1">Trạng thái học</label>
                   <select
                     value={formData.status}
