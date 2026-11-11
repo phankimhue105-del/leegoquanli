@@ -2,12 +2,15 @@ export type UserRole = 'admin' | 'academic_manager' | 'teacher';
 
 export interface User {
   id: string;
+  username?: string;
   name: string;
   email: string;
   role: UserRole;
   avatar?: string;
   phone?: string;
   teacherId?: string; // Links to teacher record if role is teacher
+  permissions?: string[];
+  assignedClasses?: string[];
   status: 'active' | 'inactive';
   lastLogin?: string;
   createdAt: string;
@@ -51,6 +54,14 @@ export interface Parent {
 
 export type ClassStatus = 'upcoming' | 'ongoing' | 'completed' | 'cancelled';
 
+export interface ClassScheduleSlot {
+  dayOfWeek: number; // 1: Thứ 2 ... 7: Chủ Nhật
+  startTime: string; // "17:30"
+  endTime: string;   // "19:00"
+  teacherId?: string;
+  assistantTeacherId?: string;
+}
+
 export interface ClassItem {
   id: string; // e.g. CLS-STA-01
   name: string;
@@ -63,6 +74,7 @@ export interface ClassItem {
   classroom: string;
   scheduleDays: string; // e.g., "Thứ 2, Thứ 4"
   scheduleTime: string; // e.g., "17:30 - 19:00"
+  weeklySchedule?: ClassScheduleSlot[];
   startDate: string;
   endDate: string;
   maxCapacity: number;
