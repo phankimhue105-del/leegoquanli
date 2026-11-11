@@ -17,13 +17,8 @@ import { AttendanceStatus, StudentAttendanceEntry } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import {
-  exportAttendanceReportToExcel,
-  getSessionTimeForDate,
-  getDayOfWeekFromDateString,
-  getWeekdayLabel,
-  getClassWeeklySchedule
-} from '../../services/dataService';
+import { exportAttendanceReportToExcel } from '../../services/dataService';
+import { AdminDailyClassOverview } from './AdminDailyClassOverview';
 
 export const AttendanceView: React.FC = () => {
   const { currentUser } = useAuth();
@@ -31,6 +26,7 @@ export const AttendanceView: React.FC = () => {
   const { showToast } = useToast();
 
   const isTeacher = currentUser.role === 'teacher';
+  const isAdmin = currentUser.role === 'admin';
   const teacherObj = isTeacher ? data.teachers.find(t => t.id === currentUser.teacherId || t.email === currentUser.email) : null;
   const teacherClassIds = teacherObj ? teacherObj.assignedClassIds : [];
 
@@ -120,12 +116,11 @@ export const AttendanceView: React.FC = () => {
       return;
     }
 
-    const sessionTime = getSessionTimeForDate(selectedClass, selectedDate);
     saveAttendance(
       selectedClassId,
       selectedDate,
       attendanceEntries,
-      sessionTime
+      selectedClass.scheduleTime
     );
 
     showToast(`Đã lưu điểm danh lớp ${selectedClass.name} ngày ${selectedDate}!`, 'success');
@@ -159,6 +154,15 @@ export const AttendanceView: React.FC = () => {
         </button>
       </div>
 
+      {/* Admin Daily Class Overview */}
+      {isAdmin && (
+        <AdminDailyClassOverview
+          selectedDate={selectedDate}
+          selectedClassId={selectedClassId}
+          onSelectClass={setSelectedClassId}
+        />
+      )}
+
       {/* Control Selector Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
         <div>
@@ -183,34 +187,8 @@ export const AttendanceView: React.FC = () => {
             value={selectedDate}
             onChange={e => setSelectedDate(e.target.value)}
             className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 focus:ring-2 focus:ring-red-500"
-          />
-          {selectedClass && (
-            <div className="mt-1 text-[11px] text-slate-500">
-              {(() => {
-                const dayNum = getDayOfWeekFromDateString(selectedDate);
-                const slots = getClassWeeklySchedule(selectedClass);
-                const matched = dayNum !== null ? slots.find(s => s.dayOfWeek === dayNum) : undefined;
-                if (matched) {
-                  return (
-                    <span>
-                      Ca học <strong className="text-slate-700">{getWeekdayLabel(matched.dayOfWeek)}</strong>:{' '}
-                      <strong className="text-red-600">
-                        {matched.startTime} - {matched.endTime}
-                      </strong>
-                    </span>
-                  );
-                }
-                return (
-                  <span>
-                    {dayNum !== null ? `${getWeekdayLabel(dayNum)} (Ngoài lịch cố định)` : 'Ca học'}:{' '}
-                    <span className="font-medium text-slate-700">
-                      {getSessionTimeForDate(selectedClass, selectedDate)}
-                    </span>
-                  </span>
-                );
-              })()}
-            </div>
-          )}
+          >
+          </input>
         </div>
 
         <div className="flex items-end justify-between gap-2">
