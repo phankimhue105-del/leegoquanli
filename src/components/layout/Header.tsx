@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Bell,
   Search,
@@ -11,7 +11,10 @@ import {
   Database,
   Menu,
   Clock,
-  LogOut
+  LogOut,
+  RefreshCw,
+  AlertTriangle,
+  UploadCloud
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
@@ -34,12 +37,36 @@ export const Header: React.FC<HeaderProps> = ({
   setSearchQuery
 }) => {
   const { currentUser, logout } = useAuth();
-  const { data, resetAllData } = useData();
+  const {
+    data,
+    resetAllData,
+    syncStatus,
+    syncError,
+    lastSyncedAt,
+    cloudVersion,
+    pendingSyncCount,
+    unsyncedLocalCount,
+    syncNow,
+    retryPendingSync,
+    mergeUnsyncedLocalData,
+    forcePushLocalToCloud
+  } = useData();
   const { showToast } = useToast();
 
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [showActivityDrawer, setShowActivityDrawer] = useState(false);
   const [showFirebaseModal, setShowFirebaseModal] = useState(false);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+  const lastNotifiedErrorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (syncError && syncError !== lastNotifiedErrorRef.current) {
+      lastNotifiedErrorRef.current = syncError;
+      showToast(syncError, 'error');
+    } else if (!syncError) {
+      lastNotifiedErrorRef.current = null;
+    }
+  }, [syncError, showToast]);
 
   const tabTitles: Record<NavigationTab, { title: string; subtitle: string }> = {
     dashboard: { title: 'Bảng Điều Khiển (Dashboard)', subtitle: 'Tổng quan vận hành và thống kê trung tâm LeeGo' },
@@ -47,11 +74,13 @@ export const Header: React.FC<HeaderProps> = ({
     parents: { title: 'Quản Lý Phụ Huynh (Parents)', subtitle: 'Thông tin liên hệ, học sinh phụ thuộc và lịch sử trao đổi' },
     classes: { title: 'Quản Lý Lớp Học (Classes)', subtitle: 'Danh sách lớp, phân công giáo viên và phòng học' },
     teaching_schedule: { title: 'Lịch Giảng Dạy (Teaching Schedule)', subtitle: 'Kế hoạch giảng dạy hàng tháng, nội dung buổi dạy và xuất văn bản Word/Excel' },
+    course_duration: { title: 'Quản Lý Thời Gian Khóa Học (Course Duration)', subtitle: 'Theo dõi tiến độ, hạn hoàn thành, ngày nghỉ lễ và học bù' },
     programs: { title: 'Chương Trình Học (Curricula)', subtitle: 'Khung Cambridge Starters, Movers, Flyers, KET, PET' },
     teachers: { title: 'Quản Lý Giáo Viên (Teachers)', subtitle: 'Đội ngũ giáo viên bản ngữ & Việt Nam, tải giờ giảng dạy' },
     assistants: { title: 'Quản Lý Trợ Giảng (Assistants)', subtitle: 'Đội ngũ trợ giảng hỗ trợ lớp học và sửa bài tập' },
     timetable: { title: 'Thời Khóa Biểu (Timetable)', subtitle: 'Lịch học hàng tuần và tự động phát hiện xung đột lịch' },
     attendance: { title: 'Điểm Danh Lớp Học (Attendance)', subtitle: 'Ghi nhận chuyên cần, đi muộn, có phép và vắng mặt' },
+    lesson_reports: { title: 'Báo Cáo Tình Hình Học Tập (Lesson Report)', subtitle: 'Đánh giá sau buổi học, khóa sổ và xuất báo cáo phụ huynh' },
     assessments: { title: 'Đánh Giá Học Tập (Assessments)', subtitle: 'Bảng điểm 4 kỹ năng Cambridge, nhận xét và xếp loại' },
     lesson_plans: { title: 'Giáo Án & Báo Cáo Buổi Dạy', subtitle: 'Nộp báo cáo bài giảng và quản lý học thuật phê duyệt' },
     reports: { title: 'Báo Cáo Học Thuật (Academic Reports)', subtitle: 'Thống kê tuyển sinh, chuyên cần, giờ dạy và xuất Excel' },
@@ -71,6 +100,65 @@ export const Header: React.FC<HeaderProps> = ({
       showToast('Đã khôi phục dữ liệu mẫu thành công!', 'success');
     }
   };
+
+  const handleManualSync = async () => {
+    setIsManualSyncing(true);
+    try {
+      const ok = await syncNow();
+      if (ok) {
+        showToast('Đã đồng bộ dữ liệu mới nhất từ Google Sheets!', 'success');
+      } else {
+        showToast('Đồng bộ chưa thành công. Vui lòng kiểm tra trạng thái kết nối.', 'error');
+      }
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
+
+  const handleRetryPending = async () => {
+    setIsManualSyncing(true);
+    try {
+      const ok = await retryPendingSync();
+      if (ok) {
+        showToast('Đã đẩy toàn bộ thay đổi lên Google Sheets thành công!', 'success');
+      }
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
+
+  const handleMergeLocal = async () => {
+    setIsManualSyncing(true);
+    try {
+      const ok = await mergeUnsyncedLocalData();
+      if (ok) {
+        showToast('Đã gộp dữ liệu cục bộ lên Google Sheets an toàn!', 'success');
+      }
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
+
+  const handleForcePushLocal = async () => {
+    if (
+      !window.confirm(
+        'Thao tác này sẽ ghi đè dữ liệu trên Google Sheets bằng toàn bộ dữ liệu hiện tại trên máy bạn. Chỉ sử dụng khi muốn khôi phục từ máy này. Bạn có chắc chắn?'
+      )
+    ) {
+      return;
+    }
+    setIsManualSyncing(true);
+    try {
+      const ok = await forcePushLocalToCloud();
+      if (ok) {
+        showToast('Đã đẩy toàn bộ dữ liệu hiện tại lên Google Sheets!', 'success');
+      }
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
+
+  const isBusy = isManualSyncing || syncStatus === 'syncing' || syncStatus === 'saving';
 
   return (
     <>
@@ -107,14 +195,53 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
 
-          {/* Database Mode Indicator */}
+          {/* Shared Cloud Sync Status Indicator */}
           <button
             onClick={() => setShowFirebaseModal(true)}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium hover:bg-emerald-100 transition-colors"
-            title="Xem trạng thái lưu trữ & kết nối Firestore"
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+              syncStatus === 'error'
+                ? 'bg-red-50 text-red-800 border-red-200 hover:bg-red-100'
+                : isBusy
+                ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+            }`}
+            title="Xem trạng thái đồng bộ dữ liệu dùng chung (Google Sheets)"
           >
-            <Database className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Local Sync</span>
+            {syncStatus === 'error' ? (
+              <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+            ) : isBusy ? (
+              <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+            ) : (
+              <Database className="w-3.5 h-3.5 text-emerald-600" />
+            )}
+            <span>
+              {syncStatus === 'error'
+                ? pendingSyncCount > 0
+                  ? `Chờ đồng bộ (${pendingSyncCount})`
+                  : 'Lỗi đồng bộ'
+                : syncStatus === 'saving'
+                ? 'Đang lưu Cloud...'
+                : isBusy
+                ? 'Đang đồng bộ...'
+                : cloudVersion > 0
+                ? `Cloud Sync v${cloudVersion}`
+                : 'Cloud Sync'}
+            </span>
+            {unsyncedLocalCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                +{unsyncedLocalCount}
+              </span>
+            )}
+          </button>
+
+          {/* Quick Refresh Button */}
+          <button
+            onClick={handleManualSync}
+            disabled={isBusy}
+            className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+            title="Đồng bộ dữ liệu mới nhất từ Google Sheets"
+          >
+            <RefreshCw className={`w-4 h-4 ${isBusy ? 'animate-spin text-amber-600' : ''}`} />
           </button>
 
           {/* Activity Logs Notification Bell */}
@@ -255,7 +382,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       )}
 
-      {/* Firebase / Storage Info Modal */}
+      {/* Shared Cloud Sync Details Modal */}
       {showFirebaseModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
@@ -264,40 +391,99 @@ export const Header: React.FC<HeaderProps> = ({
           />
           <div className="relative bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl z-10 border border-slate-200">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+              <div
+                className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                  syncStatus === 'error'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-emerald-100 text-emerald-700'
+                }`}
+              >
                 <Database className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-900 text-base">Cơ chế lưu trữ & Sẵn sàng Firebase</h3>
-                <p className="text-xs text-slate-500">LeeGo English Center Data Architecture</p>
+                <h3 className="font-bold text-slate-900 text-base">Đồng bộ dữ liệu dùng chung (Google Sheets)</h3>
+                <p className="text-xs text-slate-500">
+                  Phiên bản Cloud: v{cloudVersion} {lastSyncedAt ? `• Đồng bộ lúc ${lastSyncedAt}` : ''}
+                </p>
               </div>
             </div>
 
             <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="font-bold text-slate-800 mb-1">Hiện trạng dữ liệu:</div>
+                <div className="font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Nguồn dữ liệu trung tâm dùng chung</span>
+                </div>
                 <p>
-                  Hệ thống đang hoạt động ở chế độ <span className="font-semibold text-emerald-700">Persistent Local Storage</span>. Mọi thay đổi về Học sinh, Lớp học, Điểm danh, Đánh giá, Báo cáo và Phân quyền đều được lưu trữ trực tiếp và tự động đồng bộ trên trình duyệt của bạn mà không bị mất khi tải lại trang.
+                  Toàn bộ dữ liệu Học sinh, Lớp học, Giáo viên, Thời khóa biểu, Điểm danh, Đánh giá và Lịch giảng dạy được đồng bộ qua Google Sheets (<code className="font-mono">leegodata</code>) để mọi tài khoản được phân quyền trên các máy khác nhau đều thấy cùng một dữ liệu.
                 </p>
               </div>
 
-              <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-red-900">
-                <div className="font-bold mb-1 flex items-center gap-1.5 text-red-800">
-                  <CheckCircle2 className="w-4 h-4 text-red-600" />
-                  Sẵn sàng kết nối Firebase Firestore
+              {syncError && (
+                <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-red-900">
+                  <div className="font-bold mb-1 flex items-center gap-1.5 text-red-800">
+                    <AlertTriangle className="w-4 h-4 text-red-600" />
+                    <span>Cảnh báo đồng bộ</span>
+                  </div>
+                  <p className="text-red-700">{syncError}</p>
                 </div>
-                <p className="text-red-700">
-                  Cấu trúc dữ liệu đã được chuẩn hóa theo định dạng Document/Collection tương thích 100% với Google Cloud Firestore và Firebase Auth.
-                </p>
-              </div>
+              )}
+
+              {unsyncedLocalCount > 0 && (
+                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 space-y-2">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                    <UploadCloud className="w-4 h-4 text-amber-600" />
+                    <span>Phát hiện {unsyncedLocalCount} bản ghi cục bộ chưa có trên Cloud</span>
+                  </div>
+                  <p className="text-amber-800">
+                    Bấm nút bên dưới để gộp an toàn các bản ghi đã tạo cục bộ trên máy này lên Google Sheets mà không ghi đè dữ liệu hiện có của tài khoản khác.
+                  </p>
+                  <button
+                    onClick={handleMergeLocal}
+                    disabled={isBusy}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold transition-colors disabled:opacity-50"
+                  >
+                    Gộp {unsyncedLocalCount} bản ghi lên Cloud
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div className="mt-6 flex justify-end">
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
+              {pendingSyncCount > 0 && (
+                <button
+                  onClick={handleRetryPending}
+                  disabled={isBusy}
+                  className="px-3.5 py-2 bg-amber-600 text-white rounded-xl text-xs font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50"
+                >
+                  Thử gửi lại ({pendingSyncCount})
+                </button>
+              )}
+
+              {currentUser.role === 'admin' && (
+                <button
+                  onClick={handleForcePushLocal}
+                  disabled={isBusy}
+                  className="px-3.5 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-semibold hover:bg-slate-200 transition-colors disabled:opacity-50"
+                >
+                  Đẩy toàn bộ máy này lên Cloud
+                </button>
+              )}
+
+              <button
+                onClick={handleManualSync}
+                disabled={isBusy}
+                className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-semibold hover:bg-red-700 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isBusy ? 'animate-spin' : ''}`} />
+                <span>Đồng bộ từ Cloud ngay</span>
+              </button>
+
               <button
                 onClick={() => setShowFirebaseModal(false)}
                 className="px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-semibold hover:bg-slate-900 transition-colors"
               >
-                Đã hiểu
+                Đóng
               </button>
             </div>
           </div>
