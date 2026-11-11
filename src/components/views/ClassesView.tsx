@@ -27,13 +27,21 @@ import {
   formatScheduleTimeSummary,
   getWeekdayLabel,
   isValidTimeRange,
-  doWeeklySchedulesOverlap
+  doWeeklySchedulesOverlap,
+  sortAndDedupeScheduleSlots
 } from '../../services/dataService';
 
 const DEFAULT_WEEKLY_SLOTS: ClassScheduleSlot[] = [
-  { dayOfWeek: 1, startTime: '17:30', endTime: '19:00' },
-  { dayOfWeek: 3, startTime: '17:30', endTime: '19:00' }
+  { dayOfWeek: 1, startTime: '17:30', endTime: '19:00', teacherId: '', assistantTeacherId: '' },
+  { dayOfWeek: 3, startTime: '17:30', endTime: '19:00', teacherId: '', assistantTeacherId: '' }
 ];
+
+type CachedDaySlotConfig = {
+  startTime: string;
+  endTime: string;
+  teacherId: string;
+  assistantTeacherId: string;
+};
 
 export const ClassesView: React.FC = () => {
   const { currentUser } = useAuth();
@@ -70,9 +78,9 @@ export const ClassesView: React.FC = () => {
     tuitionFee: 6500000
   });
 
-  const [cachedDaySlots, setCachedDaySlots] = useState<Record<number, { startTime: string; endTime: string }>>({
-    1: { startTime: '17:30', endTime: '19:00' },
-    3: { startTime: '17:30', endTime: '19:00' }
+  const [cachedDaySlots, setCachedDaySlots] = useState<Record<number, CachedDaySlotConfig>>({
+    1: { startTime: '17:30', endTime: '19:00', teacherId: '', assistantTeacherId: '' },
+    3: { startTime: '17:30', endTime: '19:00', teacherId: '', assistantTeacherId: '' }
   });
   const [scheduleError, setScheduleError] = useState<string | null>(null);
 
@@ -81,35 +89,44 @@ export const ClassesView: React.FC = () => {
 
   const displayedClasses = data.classes.filter(cls => {
     if (isTeacher) {
-      return teacherClassIds.includes(cls.id);
+      if (teacherClassIds.includes(cls.id)) return true;
+      if (teacherObj) {
+        return getClassWeeklySchedule(cls).some(s => s.teacherId === teacherObj.id);
+      }
+      return false;
     }
     return true;
   });
 
   const openAddModal = () => {
-    const initialSlots = DEFAULT_WEEKLY_SLOTS.map(s => ({ ...s }));
+    const defaultTeacherId = data.teachers[0]?.id || '';
+    const initialSlots: ClassScheduleSlot[] = DEFAULT_WEEKLY_SLOTS.map(s => ({
+      ...s,
+      teacherId: defaultTeacherId,
+      assistantTeacherId: ''
+    }));
     setFormData({
       name: '',
       code: '',
       level: 'Pre A1 Starters',
       courseId: data.programs[0]?.id || 'PROG-STA',
       curriculum: 'Cambridge YLE Starters',
-      teacherId: data.teachers[0]?.id || '',
-      assistantTeacherId: data.teachingAssistants[0]?.id || '',
+      teacherId: defaultTeacherId,
+      assistantTeacherId: undefined,
       classroom: data.settings.classrooms[0] || 'Phòng 101 - Smart Room',
       scheduleDays: formatScheduleDaysLabel(initialSlots),
       scheduleTime: formatScheduleTimeSummary(initialSlots),
       weeklySchedule: initialSlots,
       startDate: new Date().toISOString().slice(0, 10),
       endDate: '2025-08-31',
-      maxCapacity: 14,
+      maxCapacity: data.settings.maxClassCapacityDefault || 14,
       studentIds: [],
       status: 'ongoing',
       tuitionFee: 6500000
     });
     setCachedDaySlots({
-      1: { startTime: '17:30', endTime: '19:00' },
-      3: { startTime: '17:30', endTime: '19:00' }
+      1: { startTime: '17:30', endTime: '19:00', teacherId: defaultTeacherId, assistantTeacherId: '' },
+      3: { startTime: '17:30', endTime: '19:00', teacherId: defaultTeacherId, assistantTeacherId: '' }
     });
     setScheduleError(null);
     setEditingClass(null);
@@ -118,10 +135,36 @@ export const ClassesView: React.FC = () => {
   };
 
   const openEditModal = (cls: ClassItem) => {
-    const restoredSlots = getClassWeeklySchedule(cls);
-    const cacheMap: Record<number, { startTime: string; endTime: string }> = {};
+    const baseSlots = getClassWeeklySchedule(cls);
+    const restoredSlots: ClassScheduleSlot[] = baseSlots.map(slot => {
+      const ttSession = data.timetable.find(
+        t => t.classId === cls.id && t.dayOfWeek === slot.dayOfWeek
+      );
+      const teacherId =
+        slot.teacherId !== undefined
+          ? slot.teacherId
+          : ttSession?.teacherId ?? cls.teacherId ?? '';
+      const assistantTeacherId =
+        slot.assistantTeacherId !== undefined
+          ? slot.assistantTeacherId
+          : ttSession
+          ? ttSession.assistantId || ''
+          : cls.assistantTeacherId || '';
+      return {
+        ...slot,
+        teacherId,
+        assistantTeacherId
+      };
+    });
+
+    const cacheMap: Record<number, CachedDaySlotConfig> = {};
     restoredSlots.forEach(s => {
-      cacheMap[s.dayOfWeek] = { startTime: s.startTime, endTime: s.endTime };
+      cacheMap[s.dayOfWeek] = {
+        startTime: s.startTime,
+        endTime: s.endTime,
+        teacherId: s.teacherId || '',
+        assistantTeacherId: s.assistantTeacherId || ''
+      };
     });
 
     setEditingClass(cls);
@@ -160,10 +203,21 @@ export const ClassesView: React.FC = () => {
       if (exists) {
         nextSlots = currentSlots.filter(s => s.dayOfWeek !== dayOfWeek);
       } else {
-        const cached = cachedDaySlots[dayOfWeek] || { startTime: '17:30', endTime: '19:00' };
+        const cached = cachedDaySlots[dayOfWeek] || {
+          startTime: '17:30',
+          endTime: '19:00',
+          teacherId: data.teachers[0]?.id || '',
+          assistantTeacherId: ''
+        };
         nextSlots = [
           ...currentSlots,
-          { dayOfWeek, startTime: cached.startTime, endTime: cached.endTime }
+          {
+            dayOfWeek,
+            startTime: cached.startTime,
+            endTime: cached.endTime,
+            teacherId: cached.teacherId,
+            assistantTeacherId: cached.assistantTeacherId
+          }
         ].sort((a, b) => a.dayOfWeek - b.dayOfWeek);
       }
 
@@ -176,19 +230,27 @@ export const ClassesView: React.FC = () => {
     });
   };
 
-  const handleSlotTimeChange = (
+  const handleSlotFieldChange = (
     dayOfWeek: number,
-    field: 'startTime' | 'endTime',
+    field: 'startTime' | 'endTime' | 'teacherId' | 'assistantTeacherId',
     value: string
   ) => {
     setScheduleError(null);
-    setCachedDaySlots(prev => ({
-      ...prev,
-      [dayOfWeek]: {
-        startTime: field === 'startTime' ? value : (prev[dayOfWeek]?.startTime || '17:30'),
-        endTime: field === 'endTime' ? value : (prev[dayOfWeek]?.endTime || '19:00')
-      }
-    }));
+    setCachedDaySlots(prev => {
+      const existing = prev[dayOfWeek] || {
+        startTime: '17:30',
+        endTime: '19:00',
+        teacherId: '',
+        assistantTeacherId: ''
+      };
+      return {
+        ...prev,
+        [dayOfWeek]: {
+          ...existing,
+          [field]: value
+        }
+      };
+    });
 
     setFormData(prev => {
       const nextSlots = (prev.weeklySchedule || []).map(slot =>
@@ -205,12 +267,12 @@ export const ClassesView: React.FC = () => {
 
   const handleSaveClass = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim() || !formData.code.trim()) {
-      showToast('Vui lòng nhập tên lớp và mã lớp', 'error');
+    if (!formData.name.trim()) {
+      showToast('Vui lòng nhập tên lớp học', 'error');
       return;
     }
 
-    const activeSlots = [...(formData.weeklySchedule || [])].sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+    const activeSlots = sortAndDedupeScheduleSlots(formData.weeklySchedule || []);
     if (activeSlots.length === 0) {
       const msg = 'Vui lòng chọn ít nhất một ngày học trong tuần.';
       setScheduleError(msg);
@@ -227,6 +289,12 @@ export const ClassesView: React.FC = () => {
       }
       if (!isValidTimeRange(slot.startTime, slot.endTime)) {
         const msg = `Giờ kết thúc của ${getWeekdayLabel(slot.dayOfWeek)} phải sau giờ bắt đầu.`;
+        setScheduleError(msg);
+        showToast(msg, 'error');
+        return;
+      }
+      if (!slot.teacherId) {
+        const msg = `Vui lòng chọn giáo viên phụ trách cho buổi ${getWeekdayLabel(slot.dayOfWeek)}.`;
         setScheduleError(msg);
         showToast(msg, 'error');
         return;
@@ -257,8 +325,21 @@ export const ClassesView: React.FC = () => {
       }
     }
 
+    const generatedCode =
+      formData.code && formData.code.trim()
+        ? formData.code.trim()
+        : `CLS-${Date.now().toString().slice(-4)}`;
+
+    const primaryTeacherId = activeSlots.find(s => s.teacherId)?.teacherId || formData.teacherId || '';
+    const primaryAssistantId = activeSlots.find(s => s.assistantTeacherId)?.assistantTeacherId || undefined;
+
     const payload: Omit<ClassItem, 'id'> = {
       ...formData,
+      code: editingClass ? editingClass.code : generatedCode,
+      courseId: editingClass ? editingClass.courseId : formData.courseId,
+      maxCapacity: editingClass ? editingClass.maxCapacity : formData.maxCapacity,
+      teacherId: primaryTeacherId,
+      assistantTeacherId: primaryAssistantId,
       weeklySchedule: activeSlots,
       scheduleDays: formatScheduleDaysLabel(activeSlots),
       scheduleTime: formatScheduleTimeSummary(activeSlots)
@@ -308,6 +389,23 @@ export const ClassesView: React.FC = () => {
     setManagingRosterClass(null);
   };
 
+  const resolveClassDisplaySlots = (cls: ClassItem): ClassScheduleSlot[] => {
+    const baseSlots = getClassWeeklySchedule(cls);
+    return baseSlots.map(slot => {
+      const tt = data.timetable.find(t => t.classId === cls.id && t.dayOfWeek === slot.dayOfWeek);
+      return {
+        ...slot,
+        teacherId: slot.teacherId !== undefined ? slot.teacherId : tt?.teacherId ?? cls.teacherId,
+        assistantTeacherId:
+          slot.assistantTeacherId !== undefined
+            ? slot.assistantTeacherId
+            : tt
+            ? tt.assistantId || ''
+            : cls.assistantTeacherId || ''
+      };
+    });
+  };
+
   return (
     <div className="space-y-6">
       {/* Header Banner */}
@@ -338,8 +436,33 @@ export const ClassesView: React.FC = () => {
       {/* Class Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {displayedClasses.map(cls => {
-          const teacher = data.teachers.find(t => t.id === cls.teacherId);
-          const assistant = data.teachingAssistants.find(ta => ta.id === cls.assistantTeacherId);
+          const displaySlots = resolveClassDisplaySlots(cls);
+          const uniqueTeachers = Array.from(
+            new Set(
+              displaySlots
+                .map(s => data.teachers.find(t => t.id === s.teacherId)?.fullName)
+                .filter(Boolean) as string[]
+            )
+          );
+          const fallbackTeacher = data.teachers.find(t => t.id === cls.teacherId);
+          const teacherDisplay =
+            uniqueTeachers.length > 0
+              ? uniqueTeachers.join(', ')
+              : fallbackTeacher?.fullName || '';
+
+          const uniqueAssistants = Array.from(
+            new Set(
+              displaySlots
+                .map(s => data.teachingAssistants.find(ta => ta.id === s.assistantTeacherId)?.fullName)
+                .filter(Boolean) as string[]
+            )
+          );
+          const fallbackAssistant = data.teachingAssistants.find(ta => ta.id === cls.assistantTeacherId);
+          const assistantDisplay =
+            uniqueAssistants.length > 0
+              ? uniqueAssistants.join(', ')
+              : fallbackAssistant?.fullName || '';
+
           const studentCount = cls.studentIds.length;
           const capacityPercent = Math.min(100, Math.round((studentCount / cls.maxCapacity) * 100));
 
@@ -376,21 +499,21 @@ export const ClassesView: React.FC = () => {
 
                 {/* Teacher & TA */}
                 <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400 flex items-center gap-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-slate-400 flex items-center gap-1.5 shrink-0">
                       <UserCheck className="w-3.5 h-3.5 text-red-500" /> Giáo viên:
                     </span>
-                    <span className="font-semibold text-slate-800">
-                      {teacher ? teacher.fullName : <span className="text-amber-600">Chưa xếp GV</span>}
+                    <span className="font-semibold text-slate-800 text-right">
+                      {teacherDisplay || <span className="text-amber-600">Chưa xếp GV</span>}
                     </span>
                   </div>
 
-                  {assistant && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-400 flex items-center gap-1.5">
+                  {assistantDisplay && (
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-slate-400 flex items-center gap-1.5 shrink-0">
                         <UserPlus className="w-3.5 h-3.5 text-blue-500" /> Trợ giảng:
                       </span>
-                      <span className="font-semibold text-slate-700">{assistant.fullName}</span>
+                      <span className="font-semibold text-slate-700 text-right">{assistantDisplay}</span>
                     </div>
                   )}
 
@@ -407,25 +530,32 @@ export const ClassesView: React.FC = () => {
                     </span>
                     <div className="font-medium text-slate-700 text-right">
                       {(() => {
-                        const slots = getClassWeeklySchedule(cls);
-                        const hasDistinctTimes =
-                          slots.length > 1 &&
-                          slots.some(
-                            s => s.startTime !== slots[0].startTime || s.endTime !== slots[0].endTime
+                        const hasDistinctPerDay =
+                          displaySlots.length > 1 &&
+                          displaySlots.some(
+                            s =>
+                              s.startTime !== displaySlots[0].startTime ||
+                              s.endTime !== displaySlots[0].endTime ||
+                              s.teacherId !== displaySlots[0].teacherId ||
+                              (s.assistantTeacherId || '') !== (displaySlots[0].assistantTeacherId || '')
                           );
-                        if (!hasDistinctTimes) {
+                        if (!hasDistinctPerDay) {
                           return <span>{cls.scheduleTime}</span>;
                         }
                         return (
                           <div className="space-y-0.5">
-                            {slots.map(s => (
-                              <div key={s.dayOfWeek} className="text-[11px]">
-                                <span className="font-semibold text-slate-800">
-                                  {getWeekdayLabel(s.dayOfWeek)}:
-                                </span>{' '}
-                                {s.startTime} - {s.endTime}
-                              </div>
-                            ))}
+                            {displaySlots.map(s => {
+                              const slotTch = data.teachers.find(t => t.id === s.teacherId)?.fullName;
+                              return (
+                                <div key={s.dayOfWeek} className="text-[11px]">
+                                  <span className="font-semibold text-slate-800">
+                                    {getWeekdayLabel(s.dayOfWeek)}:
+                                  </span>{' '}
+                                  {s.startTime} - {s.endTime}
+                                  {uniqueTeachers.length > 1 && slotTch ? ` (${slotTch})` : ''}
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       })()}
@@ -592,7 +722,7 @@ export const ClassesView: React.FC = () => {
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
             onClick={() => setShowAddModal(false)}
           />
-          <div className="relative bg-white rounded-2xl max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl z-10 border border-slate-200">
+          <div className="relative bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl z-10 border border-slate-200">
             <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <h3 className="font-bold text-slate-800 text-base">
                 {editingClass ? `Sửa thông tin: ${editingClass.name}` : 'Mở lớp học mới'}
@@ -607,7 +737,7 @@ export const ClassesView: React.FC = () => {
 
             <form onSubmit={handleSaveClass} className="p-6 overflow-y-auto space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
+                <div className="sm:col-span-2">
                   <label className="font-semibold text-slate-700 block mb-1">
                     Tên lớp học <span className="text-red-600">*</span>
                   </label>
@@ -622,80 +752,22 @@ export const ClassesView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">
-                    Mã lớp (Code) <span className="text-red-600">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.code}
-                    onChange={e => setFormData({ ...formData, code: e.target.value })}
-                    placeholder="VD: STA-E02"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
-                  />
-                </div>
-
-                <div>
                   <label className="font-semibold text-slate-700 block mb-1">Cấp độ học thuật</label>
                   <select
                     value={formData.level}
                     onChange={e => setFormData({ ...formData, level: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
                   >
                     <option value="Pre A1 Starters">Pre A1 Starters</option>
                     <option value="A1 Movers">A1 Movers</option>
                     <option value="A2 Flyers">A2 Flyers</option>
+                    <option value="A2 Key">A2 Key</option>
                     <option value="A2 Key for Schools (KET)">A2 Key for Schools (KET)</option>
                     <option value="B1 Preliminary (PET)">B1 Preliminary (PET)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Chương trình học</label>
-                  <select
-                    value={formData.courseId}
-                    onChange={e => setFormData({ ...formData, courseId: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
-                  >
-                    {data.programs.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">
-                    Giáo viên đứng lớp <span className="text-red-600">*</span>
-                  </label>
-                  <select
-                    value={formData.teacherId}
-                    onChange={e => setFormData({ ...formData, teacherId: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
-                  >
-                    <option value="">-- Chọn giáo viên --</option>
-                    {data.teachers.map(t => (
-                      <option key={t.id} value={t.id}>
-                        {t.fullName} ({t.isNative ? 'GV Bản ngữ' : 'GV Việt Nam'} • {t.workloadHours}h/tuần)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Trợ giảng (TA)</label>
-                  <select
-                    value={formData.assistantTeacherId || ''}
-                    onChange={e => setFormData({ ...formData, assistantTeacherId: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
-                  >
-                    <option value="">-- Không có trợ giảng --</option>
-                    {data.teachingAssistants.map(ta => (
-                      <option key={ta.id} value={ta.id}>
-                        {ta.fullName} ({ta.englishCertificate})
-                      </option>
-                    ))}
+                    <option value="B2 First (FCE)">B2 First (FCE)</option>
+                    <option value="Cơ bản">Cơ bản</option>
+                    <option value="Nâng cao">Nâng cao</option>
+                    <option value="Khác">Khác</option>
                   </select>
                 </div>
 
@@ -704,7 +776,7 @@ export const ClassesView: React.FC = () => {
                   <select
                     value={formData.classroom}
                     onChange={e => setFormData({ ...formData, classroom: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
                   >
                     {data.settings.classrooms.map(rm => (
                       <option key={rm} value={rm}>
@@ -712,18 +784,6 @@ export const ClassesView: React.FC = () => {
                       </option>
                     ))}
                   </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Sĩ số tối đa</label>
-                  <input
-                    type="number"
-                    min={6}
-                    max={25}
-                    value={formData.maxCapacity}
-                    onChange={e => setFormData({ ...formData, maxCapacity: Number(e.target.value) })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500"
-                  />
                 </div>
 
                 <div className="sm:col-span-2 space-y-3 pt-1">
@@ -766,17 +826,21 @@ export const ClassesView: React.FC = () => {
 
                   <div>
                     <label className="font-semibold text-slate-700 block mb-1.5">
-                      Khung giờ học theo từng ngày <span className="text-red-600">*</span>
+                      Lịch học &amp; phân công theo từng ngày <span className="text-red-600">*</span>
                     </label>
 
                     {(formData.weeklySchedule || []).length > 0 ? (
-                      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                      <div className="border border-slate-200 rounded-xl overflow-x-auto bg-white">
                         <table className="w-full text-xs text-left">
                           <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
                             <tr>
-                              <th className="py-2 px-3">Ngày</th>
-                              <th className="py-2 px-3">Giờ bắt đầu</th>
-                              <th className="py-2 px-3">Giờ kết thúc</th>
+                              <th className="py-2 px-3 whitespace-nowrap">Ngày</th>
+                              <th className="py-2 px-3 whitespace-nowrap">Giờ bắt đầu</th>
+                              <th className="py-2 px-3 whitespace-nowrap">Giờ kết thúc</th>
+                              <th className="py-2 px-3 whitespace-nowrap">
+                                Giáo viên <span className="text-red-600">*</span>
+                              </th>
+                              <th className="py-2 px-3 whitespace-nowrap">Trợ giảng (TA)</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
@@ -798,9 +862,9 @@ export const ClassesView: React.FC = () => {
                                       required
                                       value={slot.startTime}
                                       onChange={e =>
-                                        handleSlotTimeChange(slot.dayOfWeek, 'startTime', e.target.value)
+                                        handleSlotFieldChange(slot.dayOfWeek, 'startTime', e.target.value)
                                       }
-                                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                                      className="w-full min-w-[100px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
                                     />
                                   </td>
                                   <td className="py-2 px-3">
@@ -809,12 +873,49 @@ export const ClassesView: React.FC = () => {
                                       required
                                       value={slot.endTime}
                                       onChange={e =>
-                                        handleSlotTimeChange(slot.dayOfWeek, 'endTime', e.target.value)
+                                        handleSlotFieldChange(slot.dayOfWeek, 'endTime', e.target.value)
                                       }
-                                      className={`w-full px-2.5 py-1.5 bg-slate-50 border rounded-lg font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                                      className={`w-full min-w-[100px] px-2.5 py-1.5 bg-slate-50 border rounded-lg font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 ${
                                         invalidRange ? 'border-red-400' : 'border-slate-200'
                                       }`}
                                     />
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <select
+                                      required
+                                      value={slot.teacherId || ''}
+                                      onChange={e =>
+                                        handleSlotFieldChange(slot.dayOfWeek, 'teacherId', e.target.value)
+                                      }
+                                      className="w-full min-w-[140px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                                    >
+                                      <option value="">-- Chọn giáo viên --</option>
+                                      {data.teachers.map(t => (
+                                        <option key={t.id} value={t.id}>
+                                          {t.fullName} ({t.isNative ? 'Bản ngữ' : 'VN'})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <select
+                                      value={slot.assistantTeacherId || ''}
+                                      onChange={e =>
+                                        handleSlotFieldChange(
+                                          slot.dayOfWeek,
+                                          'assistantTeacherId',
+                                          e.target.value
+                                        )
+                                      }
+                                      className="w-full min-w-[140px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                                    >
+                                      <option value="">-- Không có TA --</option>
+                                      {data.teachingAssistants.map(ta => (
+                                        <option key={ta.id} value={ta.id}>
+                                          {ta.fullName}
+                                        </option>
+                                      ))}
+                                    </select>
                                   </td>
                                 </tr>
                               );
@@ -824,7 +925,7 @@ export const ClassesView: React.FC = () => {
                       </div>
                     ) : (
                       <div className="p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-500 text-center">
-                        Chưa chọn ngày học nào. Hãy tích chọn ít nhất một ngày ở trên để thiết lập giờ học.
+                        Chưa chọn ngày học nào. Hãy tích chọn ít nhất một ngày ở trên để thiết lập giờ học, giáo viên và trợ giảng.
                       </div>
                     )}
 
@@ -880,46 +981,82 @@ export const ClassesView: React.FC = () => {
             </div>
 
             <div className="py-4 space-y-4">
-              <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
-                <div>
-                  <span className="text-slate-400 block mb-0.5">Lịch & Giờ học:</span>
-                  {(() => {
-                    const slots = getClassWeeklySchedule(viewingClass);
-                    if (slots.length === 0) {
-                      return (
+              {(() => {
+                const detailSlots = resolveClassDisplaySlots(viewingClass);
+                const detailTeachers = Array.from(
+                  new Set(
+                    detailSlots
+                      .map(s => data.teachers.find(t => t.id === s.teacherId)?.fullName)
+                      .filter(Boolean) as string[]
+                  )
+                );
+                const detailAssistants = Array.from(
+                  new Set(
+                    detailSlots
+                      .map(
+                        s =>
+                          data.teachingAssistants.find(ta => ta.id === s.assistantTeacherId)
+                            ?.fullName
+                      )
+                      .filter(Boolean) as string[]
+                  )
+                );
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    <div className="sm:col-span-2">
+                      <span className="text-slate-400 block mb-1">Lịch &amp; Phân công theo buổi:</span>
+                      {detailSlots.length === 0 ? (
                         <span className="font-semibold text-slate-800">
                           {viewingClass.scheduleDays} ({viewingClass.scheduleTime})
                         </span>
-                      );
-                    }
-                    return (
-                      <div className="space-y-0.5">
-                        {slots.map(s => (
-                          <div key={s.dayOfWeek} className="font-semibold text-slate-800">
-                            {getWeekdayLabel(s.dayOfWeek)}: {s.startTime} - {s.endTime}
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
-                </div>
-                <div>
-                  <span className="text-slate-400 block">Phòng học:</span>
-                  <span className="font-semibold text-slate-800">{viewingClass.classroom}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block">Giáo viên phụ trách:</span>
-                  <span className="font-semibold text-slate-800">
-                    {data.teachers.find(t => t.id === viewingClass.teacherId)?.fullName || 'Chưa xếp'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block">Trợ giảng:</span>
-                  <span className="font-semibold text-slate-800">
-                    {data.teachingAssistants.find(ta => ta.id === viewingClass.assistantTeacherId)?.fullName || 'Không có'}
-                  </span>
-                </div>
-              </div>
+                      ) : (
+                        <div className="space-y-1">
+                          {detailSlots.map(s => {
+                            const tName =
+                              data.teachers.find(t => t.id === s.teacherId)?.fullName ||
+                              'Chưa xếp GV';
+                            const taName = s.assistantTeacherId
+                              ? data.teachingAssistants.find(
+                                  ta => ta.id === s.assistantTeacherId
+                                )?.fullName
+                              : '';
+                            return (
+                              <div key={s.dayOfWeek} className="font-semibold text-slate-800">
+                                {getWeekdayLabel(s.dayOfWeek)}: {s.startTime} - {s.endTime} • GV:{' '}
+                                {tName}
+                                {taName ? ` • TA: ${taName}` : ''}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Phòng học:</span>
+                      <span className="font-semibold text-slate-800">{viewingClass.classroom}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Giáo viên phụ trách:</span>
+                      <span className="font-semibold text-slate-800">
+                        {detailTeachers.length > 0
+                          ? detailTeachers.join(', ')
+                          : data.teachers.find(t => t.id === viewingClass.teacherId)?.fullName ||
+                            'Chưa xếp'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Trợ giảng:</span>
+                      <span className="font-semibold text-slate-800">
+                        {detailAssistants.length > 0
+                          ? detailAssistants.join(', ')
+                          : data.teachingAssistants.find(
+                              ta => ta.id === viewingClass.assistantTeacherId
+                            )?.fullName || 'Không có'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div>
                 <h4 className="font-bold text-slate-800 text-sm mb-2">
