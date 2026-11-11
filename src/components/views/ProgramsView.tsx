@@ -271,7 +271,7 @@ export const ProgramsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Cấp độ</label>
+                  <label className="font-semibold text-slate-700 block mb-1">Chương trình / Cấp độ</label>
                   <select
                     value={formData.level}
                     onChange={e => setFormData({ ...formData, level: e.target.value })}
@@ -282,8 +282,11 @@ export const ProgramsView: React.FC = () => {
                     <option value="A2 Flyers">A2 Flyers</option>
                     <option value="A2 Key for Schools (KET)">A2 Key for Schools (KET)</option>
                     <option value="B1 Preliminary (PET)">B1 Preliminary (PET)</option>
+                    <option value="Cambridge B1 PET">Cambridge B1 PET</option>
                     <option value="B2 First (FCE)">B2 First (FCE)</option>
                     <option value="IELTS Foundation">IELTS Foundation</option>
+                    <option value="IELTS">IELTS</option>
+                    <option value="Khác">Khác</option>
                   </select>
                 </div>
               </div>
