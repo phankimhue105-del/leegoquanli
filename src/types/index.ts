@@ -2,15 +2,12 @@ export type UserRole = 'admin' | 'academic_manager' | 'teacher';
 
 export interface User {
   id: string;
-  username?: string;
   name: string;
   email: string;
   role: UserRole;
   avatar?: string;
   phone?: string;
   teacherId?: string; // Links to teacher record if role is teacher
-  permissions?: string[];
-  assignedClasses?: string[];
   status: 'active' | 'inactive';
   lastLogin?: string;
   createdAt: string;
@@ -32,6 +29,8 @@ export interface Student {
   address: string;
   enrollmentDate: string;
   currentLevel: string; // Pre A1 Starters, A1 Movers, A2 Flyers, A2 KET, B1 PET, IELTS Foundation
+  entryTestResult?: string;
+  suitableClassId?: string; // Existing Class ID or 'Chờ lớp'
   classIds: string[];
   status: StudentStatus;
   notes: string;
@@ -52,12 +51,6 @@ export interface Parent {
 
 export type ClassStatus = 'upcoming' | 'ongoing' | 'completed' | 'cancelled';
 
-export interface ClassScheduleSlot {
-  dayOfWeek: number; // 1: Thứ 2, 2: Thứ 3, 3: Thứ 4, 4: Thứ 5, 5: Thứ 6, 6: Thứ 7, 7: Chủ Nhật
-  startTime: string; // "HH:mm", e.g., "17:30"
-  endTime: string; // "HH:mm", e.g., "19:00"
-}
-
 export interface ClassItem {
   id: string; // e.g. CLS-STA-01
   name: string;
@@ -69,8 +62,7 @@ export interface ClassItem {
   assistantTeacherId?: string;
   classroom: string;
   scheduleDays: string; // e.g., "Thứ 2, Thứ 4"
-  scheduleTime: string; // e.g., "17:30 - 19:00" or "T2: 17:30-19:00 | T6: 19:30-21:00"
-  weeklySchedule?: ClassScheduleSlot[];
+  scheduleTime: string; // e.g., "17:30 - 19:00"
   startDate: string;
   endDate: string;
   maxCapacity: number;
@@ -289,4 +281,3 @@ export interface MonthlyTeachingSchedule {
   updatedBy: string;
   updatedAt: string;
 }
-
