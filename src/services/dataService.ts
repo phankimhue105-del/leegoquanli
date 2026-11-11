@@ -656,7 +656,9 @@ export function sortAndDedupeScheduleSlots(slots: ClassScheduleSlot[]): ClassSch
       byDay.set(slot.dayOfWeek, {
         dayOfWeek: slot.dayOfWeek,
         startTime: slot.startTime,
-        endTime: slot.endTime
+        endTime: slot.endTime,
+        ...(slot.teacherId !== undefined ? { teacherId: slot.teacherId } : {}),
+        ...(slot.assistantTeacherId !== undefined ? { assistantTeacherId: slot.assistantTeacherId } : {})
       });
     }
   });
@@ -668,7 +670,10 @@ export function sortAndDedupeScheduleSlots(slots: ClassScheduleSlot[]): ClassSch
  * and legacy (`scheduleDays` + `scheduleTime`) class records without destructive migration.
  */
 export function getClassWeeklySchedule(
-  cls: Pick<ClassItem, 'weeklySchedule' | 'scheduleDays' | 'scheduleTime'>
+  cls: Pick<ClassItem, 'weeklySchedule' | 'scheduleDays' | 'scheduleTime'> & {
+    teacherId?: string;
+    assistantTeacherId?: string;
+  }
 ): ClassScheduleSlot[] {
   if (Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0) {
     return sortAndDedupeScheduleSlots(cls.weeklySchedule);
@@ -676,7 +681,13 @@ export function getClassWeeklySchedule(
 
   const days = parseLegacyScheduleDays(cls.scheduleDays || '');
   const { startTime, endTime } = parseLegacyTimeSlot(cls.scheduleTime || '');
-  return days.map(dayOfWeek => ({ dayOfWeek, startTime, endTime }));
+  return days.map(dayOfWeek => ({
+    dayOfWeek,
+    startTime,
+    endTime,
+    ...(cls.teacherId ? { teacherId: cls.teacherId } : {}),
+    ...(cls.assistantTeacherId ? { assistantTeacherId: cls.assistantTeacherId } : {})
+  }));
 }
 
 export function formatScheduleDaysLabel(slots: ClassScheduleSlot[]): string {
