@@ -333,10 +333,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addClass = (clsData: Omit<ClassItem, 'id'>): ClassItem => {
     const newId = `CLS-${Date.now().toString().slice(-4)}`;
     const newClass: ClassItem = { ...clsData, id: newId };
+    const assignedTeacherIds = new Set<string>(
+      [
+        newClass.teacherId,
+        ...(newClass.weeklySchedule?.map(slot => slot.teacherId) || [])
+      ].filter(Boolean)
+    );
     setData(prev => {
       // also update teacher's assignedClassIds
       const updatedTeachers = prev.teachers.map(t => {
-        if (t.id === newClass.teacherId && !t.assignedClassIds.includes(newId)) {
+        if (assignedTeacherIds.has(t.id) && !t.assignedClassIds.includes(newId)) {
           return {
             ...t,
             assignedClassIds: [...t.assignedClassIds, newId],
@@ -360,9 +366,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateClass = (id: string, updates: Partial<ClassItem>) => {
     setData(prev => {
       const updatedClasses = prev.classes.map(c => (c.id === id ? { ...c, ...updates } : c));
+      const nextAssignedTeacherIds = new Set<string>(
+        [
+          updates.teacherId,
+          ...(updates.weeklySchedule?.map(slot => slot.teacherId) || [])
+        ].filter((tid): tid is string => Boolean(tid))
+      );
+      const updatedTeachers =
+        nextAssignedTeacherIds.size > 0
+          ? prev.teachers.map(t =>
+              nextAssignedTeacherIds.has(t.id) && !t.assignedClassIds.includes(id)
+                ? { ...t, assignedClassIds: [...t.assignedClassIds, id] }
+                : t
+            )
+          : prev.teachers;
+
       return {
         ...prev,
-        classes: updatedClasses
+        classes: updatedClasses,
+        teachers: updatedTeachers
       };
     });
     addActivityLog('Cập nhật lớp học', `Đã cập nhật thông tin lớp học mã ${id}`);
@@ -798,6 +820,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           teacherId: t.teacherId || cls?.teacherId || '',
           taName: t.assistantName || assistant?.fullName,
           taId: t.assistantId || assistant?.id,
+        };
+      });
+    } else if (cls?.weeklySchedule && cls.weeklySchedule.length > 0) {
+      cls.weeklySchedule.forEach(slot => {
+        const slotTeacher = data.teachers.find(t => t.id === slot.teacherId) || teacher;
+        const slotTa = slot.assistantTeacherId
+          ? data.teachingAssistants.find(ta => ta.id === slot.assistantTeacherId)
+          : undefined;
+        activeDaysMap[slot.dayOfWeek] = {
+          time: `${slot.startTime} – ${slot.endTime}`,
+          classroom: cls.classroom || 'Phòng học',
+          teacherName: slotTeacher?.vietnameseName || slotTeacher?.fullName || 'Giáo viên',
+          teacherId: slot.teacherId || cls.teacherId || '',
+          taName: slotTa?.fullName,
+          taId: slotTa?.id,
         };
       });
     } else if (cls?.scheduleDays) {
