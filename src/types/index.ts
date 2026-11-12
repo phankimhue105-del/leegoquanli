@@ -4,7 +4,9 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  username?: string;
   role: UserRole;
+  password?: string;
   avatar?: string;
   phone?: string;
   teacherId?: string; // Links to teacher record if role is teacher
