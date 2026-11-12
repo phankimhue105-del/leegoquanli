@@ -1140,7 +1140,13 @@ export const LessonReportsView: React.FC = () => {
               MODE A: BẢN PHỤ HUYNH (CLEAN PARENT-FRIENDLY LAYOUT)
              ======================================================== */}
           {showParentPreview ? (
-            <div className="p-8 md:p-12 bg-white text-slate-900 font-serif print:p-0">
+            <div
+              className="p-8 md:p-12 bg-white text-slate-900 font-sans print:p-0"
+              style={{
+                fontFamily:
+                  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif"
+              }}
+            >
               <div className="text-center mb-6 space-y-1">
                 <div className="text-xs font-sans font-bold tracking-widest text-red-600 uppercase">
                   LeeGo English Center
@@ -1159,7 +1165,13 @@ export const LessonReportsView: React.FC = () => {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full border-collapse border border-black text-xs md:text-sm font-serif">
+                <table
+                  className="w-full border-collapse border border-black text-xs md:text-sm font-sans"
+                  style={{
+                    fontFamily:
+                      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif"
+                  }}
+                >
                   <thead>
                     <tr className="bg-slate-100 text-black font-bold text-center">
                       <th className="border border-black p-2.5 w-28">Lớp</th>
@@ -1167,7 +1179,7 @@ export const LessonReportsView: React.FC = () => {
                       <th className="border border-black p-2.5 w-32">Tình hình làm BTVN</th>
                       <th className="border border-black p-2.5 w-32">Tình hình học bài cũ</th>
                       <th className="border border-black p-2.5 min-w-[200px]">Nhận xét</th>
-                      <th className="border border-black p-2.5 w-32">Giáo viên</th>
+                      <th className="border border-black p-2.5 min-w-[140px]">Giao BVN</th>
                       <th className="border border-black p-2.5 min-w-[140px]">Ghi chú</th>
                     </tr>
                   </thead>
@@ -1199,8 +1211,8 @@ export const LessonReportsView: React.FC = () => {
                           {student.comments || '—'}
                         </td>
 
-                        <td className="border border-black p-2.5 text-center font-medium">
-                          {activeReport.teacherName || '—'}
+                        <td className="border border-black p-2.5 whitespace-pre-line text-left leading-relaxed">
+                          {student.assignedHomework || '—'}
                         </td>
 
                         <td className="border border-black p-2.5 whitespace-pre-line text-left leading-relaxed font-semibold text-red-600">
@@ -1213,8 +1225,8 @@ export const LessonReportsView: React.FC = () => {
               </div>
 
               <div className="mt-6 pt-4 flex items-center justify-between text-xs text-slate-500 font-sans border-t border-slate-100">
-                <div>LeeGo English Center</div>
-                <div>Giáo viên phụ trách: {activeReport.teacherName}</div>
+                <div className="font-semibold text-slate-600">LeeGo English Center</div>
+                <div>Trung tâm Anh ngữ LeeGo • Báo cáo học tập chính thức</div>
               </div>
             </div>
           ) : (
