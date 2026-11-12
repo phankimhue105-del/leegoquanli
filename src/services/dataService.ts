@@ -32,7 +32,9 @@ import {
   TeachingSession,
   LessonReport,
   IncompleteReportRecord,
-  MakeupClassSession
+  MakeupClassSession,
+  LessonReportLockAuditEntry,
+  StudentLessonReportEntry
 } from '../types';
 import {
   initialStudents,
@@ -71,6 +73,7 @@ export interface AppDataStore {
   lessonReports?: LessonReport[];
   incompleteReports?: IncompleteReportRecord[];
   makeupSessions?: MakeupClassSession[];
+  lessonReportLockAudits?: LessonReportLockAuditEntry[];
 }
 
 export function loadInitialStorage(): AppDataStore {
@@ -94,6 +97,10 @@ export function loadInitialStorage(): AppDataStore {
         settings: parsed.settings || initialSettings,
         activityLogs: parsed.activityLogs || initialActivityLogs,
         teachingSchedules: parsed.teachingSchedules || initialTeachingSchedules,
+        lessonReports: Array.isArray(parsed.lessonReports) ? parsed.lessonReports : [],
+        incompleteReports: Array.isArray(parsed.incompleteReports) ? parsed.incompleteReports : [],
+        makeupSessions: Array.isArray(parsed.makeupSessions) ? parsed.makeupSessions : [],
+        lessonReportLockAudits: Array.isArray(parsed.lessonReportLockAudits) ? parsed.lessonReportLockAudits : [],
       };
     }
   } catch (err) {
@@ -115,6 +122,10 @@ export function loadInitialStorage(): AppDataStore {
     settings: initialSettings,
     activityLogs: initialActivityLogs,
     teachingSchedules: initialTeachingSchedules,
+    lessonReports: [],
+    incompleteReports: [],
+    makeupSessions: [],
+    lessonReportLockAudits: [],
   };
 
   saveStorage(defaultData);
@@ -576,6 +587,63 @@ export function exportTeachingScheduleToExcel(schedule: MonthlyTeachingSchedule)
   );
 }
 
+export function getVietnamTodayISO(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const y = parts.find(p => p.type === 'year')?.value || '2026';
+  const m = parts.find(p => p.type === 'month')?.value || '01';
+  const d = parts.find(p => p.type === 'day')?.value || '01';
+  return `${y}-${m}-${d}`;
+}
+
+export function getVietnamNowFormatted(): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date());
+  const get = (t: string) => parts.find(p => p.type === t)?.value || '00';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+}
+
+export function computeReportDeadlineISO(teachingDate: string): string {
+  const match = (teachingDate || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return `${getVietnamTodayISO()}T17:00:00+07:00`;
+  }
+  const utcMidnight = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const nextDay = new Date(utcMidnight + 24 * 60 * 60 * 1000);
+  const y = nextDay.getUTCFullYear();
+  const m = String(nextDay.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(nextDay.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}T17:00:00+07:00`;
+}
+
+export function isReportExpired(report: Pick<LessonReport, 'teachingDate' | 'deadlineAt'>): boolean {
+  const deadlineStr = report.deadlineAt || computeReportDeadlineISO(report.teachingDate);
+  const deadlineMs = Date.parse(deadlineStr);
+  if (Number.isNaN(deadlineMs)) return false;
+  return Date.now() >= deadlineMs;
+}
+
+export function isStudentReportEntryComplete(entry: StudentLessonReportEntry): boolean {
+  return Boolean(
+    entry.homeworkStatus &&
+      entry.previousLessonStatus &&
+      entry.comments &&
+      entry.comments.trim().length > 0
+  );
+}
+
 export async function exportLessonReportToWord(report: LessonReport) {
   const borderStyle = {
     style: BorderStyle.SINGLE,
@@ -593,10 +661,10 @@ export async function exportLessonReportToWord(report: LessonReport) {
     children: [
       'Lớp',
       'Học viên',
-      'Tình hình làm BVN',
+      'Tình hình làm BTVN',
       'Tình hình học bài cũ',
       'Nhận xét',
-      'Giao BVN',
+      'Giáo viên',
       'Ghi chú'
     ].map(
       text =>
@@ -674,9 +742,11 @@ export async function exportLessonReportToWord(report: LessonReport) {
           }),
           new TableCell({
             borders: cellBorders,
+            verticalAlign: VerticalAlign.CENTER,
             children: [
               new Paragraph({
-                children: [new TextRun({ text: s.assignedHomework || '—', size: 20, font: 'Times New Roman' })]
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ text: report.teacherName || '—', size: 20, font: 'Times New Roman' })]
               })
             ]
           }),
@@ -887,10 +957,10 @@ export function exportLessonReportToExcel(report: LessonReport) {
     STT: idx + 1,
     'Lớp': report.className,
     'Học viên': s.studentName,
-    'Tình hình làm BVN': s.homeworkStatus || '',
+    'Tình hình làm BTVN': s.homeworkStatus || '',
     'Tình hình học bài cũ': s.previousLessonStatus || '',
     'Nhận xét': s.comments || '',
-    'Giao BVN': s.assignedHomework || '',
+    'Giáo viên': report.teacherName || '',
     'Ghi chú': s.notes || ''
   }));
   const worksheet = XLSX.utils.json_to_sheet(rows);
