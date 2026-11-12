@@ -11,7 +11,8 @@ import {
   Database,
   ExternalLink,
   Menu,
-  Clock
+  Clock,
+  LogOut
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
@@ -33,8 +34,8 @@ export const Header: React.FC<HeaderProps> = ({
   searchQuery,
   setSearchQuery
 }) => {
-  const { currentUser, switchUser } = useAuth();
-  const { data, resetAllData } = useData();
+  const { currentUser, logout } = useAuth();
+  const { data } = useData();
   const { showToast } = useToast();
 
   const [showRoleMenu, setShowRoleMenu] = useState(false);
@@ -60,17 +61,10 @@ export const Header: React.FC<HeaderProps> = ({
     settings: { title: 'Cài Đặt Hệ Thống (Settings)', subtitle: 'Năm học, phòng học, kết nối database và dữ liệu mẫu' }
   };
 
-  const handleRoleChange = (userId: string) => {
-    switchUser(userId);
+  const handleLogout = () => {
     setShowRoleMenu(false);
-    showToast(`Đã chuyển sang tài khoản: ${data.users.find(u => u.id === userId)?.name}`, 'info');
-  };
-
-  const handleResetData = () => {
-    if (window.confirm('Bạn có chắc muốn khôi phục toàn bộ hệ thống về 30 học sinh, 6 lớp học và dữ liệu chuẩn ban đầu?')) {
-      resetAllData();
-      showToast('Đã khôi phục dữ liệu mẫu thành công!', 'success');
-    }
+    logout();
+    showToast('Đã đăng xuất khỏi tài khoản thành công', 'info');
   };
 
   return (
@@ -132,23 +126,23 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          {/* ROLE SWITCHER DROPDOWN */}
+          {/* USER ACCOUNT DROPDOWN */}
           <div className="relative">
             <button
               onClick={() => setShowRoleMenu(!showRoleMenu)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 transition-all text-xs font-semibold"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 transition-all text-xs font-semibold cursor-pointer"
             >
-              <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold bg-red-600">
-                {currentUser.name.charAt(0)}
+              <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold bg-red-600 shadow-xs">
+                {currentUser?.name ? currentUser.name.charAt(0) : 'U'}
               </div>
               <div className="text-left hidden md:block">
                 <div className="text-xs font-bold leading-tight truncate max-w-[140px] text-slate-900">
-                  {currentUser.name}
+                  {currentUser?.name || 'Tài khoản'}
                 </div>
                 <div className="text-[10px] text-red-600 font-semibold uppercase tracking-wider">
-                  {currentUser.role === 'admin'
-                    ? 'Admin'
-                    : currentUser.role === 'academic_manager'
+                  {currentUser?.role === 'admin'
+                    ? 'Quản trị viên'
+                    : currentUser?.role === 'academic_manager'
                     ? 'Quản lý học thuật'
                     : 'Giáo viên'}
                 </div>
@@ -157,66 +151,43 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             {showRoleMenu && (
-              <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
-                <div className="px-4 py-2 border-b border-slate-100">
-                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                    Chuyển tài khoản & Phân quyền
-                  </p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Thử nghiệm hệ thống với các vai trò thực tế:
-                  </p>
+              <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                {/* Current User Info Card */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 mb-1">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                      {currentUser?.name ? currentUser.name.charAt(0) : 'U'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-xs text-slate-900 truncate">
+                        {currentUser?.name || 'Chưa đăng nhập'}
+                      </div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {currentUser?.email || 'user@leego.edu.vn'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
+                    <span className="text-slate-500 font-medium">Vai trò:</span>
+                    <span className="font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-md border border-red-100">
+                      {currentUser?.role === 'admin'
+                        ? 'Quản trị viên'
+                        : currentUser?.role === 'academic_manager'
+                        ? 'Quản lý học thuật'
+                        : 'Giáo viên'}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="p-1 space-y-1">
-                  {data.users.map(u => {
-                    const isSelected = currentUser.id === u.id;
-                    return (
-                      <button
-                        key={u.id}
-                        onClick={() => handleRoleChange(u.id)}
-                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left text-xs transition-colors ${
-                          isSelected ? 'bg-red-50 text-red-700 font-bold' : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${
-                              u.role === 'admin'
-                                ? 'bg-amber-100 text-amber-800'
-                                : u.role === 'academic_manager'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-emerald-100 text-emerald-800'
-                            }`}
-                          >
-                            {u.role === 'admin' ? (
-                              <Shield className="w-3.5 h-3.5" />
-                            ) : u.role === 'academic_manager' ? (
-                              <Briefcase className="w-3.5 h-3.5" />
-                            ) : (
-                              <GraduationCap className="w-3.5 h-3.5" />
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-slate-900">{u.name}</div>
-                            <div className="text-[11px] text-slate-500">{u.email}</div>
-                          </div>
-                        </div>
-                        {isSelected && <CheckCircle2 className="w-4 h-4 text-red-600" />}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="border-t border-slate-100 mt-1 pt-1 px-1">
+                {/* Logout Button */}
+                <div className="pt-1 border-t border-slate-100">
                   <button
-                    onClick={() => {
-                      setShowRoleMenu(false);
-                      handleResetData();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl transition-colors font-bold cursor-pointer"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Khôi phục dữ liệu mẫu ban đầu</span>
+                    <LogOut className="w-4 h-4" />
+                    <span>Đăng xuất</span>
                   </button>
                 </div>
               </div>
