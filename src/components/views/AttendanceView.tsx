@@ -18,7 +18,6 @@ import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
 import { exportAttendanceReportToExcel } from '../../services/dataService';
-import { AdminDailyClassOverview } from './AdminDailyClassOverview';
 
 export const AttendanceView: React.FC = () => {
   const { currentUser } = useAuth();
@@ -26,7 +25,6 @@ export const AttendanceView: React.FC = () => {
   const { showToast } = useToast();
 
   const isTeacher = currentUser.role === 'teacher';
-  const isAdmin = currentUser.role === 'admin';
   const teacherObj = isTeacher ? data.teachers.find(t => t.id === currentUser.teacherId || t.email === currentUser.email) : null;
   const teacherClassIds = teacherObj ? teacherObj.assignedClassIds : [];
 
@@ -154,15 +152,6 @@ export const AttendanceView: React.FC = () => {
         </button>
       </div>
 
-      {/* Admin Daily Class Overview */}
-      {isAdmin && (
-        <AdminDailyClassOverview
-          selectedDate={selectedDate}
-          selectedClassId={selectedClassId}
-          onSelectClass={setSelectedClassId}
-        />
-      )}
-
       {/* Control Selector Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
         <div>
@@ -270,9 +259,13 @@ export const AttendanceView: React.FC = () => {
                     <tr key={entry.studentId} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
                       <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900">{entry.studentName}</div>
+                        <div className="font-bold text-slate-900">
+                          {isTeacher
+                            ? (student?.vietnameseName?.trim() || student?.fullName || entry.studentName)
+                            : entry.studentName}
+                        </div>
                         <div className="text-[11px] text-slate-400">
-                          {entry.studentId} • PH: {student?.parentPhone}
+                          {entry.studentId}{!isTeacher && ` • PH: ${student?.parentPhone}`}
                         </div>
                       </td>
                       <td className="py-3 px-4">
