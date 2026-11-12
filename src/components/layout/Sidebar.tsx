@@ -148,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Lesson Report',
       sublabel: 'Báo cáo buổi học',
       icon: FileSpreadsheet,
-      allowedRoles: ['admin', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher'],
     },
     {
       id: 'reports',
