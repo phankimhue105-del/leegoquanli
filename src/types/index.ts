@@ -49,6 +49,15 @@ export interface Parent {
 
 export type ClassStatus = 'upcoming' | 'ongoing' | 'completed' | 'cancelled';
 
+export interface WeeklyScheduleSlot {
+  dayOfWeek: number; // 1: Thứ 2 ... 7: Chủ Nhật
+  dayName: string;
+  startTime: string; // "HH:mm"
+  endTime: string; // "HH:mm"
+  teacherId: string;
+  assistantTeacherId?: string;
+}
+
 export interface ClassItem {
   id: string; // e.g. CLS-STA-01
   name: string;
@@ -61,6 +70,7 @@ export interface ClassItem {
   classroom: string;
   scheduleDays: string; // e.g., "Thứ 2, Thứ 4"
   scheduleTime: string; // e.g., "17:30 - 19:00"
+  weeklySchedule?: WeeklyScheduleSlot[];
   startDate: string;
   endDate: string;
   maxCapacity: number;
