@@ -760,6 +760,99 @@ export async function exportLessonReportToWord(report: LessonReport) {
   URL.revokeObjectURL(url);
 }
 
+export interface ClassWeeklyScheduleSlot {
+  dayOfWeek: number;
+  dayName: string;
+  startTime: string;
+  endTime: string;
+  timeRange: string;
+}
+
+const WEEKDAY_MATCHERS: { dayOfWeek: number; dayName: string; patterns: RegExp[] }[] = [
+  { dayOfWeek: 1, dayName: 'Thứ 2', patterns: [/thứ\s*2/i, /\bt2\b/i, /\bmonday\b/i, /\bmon\b/i] },
+  { dayOfWeek: 2, dayName: 'Thứ 3', patterns: [/thứ\s*3/i, /\bt3\b/i, /\btuesday\b/i, /\btue\b/i] },
+  { dayOfWeek: 3, dayName: 'Thứ 4', patterns: [/thứ\s*4/i, /\bt4\b/i, /\bwednesday\b/i, /\bwed\b/i] },
+  { dayOfWeek: 4, dayName: 'Thứ 5', patterns: [/thứ\s*5/i, /\bt5\b/i, /\bthursday\b/i, /\bthu\b/i] },
+  { dayOfWeek: 5, dayName: 'Thứ 6', patterns: [/thứ\s*6/i, /\bt6\b/i, /\bfriday\b/i, /\bfri\b/i] },
+  { dayOfWeek: 6, dayName: 'Thứ 7', patterns: [/thứ\s*7/i, /\bt7\b/i, /\bsaturday\b/i, /\bsat\b/i] },
+  { dayOfWeek: 7, dayName: 'Chủ Nhật', patterns: [/chủ\s*nhật/i, /\bcn\b/i, /\bsunday\b/i, /\bsun\b/i] }
+];
+
+const TIME_RANGE_REGEX =
+  /(\d{1,2}\s*[:h]\s*\d{2}(?:\s*(?:am|pm))?)\s*[-–—]\s*(\d{1,2}\s*[:h]\s*\d{2}(?:\s*(?:am|pm))?)/i;
+
+function splitTimeRange(timeStr: string): { startTime: string; endTime: string; timeRange: string } {
+  const cleaned = (timeStr || '').trim();
+  const match = cleaned.match(TIME_RANGE_REGEX);
+  if (match) {
+    const startTime = match[1].trim();
+    const endTime = match[2].trim();
+    return { startTime, endTime, timeRange: `${startTime} – ${endTime}` };
+  }
+  return { startTime: cleaned, endTime: '', timeRange: cleaned };
+}
+
+/**
+ * Parse a ClassItem's schedule (supports per-weekday schedule strings and legacy scheduleDays + scheduleTime)
+ */
+export function getClassWeeklySchedule(cls?: ClassItem | null): ClassWeeklyScheduleSlot[] {
+  if (!cls) return [];
+
+  const maybeWeekly = (cls as ClassItem & { weeklySchedule?: ClassWeeklyScheduleSlot[] }).weeklySchedule;
+  if (Array.isArray(maybeWeekly) && maybeWeekly.length > 0) {
+    return [...maybeWeekly].sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+  }
+
+  const scheduleDays = cls.scheduleDays || '';
+  const fallbackTime = cls.scheduleTime || '';
+  if (!scheduleDays.trim()) return [];
+
+  const slotsByDay = new Map<number, ClassWeeklyScheduleSlot>();
+  const segments = scheduleDays.split(/[,;/\n]+/).map(s => s.trim()).filter(Boolean);
+
+  for (const segment of segments) {
+    const segmentTimeMatch = segment.match(TIME_RANGE_REGEX);
+    const segmentTime = segmentTimeMatch ? segmentTimeMatch[0] : fallbackTime;
+    const { startTime, endTime, timeRange } = splitTimeRange(segmentTime);
+
+    for (const day of WEEKDAY_MATCHERS) {
+      if (day.patterns.some(p => p.test(segment)) && !slotsByDay.has(day.dayOfWeek)) {
+        slotsByDay.set(day.dayOfWeek, {
+          dayOfWeek: day.dayOfWeek,
+          dayName: day.dayName,
+          startTime,
+          endTime,
+          timeRange
+        });
+      }
+    }
+  }
+
+  return Array.from(slotsByDay.values()).sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+}
+
+/**
+ * Format weekly schedule slots into a concise summary string for display.
+ */
+export function formatScheduleTimeSummary(slots: ClassWeeklyScheduleSlot[]): string {
+  if (!Array.isArray(slots) || slots.length === 0) return '';
+
+  const nonEmptyTimes = slots.map(s => s.timeRange.trim()).filter(Boolean);
+  if (nonEmptyTimes.length === 0) {
+    return slots.map(s => s.dayName).join(', ');
+  }
+
+  const uniqueTimes = Array.from(new Set(nonEmptyTimes));
+  if (uniqueTimes.length === 1) {
+    const daysLabel = slots.map(s => s.dayName).join(', ');
+    return `${uniqueTimes[0]} (${daysLabel})`;
+  }
+
+  return slots
+    .map(s => (s.timeRange ? `${s.dayName}: ${s.timeRange}` : s.dayName))
+    .join(' | ');
+}
+
 export function exportLessonReportToExcel(report: LessonReport) {
   const rows = (report.studentReports || []).map((s, idx) => ({
     STT: idx + 1,
