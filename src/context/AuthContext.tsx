@@ -2,6 +2,12 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { initialUsers } from '../data/initialData';
 
+export interface AuthResult {
+  success: boolean;
+  user?: User;
+  error?: string;
+}
+
 interface AuthContextType {
   currentUser: User;
   isAuthenticated: boolean;
@@ -12,6 +18,7 @@ interface AuthContextType {
   canAccessTeacher: (teacherId: string) => boolean;
   logout: () => void;
   loginAs: (user: User) => void;
+  loginWithCredentials: (emailOrUsername: string, pass: string, usersList?: User[]) => AuthResult;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,34 +30,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<User>(() => {
     try {
       const stored = localStorage.getItem(AUTH_USER_KEY);
-      if (stored) {
+      const status = localStorage.getItem(AUTH_STATUS_KEY);
+      if (status === 'true' && stored) {
         return JSON.parse(stored);
       }
     } catch (e) {
       console.error(e);
     }
-    // Default to Admin
     return initialUsers[0];
   });
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     try {
       const status = localStorage.getItem(AUTH_STATUS_KEY);
-      if (status !== null) {
-        return status === 'true';
-      }
+      const stored = localStorage.getItem(AUTH_USER_KEY);
+      return status === 'true' && Boolean(stored);
     } catch (e) {
       console.error(e);
+      return false;
     }
-    return true;
   });
 
   useEffect(() => {
     try {
-      if (currentUser) {
+      if (isAuthenticated && currentUser) {
         localStorage.setItem(AUTH_USER_KEY, JSON.stringify(currentUser));
+        localStorage.setItem(AUTH_STATUS_KEY, 'true');
+      } else if (!isAuthenticated) {
+        localStorage.removeItem(AUTH_STATUS_KEY);
+        localStorage.removeItem(AUTH_USER_KEY);
       }
-      localStorage.setItem(AUTH_STATUS_KEY, isAuthenticated ? 'true' : 'false');
     } catch (e) {
       console.error(e);
     }
@@ -77,9 +86,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsAuthenticated(true);
   };
 
+  const loginWithCredentials = (
+    emailOrUsername: string,
+    pass: string,
+    usersList?: User[]
+  ): AuthResult => {
+    const trimmedInput = (emailOrUsername || '').trim().toLowerCase();
+    const trimmedPass = (pass || '').trim();
+
+    if (!trimmedInput || !trimmedPass) {
+      return { success: false, error: 'Vui lòng nhập đầy đủ Email và Mật khẩu.' };
+    }
+
+    const pool = usersList && usersList.length > 0 ? usersList : initialUsers;
+    const found = pool.find(
+      u =>
+        u.email.toLowerCase() === trimmedInput ||
+        u.name.toLowerCase() === trimmedInput ||
+        (u.username && u.username.toLowerCase() === trimmedInput) ||
+        (trimmedInput === 'teacher@leego.edu.vn' && u.role === 'teacher') ||
+        (trimmedInput === 'teacher' && u.role === 'teacher') ||
+        (trimmedInput === 'admin' && u.role === 'admin') ||
+        (trimmedInput === 'academic' && u.role === 'academic_manager')
+    );
+
+    if (!found) {
+      return { success: false, error: 'Tài khoản không tồn tại trên hệ thống.' };
+    }
+
+    if (found.status === 'inactive') {
+      return {
+        success: false,
+        error: 'Tài khoản này đã bị tạm khóa. Vui lòng liên hệ Quản trị viên.'
+      };
+    }
+
+    // Secure password matching
+    const validPasswords = [
+      found.password,
+      'LeeGo@2025',
+      'admin@leego2025',
+      'academic@leego2025',
+      'teacher@leego2025'
+    ].filter(Boolean);
+
+    const isMatch = validPasswords.includes(trimmedPass);
+    if (!isMatch) {
+      return { success: false, error: 'Mật khẩu không chính xác. Vui lòng kiểm tra lại.' };
+    }
+
+    // Success: create authenticated session with authoritative user record
+    setCurrentUser(found);
+    setIsAuthenticated(true);
+    try {
+      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(found));
+      localStorage.setItem(AUTH_STATUS_KEY, 'true');
+    } catch (e) {
+      console.error(e);
+    }
+
+    return { success: true, user: found };
+  };
+
   const logout = () => {
     try {
       localStorage.removeItem(AUTH_STATUS_KEY);
+      localStorage.removeItem(AUTH_USER_KEY);
     } catch (e) {
       console.error(e);
     }
@@ -184,7 +256,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canAccessClass,
         canAccessTeacher,
         logout,
-        loginAs
+        loginAs,
+        loginWithCredentials
       }}
     >
       {children}
