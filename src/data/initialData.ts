@@ -19,9 +19,10 @@ import {
 export const initialUsers: User[] = [
   {
     id: 'USR-001',
-    username: 'admin',
     name: 'Nguyễn Quản Trị (Admin)',
     email: 'admin@leego.edu.vn',
+    username: 'admin',
+    password: 'admin@leego2025',
     role: 'admin',
     phone: '0903123456',
     status: 'active',
@@ -30,9 +31,10 @@ export const initialUsers: User[] = [
   },
   {
     id: 'USR-002',
-    username: 'academic',
     name: 'Trần Học Thuật (Academic Manager)',
     email: 'academic@leego.edu.vn',
+    username: 'academic',
+    password: 'academic@leego2025',
     role: 'academic_manager',
     phone: '0908765432',
     status: 'active',
@@ -41,9 +43,10 @@ export const initialUsers: User[] = [
   },
   {
     id: 'USR-003',
-    username: 'Teacher 01',
     name: 'Mr. David Miller (Teacher)',
     email: 'david.miller@leego.edu.vn',
+    username: 'teacher@leego.edu.vn',
+    password: 'teacher@leego2025',
     role: 'teacher',
     teacherId: 'TCH-001',
     phone: '0912345678',
@@ -53,9 +56,9 @@ export const initialUsers: User[] = [
   },
   {
     id: 'USR-004',
-    username: 'Teacher 02',
     name: 'Cô Lê Thu Trang (Teacher)',
     email: 'trang.le@leego.edu.vn',
+    password: 'teacher@leego2025',
     role: 'teacher',
     teacherId: 'TCH-004',
     phone: '0934567890',
@@ -289,68 +292,6 @@ export const initialAcademicPrograms: AcademicProgram[] = [
     assessmentCriteria: ['Thang điểm Cambridge 120-139 (Pass/Merit/Distinction)'],
     lessonSequence: [
       { lessonNumber: 1, title: 'School Life and Hobbies', grammarFocus: 'Present continuous vs Present simple', vocabFocus: 'subjects, hobbies, equipment', homework: 'Reading test Part 1' }
-    ]
-  },
-  {
-    id: 'PROG-PET',
-    name: 'Cambridge B1 PET',
-    code: 'CAM-PET',
-    level: 'B1 Preliminary (PET)',
-    curriculum: 'Cambridge English Qualifications',
-    textbook: 'Complete Preliminary 2nd Edition',
-    totalLessons: 64,
-    lessonsPerWeek: 2,
-    durationMinutes: 90,
-    learningObjectives: [
-      'Phát triển toàn diện 4 kỹ năng tiếng Anh trình độ B1 theo khung CEFR',
-      'Viết bài luận, thư và câu chuyện mạch lạc với cấu trúc ngữ pháp trung cấp',
-      'Giao tiếp tự tin trong học tập và tình huống đời sống hàng ngày'
-    ],
-    skills: ['Reading 25%', 'Writing 25%', 'Listening 25%', 'Speaking 25%'],
-    assessmentCriteria: ['Thang điểm Cambridge 140-159 (Pass/Merit/Distinction)'],
-    lessonSequence: [
-      { lessonNumber: 1, title: 'My Life and Home', grammarFocus: 'Present simple & adverbs of frequency', vocabFocus: 'house, furniture, daily habits', homework: 'PET Reading Part 1 & 2' }
-    ]
-  },
-  {
-    id: 'PROG-IELTS',
-    name: 'IELTS',
-    code: 'IELTS-ACADEMIC',
-    level: 'IELTS',
-    curriculum: 'IELTS Academic & Foundation',
-    textbook: 'Mindset for IELTS & Cambridge IELTS Practice Tests',
-    totalLessons: 72,
-    lessonsPerWeek: 2,
-    durationMinutes: 120,
-    learningObjectives: [
-      'Làm chủ kỹ thuật làm bài 4 kỹ năng IELTS Listening, Reading, Writing, Speaking',
-      'Nâng cao vốn từ vựng học thuật và tư duy lập luận Task 1 & Task 2',
-      'Hướng tới mục tiêu đầu ra IELTS 6.0 - 7.5+'
-    ],
-    skills: ['Listening 25%', 'Reading 25%', 'Writing 25%', 'Speaking 25%'],
-    assessmentCriteria: ['Thang điểm IELTS Band 0 - 9.0', 'Mock Test hàng tháng'],
-    lessonSequence: [
-      { lessonNumber: 1, title: 'Overview & Academic Foundations', grammarFocus: 'Complex sentences & cohesive devices', vocabFocus: 'education, society, trends', homework: 'Writing Task 1 trend description' }
-    ]
-  },
-  {
-    id: 'PROG-OTHER',
-    name: 'Khác',
-    code: 'PROG-OTHER',
-    level: 'Khác',
-    curriculum: 'Chương trình thiết kế riêng theo nhu cầu học viên',
-    textbook: 'Tài liệu biên soạn LeeGo Center',
-    totalLessons: 48,
-    lessonsPerWeek: 2,
-    durationMinutes: 90,
-    learningObjectives: [
-      'Đáp ứng lộ trình học tập linh hoạt theo mục tiêu riêng của từng lớp',
-      'Củng cố nền tảng giao tiếp, phát âm và ngữ pháp thực hành'
-    ],
-    skills: ['Listening 25%', 'Speaking 25%', 'Reading 25%', 'Writing 25%'],
-    assessmentCriteria: ['Đánh giá định kỳ theo mục tiêu đầu ra của lớp'],
-    lessonSequence: [
-      { lessonNumber: 1, title: 'Orientation & Placement Review', grammarFocus: 'Core structures review', vocabFocus: 'Everyday communication', homework: 'Practice worksheet 1' }
     ]
   }
 ];
