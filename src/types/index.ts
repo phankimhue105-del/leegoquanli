@@ -290,8 +290,24 @@ export interface MonthlyTeachingSchedule {
   updatedAt: string;
 }
 
-export type HomeworkStatus = 'Đạt' | 'Chưa đạt' | 'Chưa hoàn thành' | 'Không giao BVN';
-export type PreviousLessonStatus = 'Đạt' | 'Chưa đạt' | 'Chưa thuộc bài' | 'Chưa chuẩn bị';
+export type HomeworkStatus =
+  | 'Đạt yêu cầu'
+  | 'Chưa đạt yêu cầu'
+  | 'Chưa hoàn thành'
+  | 'Không áp dụng'
+  | 'Đạt'
+  | 'Chưa đạt'
+  | 'Không giao BVN';
+
+export type PreviousLessonStatus =
+  | 'Đạt yêu cầu'
+  | 'Chưa đạt yêu cầu'
+  | 'Chưa hoàn thành'
+  | 'Không áp dụng'
+  | 'Đạt'
+  | 'Chưa đạt'
+  | 'Chưa thuộc bài'
+  | 'Chưa chuẩn bị';
 
 export interface StudentLessonReportEntry {
   studentId: string;
@@ -302,6 +318,22 @@ export interface StudentLessonReportEntry {
   assignedHomework: string;
   notes: string;
   completed: boolean;
+}
+
+export interface LessonReportLockAuditEntry {
+  id: string;
+  reportId: string;
+  classId: string;
+  className: string;
+  teachingDate: string;
+  action: 'LOCK' | 'UNLOCK';
+  actorUserId: string;
+  actorUsername: string;
+  actorName: string;
+  timestamp: string;
+  timestampIso: string;
+  reason?: string;
+  originalDeadlineAt?: string;
 }
 
 export interface LessonReport {
@@ -323,6 +355,14 @@ export interface LessonReport {
   locked: boolean;
   lockedAt?: string;
   lockedBy?: string;
+  deadlineAt?: string; // ISO string with +07:00 for 17:00 next day Vietnam time
+  unlockedAfterExpiration?: boolean;
+  submittedAt?: string;
+  submittedBy?: string;
+  lastEditedById?: string;
+  lastEditedByUsername?: string;
+  lastEditedByName?: string;
+  lastEditedAt?: string;
   studentReports: StudentLessonReportEntry[];
 }
 
