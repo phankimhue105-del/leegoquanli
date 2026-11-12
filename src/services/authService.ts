@@ -1,268 +1,171 @@
 import { User, UserRole } from '../types';
 
-/**
- * =========================================================================
- * LEEGO CENTER MANAGEMENT – AUTHENTICATION SERVICE
- * =========================================================================
- * Connects the frontend to the Google Apps Script Web App API.
- * Google Sheet: leegologin (Columns: User ID, Username, Password Hash, Full Name, Role, Status, Teacher ID)
- */
-
-const SESSION_STORAGE_KEY = 'leego_auth_user_v1';
-const REMEMBER_ME_KEY = 'leego_remember_me_v1';
-
-// Default Google Apps Script Web App API endpoint provided for LeeGo Center
-export const DEFAULT_AUTH_API_URL =
+export const APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbxiMpstNCNvwfjEML2oNtmKN1jfGmwKasbP8h_szfR9Gq1mDrTll6-lNhNOE8tr8vOc/exec';
 
-/**
- * Retrieve the active Authentication API URL.
- * Prefers the VITE_AUTH_API_URL environment variable if set, falling back to the configured endpoint.
- */
-export const getAuthApiUrl = (): string => {
-  return (import.meta.env.VITE_AUTH_API_URL as string) || DEFAULT_AUTH_API_URL;
-};
+export interface GasUserResponse {
+  userId?: string;
+  username?: string;
+  fullName?: string;
+  role?: string;
+  status?: string;
+  teacherId?: string;
+  email?: string;
+}
 
-export interface AuthResponse {
+export interface GasAuthResult {
   success: boolean;
-  user?: User;
-  token?: string;
+  message?: string;
+  user?: GasUserResponse;
+  users?: GasUserResponse[];
   error?: string;
-  errorCode?: 'MISSING_API_URL' | 'INVALID_CREDENTIALS' | 'ACCOUNT_LOCKED' | 'SERVER_ERROR' | 'NETWORK_ERROR';
 }
 
 /**
- * Normalize role returned from Google Apps Script to internal LeeGo UserRole
+ * Maps a raw user object returned by Google Apps Script / leegologin to the application's User model
  */
-export function normalizeUserRole(roleInput?: string): UserRole {
-  const r = (roleInput || '').trim().toLowerCase().replace(/\s+/g, '_');
-  if (r === 'admin' || r === 'administrator') return 'admin';
-  if (r === 'academic_manager' || r === 'manager' || r === 'academic') return 'academic_manager';
-  if (r === 'teacher' || r === 'teaching_assistant' || r === 'assistant' || r === 'ta') return 'teacher';
-  return 'teacher';
+export function mapGasUserToAppUser(gasUser: GasUserResponse): User {
+  const role: UserRole =
+    gasUser.role === 'admin'
+      ? 'admin'
+      : gasUser.role === 'academic_manager'
+      ? 'academic_manager'
+      : 'teacher';
+
+  const username = gasUser.username || gasUser.userId || 'user';
+  const email =
+    gasUser.email ||
+    (username.toLowerCase().replace(/\s+/g, '.') + '@leego.edu.vn');
+
+  return {
+    id: gasUser.userId || `USR-${username}`,
+    name: gasUser.fullName || username,
+    username: username,
+    email: email,
+    role: role,
+    teacherId: gasUser.teacherId ? String(gasUser.teacherId).trim() : undefined,
+    status: (gasUser.status === 'inactive' ? 'inactive' : 'active'),
+    createdAt: '2025-01-01',
+    lastLogin: 'Hôm nay lúc ' + new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+  };
 }
 
 /**
- * Translate backend message to friendly Vietnamese
+ * Authenticates credentials against Google Apps Script backend (leegologin)
+ * with strict 10-second timeout handling
  */
-function formatErrorMessage(rawMessage?: string): string {
-  if (!rawMessage) return 'Tên đăng nhập hoặc mật khẩu không chính xác.';
-  const lower = rawMessage.toLowerCase();
+export async function authenticateWithGoogleAppsScript(
+  usernameOrEmail: string,
+  pass: string
+): Promise<{ success: boolean; user?: User; error?: string }> {
+  const trimmedInput = (usernameOrEmail || '').trim();
+  const trimmedPass = (pass || '').trim();
 
-  if (lower.includes('invalid') || lower.includes('password') || lower.includes('username')) {
-    return 'Tên đăng nhập hoặc mật khẩu không chính xác.';
-  }
-  if (lower.includes('inactive') || lower.includes('locked') || lower.includes('blocked')) {
-    return 'Tài khoản đã bị khóa hoặc ngừng kích hoạt. Vui lòng liên hệ Quản trị viên.';
-  }
-  if (lower.includes('sheet') || lower.includes('not found')) {
-    return 'Không tìm thấy trang tính tài khoản (leegologin) trên Google Sheet.';
-  }
-  return rawMessage;
-}
-
-/**
- * Authenticate against Google Apps Script Web App
- */
-export async function loginWithCredentials(
-  usernameInput: string,
-  passwordInput: string,
-  rememberMe: boolean = true
-): Promise<AuthResponse> {
-  const username = usernameInput.trim();
-  const password = passwordInput; // Preserve exact uppercase, lowercase, and symbols
-
-  // 1. Frontend validation
-  if (!username) {
+  if (!trimmedInput || !trimmedPass) {
     return {
       success: false,
-      error: 'Vui lòng nhập tên đăng nhập.',
-      errorCode: 'INVALID_CREDENTIALS',
+      error: 'Vui lòng nhập đầy đủ Tên đăng nhập / Email và Mật khẩu.'
     };
   }
 
-  if (!password) {
-    return {
-      success: false,
-      error: 'Vui lòng nhập mật khẩu.',
-      errorCode: 'INVALID_CREDENTIALS',
-    };
-  }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
-  const apiUrl = getAuthApiUrl();
-
-  if (!apiUrl) {
-    return {
-      success: false,
-      error: 'Hệ thống chưa cấu hình biến môi trường VITE_AUTH_API_URL. Vui lòng kiểm tra lại cấu hình.',
-      errorCode: 'MISSING_API_URL',
-    };
-  }
-
-  // 2. Dispatch request to Google Apps Script
   try {
     const payload = {
       action: 'login',
-      username,
-      password,
+      username: trimmedInput,
+      password: trimmedPass
     };
 
-    /**
-     * Note on Google Apps Script Web App CORS:
-     * Sending 'text/plain;charset=utf-8' prevents browsers from issuing an OPTIONS
-     * preflight request which Apps Script does not natively handle, while Google Apps
-     * Script successfully parses e.postData.contents as JSON.
-     */
-    const response = await fetch(apiUrl, {
+    const response = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
+      redirect: 'follow',
       headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
+        'Content-Type': 'text/plain;charset=utf-8'
       },
       body: JSON.stringify(payload),
-      redirect: 'follow',
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       return {
         success: false,
-        error: `Không thể kết nối máy chủ xác thực (HTTP ${response.status}). Vui lòng thử lại.`,
-        errorCode: 'SERVER_ERROR',
+        error: `Máy chủ xác thực phản hồi mã lỗi (${response.status}). Vui lòng thử lại.`
       };
     }
 
-    const data = await response.json();
+    const data: GasAuthResult = await response.json();
 
-    const isSuccess = data.success === true || data.success === 'true' || data.status === 'success';
-
-    if (isSuccess && data.user) {
-      const statusNormalized = String(data.user.status || 'active').trim().toLowerCase();
-
-      // Check account status
-      if (statusNormalized !== 'active' || data.user.locked === true) {
+    if (data.success && data.user) {
+      const appUser = mapGasUserToAppUser(data.user);
+      if (appUser.status === 'inactive') {
         return {
           success: false,
-          error: 'Tài khoản đã bị khóa. Vui lòng liên hệ Quản lý để được hỗ trợ.',
-          errorCode: 'ACCOUNT_LOCKED',
+          error: 'Tài khoản này đã bị khóa trong hệ thống leegologin. Vui lòng liên hệ Quản trị viên.'
         };
       }
-
-      const role = normalizeUserRole(data.user.role);
-      const linkedTeacherId =
-        role === 'teacher' ? String(data.user.teacherId || '').trim() || undefined : undefined;
-
-      // Construct verified User profile (never falls back to userId as teacherId)
-      const userProfile: User = {
-        id: String(data.user.userId || data.user.id || `USR-${Date.now()}`),
-        name: String(data.user.fullName || data.user.name || username),
-        username: String(data.user.username || username),
-        email: data.user.email ? String(data.user.email).trim() : '',
-        role,
-        status: 'active',
-        ...(linkedTeacherId ? { teacherId: linkedTeacherId } : {}),
-        permissions: Array.isArray(data.user.permissions) ? data.user.permissions : [],
-        assignedClasses: Array.isArray(data.user.assignedClasses) ? data.user.assignedClasses : [],
-        avatar: data.user.avatar || undefined,
-        createdAt: data.user.createdAt || new Date().toISOString().slice(0, 10),
-        lastLogin: new Date().toLocaleDateString('vi-VN') + ' ' + new Date().toLocaleTimeString('vi-VN'),
-      };
-
-      // Save session securely (NEVER store password or password hash)
-      saveUserSession(userProfile, rememberMe);
-
       return {
         success: true,
-        user: userProfile,
-        token: data.token,
+        user: appUser
       };
     }
 
+    const message = data.message || 'Tên đăng nhập hoặc mật khẩu không chính xác.';
+    let vietnameseError = 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại.';
+    if (message.includes('enter username')) {
+      vietnameseError = 'Vui lòng nhập đầy đủ Tên đăng nhập và Mật khẩu.';
+    } else if (message.includes('locked') || message.includes('inactive')) {
+      vietnameseError = 'Tài khoản đã bị tạm khóa.';
+    }
+
     return {
       success: false,
-      error: formatErrorMessage(data.message),
-      errorCode: 'INVALID_CREDENTIALS',
+      error: vietnameseError
     };
   } catch (err: any) {
-    console.error('Authentication request error:', err);
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return {
+        success: false,
+        error: 'Không thể kết nối hệ thống xác thực. Yêu cầu quá thời gian chờ (10s). Vui lòng thử lại.'
+      };
+    }
     return {
       success: false,
-      error: 'Không thể kết nối máy chủ xác thực Google Apps Script. Vui lòng kiểm tra lại kết nối mạng.',
-      errorCode: 'NETWORK_ERROR',
+      error: 'Không thể kết nối hệ thống xác thực Google Apps Script. Vui lòng kiểm tra đường truyền mạng.'
     };
   }
 }
 
 /**
- * Save authenticated user session (stores only public profile, never credentials)
+ * Fetches user accounts from Google Apps Script leegologin
  */
-export function saveUserSession(user: User, rememberMe: boolean): void {
+export async function fetchUsersFromGoogleAppsScript(): Promise<User[]> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
   try {
-    const safeUser = { ...user } as Record<string, unknown>;
-    delete safeUser.password;
-    delete safeUser.passwordHash;
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'getUsers' }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
 
-    const serialized = JSON.stringify(safeUser);
-    if (rememberMe) {
-      localStorage.setItem(SESSION_STORAGE_KEY, serialized);
-      localStorage.setItem(REMEMBER_ME_KEY, 'true');
-      sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    } else {
-      sessionStorage.setItem(SESSION_STORAGE_KEY, serialized);
-      localStorage.removeItem(REMEMBER_ME_KEY);
-      localStorage.removeItem(SESSION_STORAGE_KEY);
+    if (!response.ok) return [];
+    const data: GasAuthResult = await response.json();
+    if (data.success && Array.isArray(data.users)) {
+      return data.users.map(mapGasUserToAppUser);
     }
+    return [];
   } catch (err) {
-    console.error('Failed to save session to storage', err);
+    clearTimeout(timeoutId);
+    console.warn('Could not fetch users from Google Apps Script:', err);
+    return [];
   }
-}
-
-/**
- * Retrieve active user session from localStorage (only if Remember Me was enabled) or sessionStorage
- */
-export function getStoredUserSession(): User | null {
-  try {
-    const rememberEnabled = localStorage.getItem(REMEMBER_ME_KEY) === 'true';
-    if (rememberEnabled) {
-      const fromLocal = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (fromLocal) {
-        const parsed = JSON.parse(fromLocal) as User;
-        if (parsed && parsed.id && parsed.role && parsed.status === 'active') {
-          return parsed;
-        }
-      }
-    } else {
-      // Clear any leftover unremembered localStorage entry (e.g. from legacy preview state)
-      localStorage.removeItem(SESSION_STORAGE_KEY);
-    }
-
-    const fromSession = sessionStorage.getItem(SESSION_STORAGE_KEY);
-    if (fromSession) {
-      const parsed = JSON.parse(fromSession) as User;
-      if (parsed && parsed.id && parsed.role && parsed.status === 'active') {
-        return parsed;
-      }
-    }
-  } catch (err) {
-    console.error('Failed to parse user session', err);
-  }
-  return null;
-}
-
-/**
- * Clear stored user session
- */
-export function clearUserSession(): void {
-  try {
-    localStorage.removeItem(SESSION_STORAGE_KEY);
-    localStorage.removeItem(REMEMBER_ME_KEY);
-    sessionStorage.removeItem(SESSION_STORAGE_KEY);
-  } catch (err) {
-    console.error('Failed to clear storage session', err);
-  }
-}
-
-/**
- * Check if a session is currently stored
- */
-export function isUserSessionActive(): boolean {
-  return getStoredUserSession() !== null;
 }
