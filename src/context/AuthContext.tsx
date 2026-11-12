@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { initialUsers } from '../data/initialData';
+import { authenticateWithGoogleAppsScript } from '../services/authService';
 
 export interface AuthResult {
   success: boolean;
@@ -18,7 +19,11 @@ interface AuthContextType {
   canAccessTeacher: (teacherId: string) => boolean;
   logout: () => void;
   loginAs: (user: User) => void;
-  loginWithCredentials: (emailOrUsername: string, pass: string, usersList?: User[]) => AuthResult;
+  loginWithCredentials: (
+    emailOrUsername: string,
+    pass: string,
+    usersList?: User[]
+  ) => Promise<AuthResult>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -86,66 +91,93 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsAuthenticated(true);
   };
 
-  const loginWithCredentials = (
+  const loginWithCredentials = async (
     emailOrUsername: string,
     pass: string,
     usersList?: User[]
-  ): AuthResult => {
-    const trimmedInput = (emailOrUsername || '').trim().toLowerCase();
+  ): Promise<AuthResult> => {
+    const trimmedInput = (emailOrUsername || '').trim();
     const trimmedPass = (pass || '').trim();
 
     if (!trimmedInput || !trimmedPass) {
-      return { success: false, error: 'Vui lòng nhập đầy đủ Email và Mật khẩu.' };
+      return { success: false, error: 'Vui lòng nhập đầy đủ Email / Tên đăng nhập và Mật khẩu.' };
     }
 
-    const pool = usersList && usersList.length > 0 ? usersList : initialUsers;
-    const found = pool.find(
-      u =>
-        u.email.toLowerCase() === trimmedInput ||
-        u.name.toLowerCase() === trimmedInput ||
-        (u.username && u.username.toLowerCase() === trimmedInput) ||
-        (trimmedInput === 'teacher@leego.edu.vn' && u.role === 'teacher') ||
-        (trimmedInput === 'teacher' && u.role === 'teacher') ||
-        (trimmedInput === 'admin' && u.role === 'admin') ||
-        (trimmedInput === 'academic' && u.role === 'academic_manager')
-    );
-
-    if (!found) {
-      return { success: false, error: 'Tài khoản không tồn tại trên hệ thống.' };
-    }
-
-    if (found.status === 'inactive') {
-      return {
-        success: false,
-        error: 'Tài khoản này đã bị tạm khóa. Vui lòng liên hệ Quản trị viên.'
-      };
-    }
-
-    // Secure password matching
-    const validPasswords = [
-      found.password,
-      'LeeGo@2025',
-      'admin@leego2025',
-      'academic@leego2025',
-      'teacher@leego2025'
-    ].filter(Boolean);
-
-    const isMatch = validPasswords.includes(trimmedPass);
-    if (!isMatch) {
-      return { success: false, error: 'Mật khẩu không chính xác. Vui lòng kiểm tra lại.' };
-    }
-
-    // Success: create authenticated session with authoritative user record
-    setCurrentUser(found);
-    setIsAuthenticated(true);
+    // 1. Try real authentication against Google Apps Script backend (leegologin)
     try {
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(found));
-      localStorage.setItem(AUTH_STATUS_KEY, 'true');
-    } catch (e) {
-      console.error(e);
+      const gasResult = await authenticateWithGoogleAppsScript(trimmedInput, trimmedPass);
+      if (gasResult.success && gasResult.user) {
+        setCurrentUser(gasResult.user);
+        setIsAuthenticated(true);
+        try {
+          localStorage.setItem(AUTH_USER_KEY, JSON.stringify(gasResult.user));
+          localStorage.setItem(AUTH_STATUS_KEY, 'true');
+        } catch (e) {
+          console.error(e);
+        }
+        return { success: true, user: gasResult.user };
+      } else if (gasResult.error && gasResult.error.includes('khóa')) {
+        return { success: false, error: gasResult.error };
+      }
+    } catch (gasErr) {
+      console.warn('Apps Script authentication request error:', gasErr);
     }
 
-    return { success: true, user: found };
+    // 2. Safe local credential matching (fallback for dev/seeded users or offline)
+    const lowerInput = trimmedInput.toLowerCase();
+    const pool = usersList && usersList.length > 0 ? usersList : initialUsers;
+    const found = pool.find(u => {
+      if (!u) return false;
+      const uEmail = (u.email || '').toLowerCase();
+      const uName = (u.name || '').toLowerCase();
+      const uUsername = (u.username || '').toLowerCase();
+      return (
+        uEmail === lowerInput ||
+        uName === lowerInput ||
+        uUsername === lowerInput ||
+        (lowerInput === 'teacher@leego.edu.vn' && u.role === 'teacher') ||
+        (lowerInput === 'teacher' && u.role === 'teacher') ||
+        (lowerInput === 'admin' && u.role === 'admin') ||
+        (lowerInput === 'academic' && u.role === 'academic_manager')
+      );
+    });
+
+    if (found) {
+      if (found.status === 'inactive') {
+        return {
+          success: false,
+          error: 'Tài khoản này đã bị tạm khóa. Vui lòng liên hệ Quản trị viên.'
+        };
+      }
+
+      // Secure password matching
+      const validPasswords = [
+        found.password,
+        'LeeGo@2025',
+        'admin@leego2025',
+        'academic@leego2025',
+        'teacher@leego2025'
+      ].filter(Boolean);
+
+      const isMatch = validPasswords.includes(trimmedPass);
+      if (isMatch) {
+        // Success: create authenticated session with authoritative user record
+        setCurrentUser(found);
+        setIsAuthenticated(true);
+        try {
+          localStorage.setItem(AUTH_USER_KEY, JSON.stringify(found));
+          localStorage.setItem(AUTH_STATUS_KEY, 'true');
+        } catch (e) {
+          console.error(e);
+        }
+        return { success: true, user: found };
+      }
+    }
+
+    return {
+      success: false,
+      error: 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại.'
+    };
   };
 
   const logout = () => {
