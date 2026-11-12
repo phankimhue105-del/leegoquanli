@@ -22,37 +22,27 @@ import { LessonReportsView } from './components/views/LessonReportsView';
 import { AcademicReportsView } from './components/views/AcademicReportsView';
 import { UserManagementView } from './components/views/UserManagementView';
 import { SettingsView } from './components/views/SettingsView';
-import { ShieldAlert, Shield, Briefcase, GraduationCap, Lock, Mail } from 'lucide-react';
-import { initialUsers } from './data/initialData';
-import { User } from './types';
+import { ShieldAlert, Lock, Mail, LogIn } from 'lucide-react';
+import { useData } from './context/DataContext';
 
-interface LoginViewProps {
-  onLogin: (user: User) => void;
-}
-
-const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
+const LoginView: React.FC = () => {
+  const { loginWithCredentials } = useAuth();
+  const { data } = useData();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleManualLogin = (e: React.FormEvent) => {
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setLoading(true);
 
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) {
-      setErrorMessage('Vui lòng nhập email hoặc tên đăng nhập.');
-      return;
-    }
+    const res = loginWithCredentials(email, password, data?.users);
+    setLoading(false);
 
-    const found = initialUsers.find(
-      u => u.email.toLowerCase() === trimmed || u.name.toLowerCase() === trimmed
-    );
-
-    if (found) {
-      onLogin(found);
-    } else {
-      setErrorMessage('Không tìm thấy tài khoản với thông tin đăng nhập đã cung cấp.');
+    if (!res.success) {
+      setErrorMessage(res.error || 'Thông tin đăng nhập không hợp lệ.');
     }
   };
 
@@ -73,24 +63,26 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
         </div>
 
         {/* Login Form */}
-        <form onSubmit={handleManualLogin} className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-4">
           {errorMessage && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl font-semibold">
-              {errorMessage}
+            <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl font-semibold flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-red-600" />
+              <span>{errorMessage}</span>
             </div>
           )}
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
-              Email hoặc Tên đăng nhập
+              Email hoặc Tên đăng nhập <span className="text-red-600">*</span>
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
+                required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="admin@leego.edu.vn"
+                placeholder="VD: admin@leego.edu.vn"
                 className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all"
               />
             </div>
@@ -98,15 +90,16 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
-              Mật khẩu
+              Mật khẩu đăng nhập <span className="text-red-600">*</span>
             </label>
             <div className="relative">
               <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="password"
+                required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
+                placeholder="Nhập mật khẩu"
                 className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all"
               />
             </div>
@@ -114,47 +107,16 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
 
           <button
             type="submit"
-            className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-500/20 transition-all cursor-pointer"
+            disabled={loading}
+            className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-500/20 transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            Đăng nhập hệ thống
+            <LogIn className="w-4 h-4" />
+            <span>{loading ? 'Đang xác thực...' : 'Đăng nhập hệ thống'}</span>
           </button>
         </form>
 
-        {/* Quick Role Sign-In for Easy Authorized Access */}
-        <div className="pt-4 border-t border-slate-100 space-y-2">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">
-            Đăng nhập nhanh theo vai trò
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => onLogin(initialUsers[0])}
-              className="p-2.5 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 border border-slate-200 rounded-xl text-center transition-all cursor-pointer group"
-            >
-              <div className="text-[11px] font-bold text-slate-800 group-hover:text-amber-800">Admin</div>
-              <div className="text-[9px] text-slate-400 truncate">Quản trị viên</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => onLogin(initialUsers[1])}
-              className="p-2.5 bg-slate-50 hover:bg-blue-50 hover:border-blue-300 border border-slate-200 rounded-xl text-center transition-all cursor-pointer group"
-            >
-              <div className="text-[11px] font-bold text-slate-800 group-hover:text-blue-800">Academic</div>
-              <div className="text-[9px] text-slate-400 truncate">Học thuật</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => onLogin(initialUsers[2])}
-              className="p-2.5 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border border-slate-200 rounded-xl text-center transition-all cursor-pointer group"
-            >
-              <div className="text-[11px] font-bold text-slate-800 group-hover:text-emerald-800">Teacher</div>
-              <div className="text-[9px] text-slate-400 truncate">Giáo viên</div>
-            </button>
-          </div>
-        </div>
-
-        <div className="text-center text-[10px] text-slate-400">
-          Trung tâm Anh ngữ LeeGo • Bảo mật thông tin & Phân quyền RBAC
+        <div className="text-center pt-2 border-t border-slate-100 text-[10px] text-slate-400">
+          Trung tâm Anh ngữ LeeGo • Xác thực bảo mật thông tin & Phân quyền RBAC
         </div>
       </div>
     </div>
@@ -162,14 +124,14 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
 };
 
 const AppContent: React.FC = () => {
-  const { currentUser, isAuthenticated, loginAs } = useAuth();
+  const { currentUser, isAuthenticated } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
 
   if (!isAuthenticated) {
-    return <LoginView onLogin={loginAs} />;
+    return <LoginView />;
   }
 
   // Validate permission for currentTab
