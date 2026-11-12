@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Users,
   BookOpen,
@@ -19,6 +19,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { NavigationTab } from '../layout/Sidebar';
+import { AdminDailyClassOverview } from './AdminDailyClassOverview';
 
 interface DashboardViewProps {
   onNavigate: (tab: NavigationTab) => void;
@@ -28,6 +29,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   const { currentUser } = useAuth();
   const { data } = useData();
   const role = currentUser.role;
+
+  const [overviewDate, setOverviewDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [overviewClassId, setOverviewClassId] = useState<string>('');
 
   // General counts
   const totalStudents = data.students.length;
@@ -223,6 +230,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               <div className="text-xs font-medium text-slate-500">Ca dạy trong ngày</div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Admin Daily Attendance Overview */}
+      {role === 'admin' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-end gap-2">
+            <label className="text-xs font-semibold text-slate-600">Chọn ngày kiểm tra điểm danh:</label>
+            <input
+              type="date"
+              value={overviewDate}
+              onChange={e => setOverviewDate(e.target.value)}
+              className="px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 shadow-xs focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+          </div>
+          <AdminDailyClassOverview
+            selectedDate={overviewDate}
+            selectedClassId={overviewClassId}
+            onSelectClass={classId => {
+              setOverviewClassId(classId);
+              onNavigate('attendance');
+            }}
+          />
         </div>
       )}
 
