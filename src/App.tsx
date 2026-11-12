@@ -33,16 +33,21 @@ const LoginView: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setLoading(true);
 
-    const res = loginWithCredentials(email, password, data?.users);
-    setLoading(false);
-
-    if (!res.success) {
-      setErrorMessage(res.error || 'Thông tin đăng nhập không hợp lệ.');
+    try {
+      const res = await loginWithCredentials(email, password, data?.users);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Thông tin đăng nhập không chính xác.');
+      }
+    } catch (err: any) {
+      console.error('Login process error:', err);
+      setErrorMessage(err?.message || 'Không thể kết nối hệ thống xác thực. Vui lòng thử lại.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -82,7 +87,7 @@ const LoginView: React.FC = () => {
                 required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="VD: admin@leego.edu.vn"
+                placeholder="VD: Admin 01 hoặc admin@leego.edu.vn"
                 className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all"
               />
             </div>
