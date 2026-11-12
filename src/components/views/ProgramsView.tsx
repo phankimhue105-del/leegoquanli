@@ -271,7 +271,7 @@ export const ProgramsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Chương trình / Cấp độ</label>
+                  <label className="font-semibold text-slate-700 block mb-1">Cấp độ</label>
                   <select
                     value={formData.level}
                     onChange={e => setFormData({ ...formData, level: e.target.value })}
