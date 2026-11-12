@@ -798,13 +798,34 @@ function splitTimeRange(timeStr: string): { startTime: string; endTime: string; 
 export function getClassWeeklySchedule(cls?: ClassItem | null): ClassWeeklyScheduleSlot[] {
   if (!cls) return [];
 
-  const maybeWeekly = (cls as ClassItem & { weeklySchedule?: ClassWeeklyScheduleSlot[] }).weeklySchedule;
+  const maybeWeekly = (cls as { weeklySchedule?: Array<Partial<ClassWeeklyScheduleSlot>> }).weeklySchedule;
   if (Array.isArray(maybeWeekly) && maybeWeekly.length > 0) {
-    return [...maybeWeekly].sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+    return maybeWeekly
+      .filter((slot): slot is Partial<ClassWeeklyScheduleSlot> & { dayOfWeek: number } =>
+        Boolean(slot && typeof slot.dayOfWeek === 'number')
+      )
+      .map(slot => {
+        const startTime = typeof slot.startTime === 'string' ? slot.startTime.trim() : '';
+        const endTime = typeof slot.endTime === 'string' ? slot.endTime.trim() : '';
+        const timeRange =
+          typeof slot.timeRange === 'string' && slot.timeRange.trim()
+            ? slot.timeRange.trim()
+            : startTime && endTime
+            ? `${startTime} – ${endTime}`
+            : startTime || endTime || '';
+        return {
+          dayOfWeek: slot.dayOfWeek,
+          dayName: typeof slot.dayName === 'string' ? slot.dayName : '',
+          startTime,
+          endTime,
+          timeRange
+        };
+      })
+      .sort((a, b) => a.dayOfWeek - b.dayOfWeek);
   }
 
-  const scheduleDays = cls.scheduleDays || '';
-  const fallbackTime = cls.scheduleTime || '';
+  const scheduleDays = typeof cls.scheduleDays === 'string' ? cls.scheduleDays : '';
+  const fallbackTime = typeof cls.scheduleTime === 'string' ? cls.scheduleTime : '';
   if (!scheduleDays.trim()) return [];
 
   const slotsByDay = new Map<number, ClassWeeklyScheduleSlot>();
@@ -837,19 +858,27 @@ export function getClassWeeklySchedule(cls?: ClassItem | null): ClassWeeklySched
 export function formatScheduleTimeSummary(slots: ClassWeeklyScheduleSlot[]): string {
   if (!Array.isArray(slots) || slots.length === 0) return '';
 
-  const nonEmptyTimes = slots.map(s => s.timeRange.trim()).filter(Boolean);
+  const nonEmptyTimes = slots
+    .map(s => (typeof s?.timeRange === 'string' ? s.timeRange.trim() : ''))
+    .filter(Boolean);
   if (nonEmptyTimes.length === 0) {
-    return slots.map(s => s.dayName).join(', ');
+    return slots.map(s => s?.dayName || '').filter(Boolean).join(', ');
   }
 
   const uniqueTimes = Array.from(new Set(nonEmptyTimes));
   if (uniqueTimes.length === 1) {
-    const daysLabel = slots.map(s => s.dayName).join(', ');
-    return `${uniqueTimes[0]} (${daysLabel})`;
+    const daysLabel = slots.map(s => s?.dayName || '').filter(Boolean).join(', ');
+    return daysLabel ? `${uniqueTimes[0]} (${daysLabel})` : uniqueTimes[0];
   }
 
   return slots
-    .map(s => (s.timeRange ? `${s.dayName}: ${s.timeRange}` : s.dayName))
+    .map(s => {
+      const time = typeof s?.timeRange === 'string' ? s.timeRange.trim() : '';
+      const day = s?.dayName || '';
+      if (day && time) return `${day}: ${time}`;
+      return day || time;
+    })
+    .filter(Boolean)
     .join(' | ');
 }
 
