@@ -77,14 +77,15 @@ export const TeachingScheduleView: React.FC = () => {
 
   // Filter classes accessible to current user
   const availableClasses = useMemo(() => {
+    const classesList = Array.isArray(data?.classes) ? data.classes : [];
     if (currentUser.role === 'teacher') {
       const teacherId = currentUser.teacherId;
-      return data.classes.filter(
+      return classesList.filter(
         c => c.teacherId === teacherId || c.assistantTeacherId === teacherId
       );
     }
-    return data.classes;
-  }, [data.classes, currentUser]);
+    return classesList;
+  }, [data?.classes, currentUser]);
 
   // Selected Class, Month & Year (Default to CLS-STA-01, November 2026 as primary test case)
   const [selectedClassId, setSelectedClassId] = useState<string>(() => {
@@ -598,7 +599,7 @@ export const TeachingScheduleView: React.FC = () => {
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1 text-slate-600">
               <Calendar className="w-4 h-4 text-blue-500" />
-              Tổng số buổi: <strong className="text-slate-800">{currentSchedule?.sessions.length || 0} buổi</strong>
+              Tổng số buổi: <strong className="text-slate-800">{currentSchedule?.sessions?.length || 0} buổi</strong>
             </span>
             <span className="hidden sm:inline text-slate-300">|</span>
             <span className="hidden sm:flex items-center gap-1">
@@ -727,7 +728,7 @@ export const TeachingScheduleView: React.FC = () => {
         </div>
 
         {/* Horizontal Schedule Table */}
-        {currentSchedule && currentSchedule.sessions.length > 0 ? (
+        {currentSchedule && Array.isArray(currentSchedule.sessions) && currentSchedule.sessions.length > 0 ? (
           <div className="overflow-x-auto pb-4 scrollbar-thin">
             <table className="w-full border-collapse border border-black font-serif text-slate-900 text-xs md:text-sm min-w-[760px]">
               <thead>
@@ -933,7 +934,7 @@ export const TeachingScheduleView: React.FC = () => {
                     Chỉnh sửa buổi học: {editingSession.dateOrdinal} ({editingSession.date})
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Buổi số {editingSessionIndex + 1} / {currentSchedule?.sessions.length} trong Tháng {selectedMonth}/{selectedYear}
+                    Buổi số {editingSessionIndex + 1} / {currentSchedule?.sessions?.length || 0} trong Tháng {selectedMonth}/{selectedYear}
                   </p>
                 </div>
               </div>
@@ -1129,7 +1130,7 @@ export const TeachingScheduleView: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleNextSession}
-                  disabled={!currentSchedule || editingSessionIndex >= currentSchedule.sessions.length - 1}
+                  disabled={!currentSchedule || editingSessionIndex >= (currentSchedule.sessions?.length || 0) - 1}
                   className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-40 transition-colors"
                 >
                   <span>Buổi sau</span>
@@ -1208,9 +1209,9 @@ export const TeachingScheduleView: React.FC = () => {
               {copySourceId && (
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
                   <div className="font-semibold text-slate-700">Xem trước bài học tháng nguồn:</div>
-                  {data.teachingSchedules
+                  {(data?.teachingSchedules || [])
                     .find(s => s.id === copySourceId)
-                    ?.sessions.slice(0, 4)
+                    ?.sessions?.slice(0, 4)
                     .map((s, idx) => (
                       <div key={idx} className="text-slate-600 truncate">
                         &bull; {s.lesson || `Buổi ${idx + 1}`}
