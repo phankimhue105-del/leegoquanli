@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   Student,
   ClassItem,
@@ -16,45 +16,11 @@ import {
   StudentAttendanceEntry,
   StudentScoreEntry,
   MonthlyTeachingSchedule,
-  TeachingSession
+  TeachingSession,
+  LessonReport,
+  MakeupClassSession
 } from '../types';
-import {
-  loadInitialStorage,
-  saveStorage,
-  resetStorage,
-  AppDataStore,
-  getClassWeeklySchedule,
-  formatScheduleDaysLabel,
-  formatScheduleTimeSummary,
-  getWeekdayLabel
-} from '../services/dataService';
-import {
-  CloudSyncStatus,
-  fetchCenterDataFromCloud,
-  fetchCenterVersionFromCloud,
-  initializeCenterDataOnCloud,
-  saveCenterKeysToCloud,
-  loadPendingSyncKeys,
-  savePendingSyncKeys,
-  detectUnsyncedLocalRecords,
-  mergeLocalRecordsIntoCloud
-} from '../services/cloudSyncService';
-import {
-  initialStudents,
-  initialClasses,
-  initialTeachers,
-  initialTeachingAssistants,
-  initialAcademicPrograms,
-  initialTimetableSessions,
-  initialAttendanceRecords,
-  initialAssessments,
-  initialLessonPlans,
-  initialUsers,
-  initialSettings,
-  initialActivityLogs,
-  initialParents,
-  initialTeachingSchedules
-} from '../data/initialData';
+import { loadInitialStorage, saveStorage, resetStorage, AppDataStore } from '../services/dataService';
 import { useAuth } from './AuthContext';
 
 export interface ScheduleConflictResult {
@@ -67,18 +33,6 @@ export interface ScheduleConflictResult {
 
 interface DataContextType {
   data: AppDataStore;
-  // Cloud Sync State & Controls
-  syncStatus: CloudSyncStatus;
-  syncError: string | null;
-  lastSyncedAt: string | null;
-  cloudVersion: number;
-  pendingSyncCount: number;
-  unsyncedLocalCount: number;
-  syncNow: () => Promise<boolean>;
-  retryPendingSync: () => Promise<boolean>;
-  mergeUnsyncedLocalData: () => Promise<boolean>;
-  forcePushLocalToCloud: () => Promise<boolean>;
-
   // Students
   addStudent: (student: Omit<Student, 'id'>) => Student;
   updateStudent: (id: string, updates: Partial<Student>) => void;
@@ -156,70 +110,18 @@ interface DataContextType {
   updateSettings: (settings: Partial<CenterSettings>) => void;
   resetAllData: () => void;
   addActivityLog: (action: string, details: string) => void;
+
+  // Lesson Reports
+  getLessonReportsForDate?: (date: string) => LessonReport[];
+  saveLessonReport?: (report: LessonReport) => { success: boolean; report?: LessonReport; error?: string };
+  submitLessonReport?: (reportId: string) => { success: boolean; report?: LessonReport; error?: string };
+  toggleReportLock?: (reportId: string, locked: boolean) => { success: boolean; error?: string };
+  addMakeupClass?: (session: Omit<MakeupClassSession, 'id'>) => { success: boolean; error?: string };
+  deleteMakeupClass?: (makeupId: string) => { success: boolean; error?: string };
+  resolveIncompleteReport?: (incompleteId: string) => void;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
-
-const INITIAL_BASELINE_STORE: AppDataStore = {
-  students: initialStudents,
-  classes: initialClasses,
-  teachers: initialTeachers,
-  teachingAssistants: initialTeachingAssistants,
-  programs: initialAcademicPrograms,
-  timetable: initialTimetableSessions,
-  attendance: initialAttendanceRecords,
-  assessments: initialAssessments,
-  lessonPlans: initialLessonPlans,
-  users: initialUsers,
-  parents: initialParents,
-  settings: initialSettings,
-  activityLogs: initialActivityLogs,
-  teachingSchedules: initialTeachingSchedules
-};
-
-function getNextSequentialId(existingIds: string[], prefix: string, padLength: number): string {
-  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`^${escaped}(\\d+)$`, 'i');
-  let maxNum = 0;
-  for (const id of existingIds) {
-    const match = pattern.exec(String(id || '').trim());
-    if (match) {
-      const n = Number(match[1]);
-      if (!Number.isNaN(n)) {
-        maxNum = Math.max(maxNum, n);
-      }
-    }
-  }
-  return `${prefix}${String(Math.max(maxNum + 1, existingIds.length + 1)).padStart(padLength, '0')}`;
-}
-
-function normalizeCloudStore(
-  rawCloud: Partial<AppDataStore> & Record<string, unknown>
-): AppDataStore {
-  return {
-    ...(rawCloud as Record<string, unknown>),
-    students: rawCloud.students !== undefined ? rawCloud.students : initialStudents,
-    classes: rawCloud.classes !== undefined ? rawCloud.classes : initialClasses,
-    teachers: rawCloud.teachers !== undefined ? rawCloud.teachers : initialTeachers,
-    teachingAssistants:
-      rawCloud.teachingAssistants !== undefined
-        ? rawCloud.teachingAssistants
-        : initialTeachingAssistants,
-    programs: rawCloud.programs !== undefined ? rawCloud.programs : initialAcademicPrograms,
-    timetable: rawCloud.timetable !== undefined ? rawCloud.timetable : initialTimetableSessions,
-    attendance: rawCloud.attendance !== undefined ? rawCloud.attendance : initialAttendanceRecords,
-    assessments: rawCloud.assessments !== undefined ? rawCloud.assessments : initialAssessments,
-    lessonPlans: rawCloud.lessonPlans !== undefined ? rawCloud.lessonPlans : initialLessonPlans,
-    users: rawCloud.users !== undefined ? rawCloud.users : initialUsers,
-    parents: rawCloud.parents !== undefined ? rawCloud.parents : initialParents,
-    settings: rawCloud.settings !== undefined ? rawCloud.settings : initialSettings,
-    activityLogs: rawCloud.activityLogs !== undefined ? rawCloud.activityLogs : initialActivityLogs,
-    teachingSchedules:
-      rawCloud.teachingSchedules !== undefined
-        ? rawCloud.teachingSchedules
-        : initialTeachingSchedules
-  } as AppDataStore;
-}
 
 // Helper for time overlap: "17:30" - "19:00" vs "18:00" - "19:30"
 function isTimeOverlapping(startA: string, endA: string, startB: string, endB: string): boolean {
@@ -236,472 +138,11 @@ function isTimeOverlapping(startA: string, endA: string, startB: string, endB: s
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [data, setData] = useState<AppDataStore>(() => loadInitialStorage());
-  const { currentUser, isAuthenticated, hasPermission } = useAuth();
-
-  const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>('idle');
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
-  const [cloudVersion, setCloudVersion] = useState<number>(0);
-  const [pendingSyncCount, setPendingSyncCount] = useState<number>(() => loadPendingSyncKeys().length);
-  const [unsyncedLocalCount, setUnsyncedLocalCount] = useState<number>(0);
-
-  const dataRef = useRef<AppDataStore>(data);
-  const initialLocalSnapshotRef = useRef<AppDataStore>(data);
-  const keyVersionsRef = useRef<Record<string, number>>({});
-  const cloudVersionRef = useRef<number>(0);
-  const pendingDirtyKeysRef = useRef<Set<string>>(new Set(loadPendingSyncKeys()));
-  const forcePendingRef = useRef<boolean>(false);
-  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isFlushingRef = useRef<boolean>(false);
-  const isSyncingRef = useRef<boolean>(false);
-  const lastVersionCheckAtRef = useRef<number>(0);
-  const hasCheckedLocalMigrationRef = useRef<boolean>(false);
-  const authRef = useRef({ isAuthenticated, currentUser });
+  const { currentUser, hasPermission } = useAuth();
 
   useEffect(() => {
-    authRef.current = { isAuthenticated, currentUser };
-  }, [isAuthenticated, currentUser]);
-
-  useEffect(() => {
-    dataRef.current = data;
     saveStorage(data);
   }, [data]);
-
-  const formatSyncTimestamp = () => {
-    return new Date().toLocaleTimeString('vi-VN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
-  };
-
-  const updatePendingKeysState = useCallback(() => {
-    const keys = Array.from(pendingDirtyKeysRef.current);
-    savePendingSyncKeys(keys);
-    setPendingSyncCount(keys.length);
-  }, []);
-
-  const flushPendingSave = useCallback(
-    async (explicitForce: boolean = false): Promise<boolean> => {
-      const auth = authRef.current;
-      if (!auth.isAuthenticated || !auth.currentUser.id) {
-        return false;
-      }
-
-      if (isFlushingRef.current) {
-        return false;
-      }
-
-      const keysToSend = Array.from(pendingDirtyKeysRef.current);
-      if (keysToSend.length === 0) {
-        return true;
-      }
-
-      const useForce = explicitForce || forcePendingRef.current;
-      const storeSnapshot = dataRef.current as unknown as Record<string, unknown>;
-      const payloadKeys: Record<string, unknown> = {};
-      for (const k of keysToSend) {
-        if (storeSnapshot[k] !== undefined) {
-          payloadKeys[k] = storeSnapshot[k];
-        }
-      }
-
-      if (Object.keys(payloadKeys).length === 0) {
-        pendingDirtyKeysRef.current.clear();
-        forcePendingRef.current = false;
-        updatePendingKeysState();
-        return true;
-      }
-
-      isFlushingRef.current = true;
-      setSyncStatus('saving');
-      setSyncError(null);
-
-      try {
-        const actor = auth.currentUser.name || auth.currentUser.username || auth.currentUser.id;
-        const result = await saveCenterKeysToCloud(
-          payloadKeys,
-          keyVersionsRef.current,
-          actor,
-          useForce
-        );
-
-        if (result.success) {
-          keysToSend.forEach(k => pendingDirtyKeysRef.current.delete(k));
-          if (pendingDirtyKeysRef.current.size === 0) {
-            forcePendingRef.current = false;
-          }
-          updatePendingKeysState();
-
-          keyVersionsRef.current = result.keyVersions || keyVersionsRef.current;
-          cloudVersionRef.current = result.version;
-          setCloudVersion(result.version);
-          setLastSyncedAt(formatSyncTimestamp());
-
-          if (pendingDirtyKeysRef.current.size > 0) {
-            // More changes arrived while saving; flush remaining batch
-            isFlushingRef.current = false;
-            return flushPendingSave(false);
-          }
-
-          setSyncStatus('synced');
-          setSyncError(null);
-          return true;
-        }
-
-        if (result.conflict && result.data) {
-          // Update non-conflicting keys from server without discarding pending local edits
-          const serverStore = normalizeCloudStore(result.data);
-          const mergedNonConflict = { ...dataRef.current } as unknown as Record<string, unknown>;
-          const serverRecord = serverStore as unknown as Record<string, unknown>;
-
-          for (const key of Object.keys(serverRecord)) {
-            if (!pendingDirtyKeysRef.current.has(key)) {
-              mergedNonConflict[key] = serverRecord[key];
-              if (result.keyVersions && result.keyVersions[key] !== undefined) {
-                keyVersionsRef.current[key] = result.keyVersions[key];
-              }
-            }
-          }
-
-          const nextMerged = mergedNonConflict as unknown as AppDataStore;
-          dataRef.current = nextMerged;
-          setData(nextMerged);
-          saveStorage(nextMerged);
-
-          cloudVersionRef.current = result.version;
-          setCloudVersion(result.version);
-          setSyncStatus('error');
-          setSyncError(
-            result.error ||
-              'Xung đột phiên bản dữ liệu với người dùng khác. Hãy đồng bộ bản mới hoặc đẩy lại thay đổi.'
-          );
-          return false;
-        }
-
-        setSyncStatus('error');
-        setSyncError(result.error || 'Không thể lưu dữ liệu lên Google Sheets.');
-        return false;
-      } finally {
-        isFlushingRef.current = false;
-      }
-    },
-    [updatePendingKeysState]
-  );
-
-  const scheduleCloudFlush = useCallback(
-    (delayMs: number = 80) => {
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current);
-      }
-      flushTimerRef.current = setTimeout(() => {
-        flushTimerRef.current = null;
-        void flushPendingSave(false);
-      }, delayMs);
-    },
-    [flushPendingSave]
-  );
-
-  const commitDataChange = useCallback(
-    (
-      changedKeys: string[],
-      updater: (prev: AppDataStore) => AppDataStore,
-      options?: { force?: boolean }
-    ) => {
-      const next = updater(dataRef.current);
-      dataRef.current = next;
-      setData(next);
-      saveStorage(next);
-
-      changedKeys.forEach(k => pendingDirtyKeysRef.current.add(k));
-      if (options?.force) {
-        forcePendingRef.current = true;
-      }
-      updatePendingKeysState();
-      scheduleCloudFlush(80);
-    },
-    [scheduleCloudFlush, updatePendingKeysState]
-  );
-
-  const syncNow = useCallback(async (): Promise<boolean> => {
-    const auth = authRef.current;
-    if (!auth.isAuthenticated || !auth.currentUser.id) {
-      return false;
-    }
-
-    if (isSyncingRef.current) {
-      return false;
-    }
-
-    isSyncingRef.current = true;
-    setSyncStatus('syncing');
-    setSyncError(null);
-
-    try {
-      const res = await fetchCenterDataFromCloud();
-
-      if (!res.success) {
-        setSyncStatus('error');
-        setSyncError(res.error || 'Không thể tải dữ liệu dùng chung từ Google Sheets.');
-        return false;
-      }
-
-      // Case 1: Google Sheet leegodata not initialized yet
-      if (!res.initialized) {
-        if (auth.currentUser.role === 'admin') {
-          const actor = auth.currentUser.name || auth.currentUser.username || auth.currentUser.id;
-          const initRes = await initializeCenterDataOnCloud(
-            dataRef.current as unknown as AppDataStore & Record<string, unknown>,
-            actor
-          );
-
-          if (!initRes.success) {
-            setSyncStatus('error');
-            setSyncError(initRes.error || 'Không thể khởi tạo dữ liệu dùng chung lên Google Sheets.');
-            return false;
-          }
-
-          if (initRes.alreadyInitialized && initRes.data) {
-            const cloudStore = normalizeCloudStore(initRes.data);
-            const unsyncedCount = detectUnsyncedLocalRecords(
-              initialLocalSnapshotRef.current as unknown as Record<string, unknown>,
-              cloudStore as unknown as Record<string, unknown>,
-              INITIAL_BASELINE_STORE as unknown as Record<string, unknown>
-            );
-            setUnsyncedLocalCount(unsyncedCount);
-            dataRef.current = cloudStore;
-            setData(cloudStore);
-            saveStorage(cloudStore);
-            keyVersionsRef.current = initRes.keyVersions || {};
-            cloudVersionRef.current = initRes.version;
-            setCloudVersion(initRes.version);
-            setLastSyncedAt(formatSyncTimestamp());
-            setSyncStatus('synced');
-            setSyncError(null);
-            return true;
-          }
-
-          pendingDirtyKeysRef.current.clear();
-          updatePendingKeysState();
-          keyVersionsRef.current = initRes.keyVersions || {};
-          cloudVersionRef.current = initRes.version;
-          setCloudVersion(initRes.version);
-          setLastSyncedAt(formatSyncTimestamp());
-          setSyncStatus('synced');
-          setSyncError(null);
-          return true;
-        } else {
-          setSyncStatus('error');
-          setSyncError(
-            'Dữ liệu dùng chung trên Google Sheets chưa được Admin khởi tạo. Vui lòng đăng nhập bằng tài khoản Admin để đồng bộ lần đầu.'
-          );
-          return false;
-        }
-      }
-
-      // Case 2: Shared data already exists on Google Sheets
-      if (res.data) {
-        const cloudStore = normalizeCloudStore(res.data);
-
-        if (!hasCheckedLocalMigrationRef.current) {
-          hasCheckedLocalMigrationRef.current = true;
-          const unsyncedCount = detectUnsyncedLocalRecords(
-            initialLocalSnapshotRef.current as unknown as Record<string, unknown>,
-            cloudStore as unknown as Record<string, unknown>,
-            INITIAL_BASELINE_STORE as unknown as Record<string, unknown>
-          );
-          setUnsyncedLocalCount(unsyncedCount);
-        }
-
-        if (pendingDirtyKeysRef.current.size === 0) {
-          dataRef.current = cloudStore;
-          setData(cloudStore);
-          saveStorage(cloudStore);
-          keyVersionsRef.current = res.keyVersions || {};
-          cloudVersionRef.current = res.version;
-          setCloudVersion(res.version);
-          setLastSyncedAt(formatSyncTimestamp());
-          setSyncStatus('synced');
-          setSyncError(null);
-          return true;
-        } else {
-          // Preserve pending local edits on dirty keys while updating clean keys
-          const merged = { ...dataRef.current } as unknown as Record<string, unknown>;
-          const cloudRecord = cloudStore as unknown as Record<string, unknown>;
-          const nextKeyVersions = { ...keyVersionsRef.current };
-
-          for (const key of Object.keys(cloudRecord)) {
-            if (!pendingDirtyKeysRef.current.has(key)) {
-              merged[key] = cloudRecord[key];
-              if (res.keyVersions && res.keyVersions[key] !== undefined) {
-                nextKeyVersions[key] = res.keyVersions[key];
-              }
-            }
-          }
-
-          const mergedStore = merged as unknown as AppDataStore;
-          dataRef.current = mergedStore;
-          setData(mergedStore);
-          saveStorage(mergedStore);
-          keyVersionsRef.current = nextKeyVersions;
-          cloudVersionRef.current = res.version;
-          setCloudVersion(res.version);
-
-          // Try flushing pending local changes right away
-          isSyncingRef.current = false;
-          return flushPendingSave(false);
-        }
-      }
-
-      setSyncStatus('synced');
-      return true;
-    } finally {
-      isSyncingRef.current = false;
-    }
-  }, [flushPendingSave, updatePendingKeysState]);
-
-  const retryPendingSync = useCallback(async (): Promise<boolean> => {
-    if (pendingDirtyKeysRef.current.size === 0) {
-      return syncNow();
-    }
-    return flushPendingSave(false);
-  }, [flushPendingSave, syncNow]);
-
-  const mergeUnsyncedLocalData = useCallback(async (): Promise<boolean> => {
-    const auth = authRef.current;
-    if (!auth.isAuthenticated || !auth.currentUser.id) return false;
-
-    setSyncStatus('syncing');
-    setSyncError(null);
-
-    const cloudRes = await fetchCenterDataFromCloud();
-    if (!cloudRes.success || !cloudRes.data) {
-      setSyncStatus('error');
-      setSyncError(cloudRes.error || 'Không thể tải dữ liệu Cloud để gộp bản ghi cục bộ.');
-      return false;
-    }
-
-    const cloudStore = normalizeCloudStore(cloudRes.data);
-    const { mergedKeys, mergedCount } = mergeLocalRecordsIntoCloud(
-      initialLocalSnapshotRef.current as unknown as Record<string, unknown>,
-      cloudStore as unknown as Record<string, unknown>,
-      INITIAL_BASELINE_STORE as unknown as Record<string, unknown>
-    );
-
-    if (mergedCount === 0) {
-      setUnsyncedLocalCount(0);
-      dataRef.current = cloudStore;
-      setData(cloudStore);
-      saveStorage(cloudStore);
-      keyVersionsRef.current = cloudRes.keyVersions || {};
-      cloudVersionRef.current = cloudRes.version;
-      setCloudVersion(cloudRes.version);
-      setLastSyncedAt(formatSyncTimestamp());
-      setSyncStatus('synced');
-      return true;
-    }
-
-    const actor = auth.currentUser.name || auth.currentUser.username || auth.currentUser.id;
-    const saveRes = await saveCenterKeysToCloud(
-      mergedKeys,
-      cloudRes.keyVersions || {},
-      actor,
-      false
-    );
-
-    if (!saveRes.success) {
-      setSyncStatus('error');
-      setSyncError(saveRes.error || 'Không thể gộp dữ liệu cục bộ lên Google Sheets.');
-      return false;
-    }
-
-    const updatedStore = {
-      ...(cloudStore as unknown as Record<string, unknown>),
-      ...mergedKeys
-    } as unknown as AppDataStore;
-
-    dataRef.current = updatedStore;
-    setData(updatedStore);
-    saveStorage(updatedStore);
-    keyVersionsRef.current = saveRes.keyVersions || cloudRes.keyVersions;
-    cloudVersionRef.current = saveRes.version;
-    setCloudVersion(saveRes.version);
-    setUnsyncedLocalCount(0);
-    setLastSyncedAt(formatSyncTimestamp());
-    setSyncStatus('synced');
-    setSyncError(null);
-    return true;
-  }, []);
-
-  const forcePushLocalToCloud = useCallback(async (): Promise<boolean> => {
-    const auth = authRef.current;
-    if (!auth.isAuthenticated || auth.currentUser.role !== 'admin') {
-      return false;
-    }
-
-    const allKeys = Object.keys(dataRef.current as unknown as Record<string, unknown>);
-    allKeys.forEach(k => pendingDirtyKeysRef.current.add(k));
-    forcePendingRef.current = true;
-    updatePendingKeysState();
-    const ok = await flushPendingSave(true);
-    if (ok) {
-      setUnsyncedLocalCount(0);
-    }
-    return ok;
-  }, [flushPendingSave, updatePendingKeysState]);
-
-  // Trigger full cloud load immediately after authentication / account change
-  useEffect(() => {
-    if (!isAuthenticated || !currentUser.id) {
-      cloudVersionRef.current = 0;
-      keyVersionsRef.current = {};
-      setCloudVersion(0);
-      setSyncStatus('idle');
-      setSyncError(null);
-      return;
-    }
-
-    void syncNow();
-  }, [isAuthenticated, currentUser.id, syncNow]);
-
-  // Lightweight background version check on window focus and at a quota-safe 45s interval
-  useEffect(() => {
-    if (!isAuthenticated || !currentUser.id) return;
-
-    const checkVersionAndSyncIfNewer = async () => {
-      if (document.visibilityState !== 'visible') return;
-      if (isSyncingRef.current || isFlushingRef.current) return;
-      if (pendingDirtyKeysRef.current.size > 0) return;
-
-      const now = Date.now();
-      if (now - lastVersionCheckAtRef.current < 10000) return;
-      lastVersionCheckAtRef.current = now;
-
-      const verRes = await fetchCenterVersionFromCloud();
-      if (verRes.success && verRes.initialized && verRes.version > cloudVersionRef.current) {
-        await syncNow();
-      }
-    };
-
-    const onFocusOrVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        void checkVersionAndSyncIfNewer();
-      }
-    };
-
-    const intervalId = setInterval(() => {
-      void checkVersionAndSyncIfNewer();
-    }, 45000);
-
-    window.addEventListener('focus', onFocusOrVisibility);
-    document.addEventListener('visibilitychange', onFocusOrVisibility);
-
-    return () => {
-      clearInterval(intervalId);
-      window.removeEventListener('focus', onFocusOrVisibility);
-      document.removeEventListener('visibilitychange', onFocusOrVisibility);
-    };
-  }, [isAuthenticated, currentUser.id, syncNow]);
 
   const addActivityLog = (action: string, details: string) => {
     const newLog: ActivityLog = {
@@ -719,7 +160,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       action,
       details
     };
-    commitDataChange(['activityLogs'], prev => ({
+    setData(prev => ({
       ...prev,
       activityLogs: [newLog, ...prev.activityLogs].slice(0, 50)
     }));
@@ -727,16 +168,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 1. Students
   const addStudent = (studentData: Omit<Student, 'id'>): Student => {
-    const newId = getNextSequentialId(
-      dataRef.current.students.map(s => s.id),
-      'LG-STU-',
-      3
-    );
+    const newId = `LG-STU-${String(data.students.length + 1).padStart(3, '0')}`;
     const newStudent: Student = {
       ...studentData,
       id: newId
     };
-    commitDataChange(['students', 'classes'], prev => {
+    setData(prev => {
       // Auto-assign student to class if selected
       const updatedClasses = prev.classes.map(cls => {
         if (newStudent.classIds.includes(cls.id) && !cls.studentIds.includes(newId)) {
@@ -756,8 +193,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateStudent = (id: string, updates: Partial<Student>) => {
-    const changedKeys = updates.classIds ? ['students', 'classes'] : ['students'];
-    commitDataChange(changedKeys, prev => {
+    setData(prev => {
       const updatedStudents = prev.students.map(s => (s.id === id ? { ...s, ...updates } : s));
       // Update class bindings if classIds changed
       let updatedClasses = prev.classes;
@@ -784,8 +220,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteStudent = (id: string) => {
-    const student = dataRef.current.students.find(s => s.id === id);
-    commitDataChange(['students', 'classes'], prev => ({
+    const student = data.students.find(s => s.id === id);
+    setData(prev => ({
       ...prev,
       students: prev.students.filter(s => s.id !== id),
       classes: prev.classes.map(c => ({
@@ -797,11 +233,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const transferStudentClass = (studentId: string, fromClassId: string, toClassId: string) => {
-    const student = dataRef.current.students.find(s => s.id === studentId);
-    const fromClass = dataRef.current.classes.find(c => c.id === fromClassId);
-    const toClass = dataRef.current.classes.find(c => c.id === toClassId);
+    const student = data.students.find(s => s.id === studentId);
+    const fromClass = data.classes.find(c => c.id === fromClassId);
+    const toClass = data.classes.find(c => c.id === toClassId);
 
-    commitDataChange(['students', 'classes'], prev => {
+    setData(prev => {
       // 1. Update student's classIds
       const updatedStudents = prev.students.map(s => {
         if (s.id === studentId) {
@@ -841,11 +277,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const importStudents = (importedList: Partial<Student>[]): number => {
     let count = 0;
     const newStudents: Student[] = [];
-    const existingIds = dataRef.current.students.map(s => s.id);
 
     importedList.forEach((item, index) => {
-      const studentId =
-        item.id || getNextSequentialId([...existingIds, ...newStudents.map(s => s.id)], 'LG-STU-', 3);
+      const studentId = item.id || `LG-STU-${String(data.students.length + count + 1).padStart(3, '0')}`;
       const newStudent: Student = {
         id: studentId,
         fullName: item.fullName || `Học sinh mới ${index + 1}`,
@@ -868,7 +302,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       count++;
     });
 
-    commitDataChange(['students'], prev => ({
+    setData(prev => ({
       ...prev,
       students: [...newStudents, ...prev.students]
     }));
@@ -879,13 +313,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 2. Parents
   const addParent = (parentData: Omit<Parent, 'id'>): Parent => {
-    const newId = getNextSequentialId(
-      dataRef.current.parents.map(p => p.id),
-      'PAR-',
-      3
-    );
+    const newId = `PAR-${String(data.parents.length + 1).padStart(3, '0')}`;
     const newParent: Parent = { ...parentData, id: newId };
-    commitDataChange(['parents'], prev => ({
+    setData(prev => ({
       ...prev,
       parents: [newParent, ...prev.parents]
     }));
@@ -893,126 +323,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateParent = (id: string, updates: Partial<Parent>) => {
-    commitDataChange(['parents'], prev => ({
+    setData(prev => ({
       ...prev,
       parents: prev.parents.map(p => (p.id === id ? { ...p, ...updates } : p))
     }));
   };
 
-  // Helper to keep TimetableSession entries in sync with a class's weeklySchedule
-  const syncTimetableForClass = (
-    prevTimetable: TimetableSession[],
-    classItem: ClassItem,
-    teachers: Teacher[],
-    assistants: TeachingAssistant[],
-    previousClass?: ClassItem
-  ): TimetableSession[] => {
-    const slots = getClassWeeklySchedule(classItem);
-    if (slots.length === 0) return prevTimetable;
-
-    const otherSessions = prevTimetable.filter(s => s.classId !== classItem.id);
-    const existingByDay = new Map<number, TimetableSession>();
-    prevTimetable
-      .filter(s => s.classId === classItem.id)
-      .forEach(s => {
-        if (!existingByDay.has(s.dayOfWeek)) {
-          existingByDay.set(s.dayOfWeek, s);
-        }
-      });
-
-    const teacherChanged = Boolean(previousClass && previousClass.teacherId !== classItem.teacherId);
-    const assistantChanged = Boolean(
-      previousClass && (previousClass.assistantTeacherId || '') !== (classItem.assistantTeacherId || '')
-    );
-
-    const syncedSessions: TimetableSession[] = slots.map(slot => {
-      const existing = existingByDay.get(slot.dayOfWeek);
-      const hasSlotTeacher = slot.teacherId !== undefined;
-      const effectiveTeacherId = hasSlotTeacher
-        ? slot.teacherId || ''
-        : existing && !teacherChanged && existing.teacherId
-        ? existing.teacherId
-        : classItem.teacherId;
-      const effectiveTeacher = teachers.find(t => t.id === effectiveTeacherId);
-
-      const hasSlotAssistant = slot.assistantTeacherId !== undefined;
-      const effectiveAssistantId = hasSlotAssistant
-        ? slot.assistantTeacherId || undefined
-        : existing && !assistantChanged
-        ? existing.assistantId
-        : classItem.assistantTeacherId || undefined;
-      const effectiveAssistant = effectiveAssistantId
-        ? assistants.find(ta => ta.id === effectiveAssistantId)
-        : undefined;
-
-      if (existing) {
-        return {
-          ...existing,
-          className: classItem.name,
-          classroom: classItem.classroom,
-          dayOfWeek: slot.dayOfWeek,
-          dayName: getWeekdayLabel(slot.dayOfWeek),
-          startTime: slot.startTime,
-          endTime: slot.endTime,
-          teacherId: effectiveTeacherId,
-          teacherName:
-            effectiveTeacher?.fullName ||
-            (!hasSlotTeacher && !teacherChanged ? existing.teacherName : '') ||
-            '',
-          assistantId: effectiveAssistantId,
-          assistantName: effectiveAssistant?.fullName || undefined
-        };
-      }
-
-      return {
-        id: `SES-${classItem.id}-D${slot.dayOfWeek}`,
-        classId: classItem.id,
-        className: classItem.name,
-        teacherId: effectiveTeacherId,
-        teacherName: effectiveTeacher?.fullName || '',
-        assistantId: effectiveAssistantId,
-        assistantName: effectiveAssistant?.fullName || undefined,
-        classroom: classItem.classroom,
-        dayOfWeek: slot.dayOfWeek,
-        dayName: getWeekdayLabel(slot.dayOfWeek),
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        status: 'scheduled'
-      };
-    });
-
-    return [...otherSessions, ...syncedSessions];
-  };
-
   // 3. Classes
   const addClass = (clsData: Omit<ClassItem, 'id'>): ClassItem => {
     const newId = `CLS-${Date.now().toString().slice(-4)}`;
-    const slots = getClassWeeklySchedule(clsData);
-    const primaryTeacherId = slots.find(s => s.teacherId)?.teacherId || clsData.teacherId || '';
-    const primaryAssistantId =
-      slots.find(s => s.assistantTeacherId)?.assistantTeacherId || clsData.assistantTeacherId || undefined;
-    const newClass: ClassItem = {
-      ...clsData,
-      id: newId,
-      teacherId: primaryTeacherId,
-      assistantTeacherId: primaryAssistantId,
-      ...(slots.length > 0
-        ? {
-            weeklySchedule: slots,
-            scheduleDays: formatScheduleDaysLabel(slots),
-            scheduleTime: formatScheduleTimeSummary(slots)
-          }
-        : {})
-    };
-
-    const activeTeacherIds = new Set(
-      [newClass.teacherId, ...slots.map(s => s.teacherId || '')].filter(Boolean)
-    );
-
-    commitDataChange(['classes', 'teachers', 'timetable'], prev => {
-      // also update teacher's assignedClassIds for all teachers assigned to any weekday session
+    const newClass: ClassItem = { ...clsData, id: newId };
+    setData(prev => {
+      // also update teacher's assignedClassIds
       const updatedTeachers = prev.teachers.map(t => {
-        if (activeTeacherIds.has(t.id) && !t.assignedClassIds.includes(newId)) {
+        if (t.id === newClass.teacherId && !t.assignedClassIds.includes(newId)) {
           return {
             ...t,
             assignedClassIds: [...t.assignedClassIds, newId],
@@ -1022,18 +346,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return t;
       });
 
-      const updatedTimetable = syncTimetableForClass(
-        prev.timetable,
-        newClass,
-        updatedTeachers,
-        prev.teachingAssistants
-      );
-
       return {
         ...prev,
         classes: [newClass, ...prev.classes],
-        teachers: updatedTeachers,
-        timetable: updatedTimetable
+        teachers: updatedTeachers
       };
     });
 
@@ -1042,90 +358,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateClass = (id: string, updates: Partial<ClassItem>) => {
-    commitDataChange(['classes', 'teachers', 'timetable'], prev => {
-      const existingClass = prev.classes.find(c => c.id === id);
-      if (!existingClass) return prev;
-
-      const merged: ClassItem = { ...existingClass, ...updates };
-      if (
-        updates.weeklySchedule !== undefined ||
-        updates.scheduleDays !== undefined ||
-        updates.scheduleTime !== undefined
-      ) {
-        const slots = getClassWeeklySchedule(merged);
-        if (slots.length > 0) {
-          merged.weeklySchedule = slots;
-          merged.scheduleDays = formatScheduleDaysLabel(slots);
-          merged.scheduleTime = formatScheduleTimeSummary(slots);
-          if (updates.weeklySchedule !== undefined) {
-            merged.teacherId = slots.find(s => s.teacherId)?.teacherId || merged.teacherId;
-            const slotTa = slots.find(s => s.assistantTeacherId)?.assistantTeacherId;
-            merged.assistantTeacherId = slotTa || undefined;
-          }
-        }
-      }
-
-      const updatedClasses = prev.classes.map(c => (c.id === id ? merged : c));
-
-      const oldSlots = getClassWeeklySchedule(existingClass);
-      const newSlots = getClassWeeklySchedule(merged);
-      const previousTeacherIds = new Set(
-        [existingClass.teacherId, ...oldSlots.map(s => s.teacherId || '')].filter(Boolean)
-      );
-      const activeTeacherIds = new Set(
-        [merged.teacherId, ...newSlots.map(s => s.teacherId || '')].filter(Boolean)
-      );
-
-      const updatedTeachers = prev.teachers.map(t => {
-        const wasAssigned = previousTeacherIds.has(t.id);
-        const isAssigned = activeTeacherIds.has(t.id);
-        if (isAssigned && !t.assignedClassIds.includes(id)) {
-          return {
-            ...t,
-            assignedClassIds: [...t.assignedClassIds, id]
-          };
-        }
-        if (wasAssigned && !isAssigned && t.assignedClassIds.includes(id)) {
-          return {
-            ...t,
-            assignedClassIds: t.assignedClassIds.filter(cid => cid !== id)
-          };
-        }
-        return t;
-      });
-
-      const shouldSyncTimetable =
-        updates.weeklySchedule !== undefined ||
-        updates.scheduleDays !== undefined ||
-        updates.scheduleTime !== undefined ||
-        updates.teacherId !== undefined ||
-        updates.assistantTeacherId !== undefined ||
-        updates.classroom !== undefined ||
-        updates.name !== undefined;
-
-      const updatedTimetable = shouldSyncTimetable
-        ? syncTimetableForClass(
-            prev.timetable,
-            merged,
-            updatedTeachers,
-            prev.teachingAssistants,
-            existingClass
-          )
-        : prev.timetable;
-
+    setData(prev => {
+      const updatedClasses = prev.classes.map(c => (c.id === id ? { ...c, ...updates } : c));
       return {
         ...prev,
-        classes: updatedClasses,
-        teachers: updatedTeachers,
-        timetable: updatedTimetable
+        classes: updatedClasses
       };
     });
     addActivityLog('Cập nhật lớp học', `Đã cập nhật thông tin lớp học mã ${id}`);
   };
 
   const deleteClass = (id: string) => {
-    const cls = dataRef.current.classes.find(c => c.id === id);
-    commitDataChange(['classes', 'timetable', 'teachers', 'students'], prev => ({
+    const cls = data.classes.find(c => c.id === id);
+    setData(prev => ({
       ...prev,
       classes: prev.classes.filter(c => c.id !== id),
       timetable: prev.timetable.filter(s => s.classId !== id),
@@ -1142,7 +387,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const assignStudentsToClass = (classId: string, studentIds: string[]) => {
-    commitDataChange(['classes', 'students'], prev => {
+    setData(prev => {
       const updatedClasses = prev.classes.map(c => {
         if (c.id === classId) {
           return { ...c, studentIds };
@@ -1173,13 +418,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 4. Teachers & Assistants
   const addTeacher = (teacherData: Omit<Teacher, 'id'>): Teacher => {
-    const newId = getNextSequentialId(
-      dataRef.current.teachers.map(t => t.id),
-      'TCH-',
-      3
-    );
+    const newId = `TCH-${String(data.teachers.length + 1).padStart(3, '0')}`;
     const newTeacher: Teacher = { ...teacherData, id: newId };
-    commitDataChange(['teachers'], prev => ({
+    setData(prev => ({
       ...prev,
       teachers: [...prev.teachers, newTeacher]
     }));
@@ -1188,7 +429,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateTeacher = (id: string, updates: Partial<Teacher>) => {
-    commitDataChange(['teachers'], prev => ({
+    setData(prev => ({
       ...prev,
       teachers: prev.teachers.map(t => (t.id === id ? { ...t, ...updates } : t))
     }));
@@ -1196,8 +437,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteTeacher = (id: string) => {
-    const t = dataRef.current.teachers.find(tch => tch.id === id);
-    commitDataChange(['teachers', 'classes'], prev => ({
+    const t = data.teachers.find(tch => tch.id === id);
+    setData(prev => ({
       ...prev,
       teachers: prev.teachers.filter(teacher => teacher.id !== id),
       classes: prev.classes.map(cls => (cls.teacherId === id ? { ...cls, teacherId: '' } : cls))
@@ -1206,13 +447,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addAssistant = (taData: Omit<TeachingAssistant, 'id'>): TeachingAssistant => {
-    const newId = getNextSequentialId(
-      dataRef.current.teachingAssistants.map(a => a.id),
-      'TA-',
-      3
-    );
+    const newId = `TA-${String(data.teachingAssistants.length + 1).padStart(3, '0')}`;
     const newAssistant: TeachingAssistant = { ...taData, id: newId };
-    commitDataChange(['teachingAssistants'], prev => ({
+    setData(prev => ({
       ...prev,
       teachingAssistants: [...prev.teachingAssistants, newAssistant]
     }));
@@ -1221,14 +458,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateAssistant = (id: string, updates: Partial<TeachingAssistant>) => {
-    commitDataChange(['teachingAssistants'], prev => ({
+    setData(prev => ({
       ...prev,
       teachingAssistants: prev.teachingAssistants.map(a => (a.id === id ? { ...a, ...updates } : a))
     }));
   };
 
   const deleteAssistant = (id: string) => {
-    commitDataChange(['teachingAssistants'], prev => ({
+    setData(prev => ({
       ...prev,
       teachingAssistants: prev.teachingAssistants.filter(a => a.id !== id)
     }));
@@ -1238,7 +475,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addProgram = (progData: Omit<AcademicProgram, 'id'>): AcademicProgram => {
     const newId = `PROG-${Date.now().toString().slice(-4)}`;
     const newProgram: AcademicProgram = { ...progData, id: newId };
-    commitDataChange(['programs'], prev => ({
+    setData(prev => ({
       ...prev,
       programs: [...prev.programs, newProgram]
     }));
@@ -1247,14 +484,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateProgram = (id: string, updates: Partial<AcademicProgram>) => {
-    commitDataChange(['programs'], prev => ({
+    setData(prev => ({
       ...prev,
       programs: prev.programs.map(p => (p.id === id ? { ...p, ...updates } : p))
     }));
   };
 
   const deleteProgram = (id: string) => {
-    commitDataChange(['programs'], prev => ({
+    setData(prev => ({
       ...prev,
       programs: prev.programs.filter(p => p.id !== id)
     }));
@@ -1327,7 +564,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const newId = `SES-${Date.now().toString().slice(-4)}`;
     const newSession: TimetableSession = { ...sessionData, id: newId };
 
-    commitDataChange(['timetable'], prev => ({
+    setData(prev => ({
       ...prev,
       timetable: [...prev.timetable, newSession]
     }));
@@ -1340,7 +577,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     id: string,
     updates: Partial<TimetableSession>
   ): { success: boolean; conflict?: ScheduleConflictResult } => {
-    const current = dataRef.current.timetable.find(s => s.id === id);
+    const current = data.timetable.find(s => s.id === id);
     if (!current) return { success: false };
 
     const targetDay = updates.dayOfWeek ?? current.dayOfWeek;
@@ -1364,7 +601,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, conflict };
     }
 
-    commitDataChange(['timetable'], prev => ({
+    setData(prev => ({
       ...prev,
       timetable: prev.timetable.map(s => (s.id === id ? { ...s, ...updates } : s))
     }));
@@ -1374,7 +611,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteTimetableSession = (id: string) => {
-    commitDataChange(['timetable'], prev => ({
+    setData(prev => ({
       ...prev,
       timetable: prev.timetable.filter(s => s.id !== id)
     }));
@@ -1388,22 +625,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     records: StudentAttendanceEntry[],
     sessionTime: string
   ): AttendanceRecord => {
-    const cls = dataRef.current.classes.find(c => c.id === classId);
-    const teacher = dataRef.current.teachers.find(t => t.id === cls?.teacherId);
+    const cls = data.classes.find(c => c.id === classId);
+    const teacher = data.teachers.find(t => t.id === cls?.teacherId);
 
     const presentCount = records.filter(r => r.status === 'present').length;
     const absentCount = records.filter(r => r.status === 'absent').length;
     const lateCount = records.filter(r => r.status === 'late').length;
     const excusedCount = records.filter(r => r.status === 'excused').length;
 
-    const existingIndex = dataRef.current.attendance.findIndex(
-      a => a.classId === classId && a.date === date
-    );
+    const existingIndex = data.attendance.findIndex(a => a.classId === classId && a.date === date);
 
-    const recordId =
-      existingIndex >= 0
-        ? dataRef.current.attendance[existingIndex].id
-        : `ATT-${date.replace(/-/g, '')}-${classId.slice(-3)}`;
+    const recordId = existingIndex >= 0 ? data.attendance[existingIndex].id : `ATT-${date.replace(/-/g, '')}-${classId.slice(-3)}`;
 
     const newRecord: AttendanceRecord = {
       id: recordId,
@@ -1423,11 +655,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       takenBy: currentUser.name
     };
 
-    commitDataChange(['attendance'], prev => {
-      const idx = prev.attendance.findIndex(a => a.classId === classId && a.date === date);
+    setData(prev => {
       let updatedAttendance = [...prev.attendance];
-      if (idx >= 0) {
-        updatedAttendance[idx] = newRecord;
+      if (existingIndex >= 0) {
+        updatedAttendance[existingIndex] = newRecord;
       } else {
         updatedAttendance = [newRecord, ...updatedAttendance];
       }
@@ -1449,7 +680,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: newId
     };
 
-    commitDataChange(['assessments'], prev => {
+    setData(prev => {
       const idx = prev.assessments.findIndex(a => a.id === newId);
       if (idx >= 0) {
         const copy = [...prev.assessments];
@@ -1467,7 +698,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateAssessmentScore = (assessmentId: string, studentScores: StudentScoreEntry[]) => {
-    commitDataChange(['assessments'], prev => ({
+    setData(prev => ({
       ...prev,
       assessments: prev.assessments.map(a =>
         a.id === assessmentId ? { ...a, scores: studentScores } : a
@@ -1484,7 +715,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       submittedAt: new Date().toLocaleString('vi-VN')
     };
 
-    commitDataChange(['lessonPlans'], prev => ({
+    setData(prev => ({
       ...prev,
       lessonPlans: [newPlan, ...prev.lessonPlans]
     }));
@@ -1494,7 +725,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const reviewLessonPlan = (id: string, status: 'approved' | 'reviewed', feedback: string) => {
-    commitDataChange(['lessonPlans'], prev => ({
+    setData(prev => ({
       ...prev,
       lessonPlans: prev.lessonPlans.map(lp =>
         lp.id === id ? { ...lp, status, managerFeedback: feedback } : lp
@@ -1505,17 +736,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 10. Users
   const addUser = (userData: Omit<User, 'id' | 'createdAt'>): User => {
-    const newId = getNextSequentialId(
-      dataRef.current.users.map(u => u.id),
-      'USR-',
-      3
-    );
+    const newId = `USR-${String(data.users.length + 1).padStart(3, '0')}`;
     const newUser: User = {
       ...userData,
       id: newId,
       createdAt: new Date().toISOString().slice(0, 10)
     };
-    commitDataChange(['users'], prev => ({
+    setData(prev => ({
       ...prev,
       users: [...prev.users, newUser]
     }));
@@ -1524,7 +751,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateUser = (id: string, updates: Partial<User>) => {
-    commitDataChange(['users'], prev => ({
+    setData(prev => ({
       ...prev,
       users: prev.users.map(u => (u.id === id ? { ...u, ...updates } : u))
     }));
@@ -1532,7 +759,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const toggleUserStatus = (id: string) => {
-    commitDataChange(['users'], prev => ({
+    setData(prev => ({
       ...prev,
       users: prev.users.map(u =>
         u.id === id ? { ...u, status: u.status === 'active' ? 'inactive' : 'active' } : u
@@ -1573,38 +800,36 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           taId: t.assistantId || assistant?.id,
         };
       });
-    } else if (cls) {
-      const weeklySlots = getClassWeeklySchedule(cls);
+    } else if (cls?.scheduleDays) {
+      const lower = cls.scheduleDays.toLowerCase();
+      const defaultTime = cls.scheduleTime || '7:30 – 9:00pm';
       const defaultRoom = cls.classroom || '1A';
       const defaultTchName = teacher?.vietnameseName || teacher?.fullName || 'Giáo viên';
       const defaultTchId = teacher?.id || '';
       const defaultTaName = assistant?.fullName;
       const defaultTaId = assistant?.id;
 
-      weeklySlots.forEach(slot => {
-        const slotTeacher = slot.teacherId
-          ? data.teachers.find(t => t.id === slot.teacherId)
-          : undefined;
-        const slotTa = slot.assistantTeacherId
-          ? data.teachingAssistants.find(ta => ta.id === slot.assistantTeacherId)
-          : undefined;
-
-        activeDaysMap[slot.dayOfWeek] = {
-          time: `${slot.startTime} – ${slot.endTime}`,
-          classroom: defaultRoom,
-          teacherName:
-            slotTeacher?.vietnameseName || slotTeacher?.fullName || defaultTchName,
-          teacherId: slot.teacherId || defaultTchId,
-          taName:
-            slot.assistantTeacherId !== undefined
-              ? slotTa?.fullName
-              : defaultTaName,
-          taId:
-            slot.assistantTeacherId !== undefined
-              ? slot.assistantTeacherId || undefined
-              : defaultTaId,
-        };
-      });
+      if (lower.includes('thứ 2') || lower.includes('t2') || lower.includes('monday') || lower.includes('mon')) {
+        activeDaysMap[1] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 3') || lower.includes('t3') || lower.includes('tuesday') || lower.includes('tue')) {
+        activeDaysMap[2] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 4') || lower.includes('t4') || lower.includes('wednesday') || lower.includes('wed')) {
+        activeDaysMap[3] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 5') || lower.includes('t5') || lower.includes('thursday') || lower.includes('thu')) {
+        activeDaysMap[4] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 6') || lower.includes('t6') || lower.includes('friday') || lower.includes('fri')) {
+        activeDaysMap[5] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('thứ 7') || lower.includes('t7') || lower.includes('saturday') || lower.includes('sat')) {
+        activeDaysMap[6] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
+      if (lower.includes('chủ nhật') || lower.includes('cn') || lower.includes('sunday') || lower.includes('sun')) {
+        activeDaysMap[7] = { time: defaultTime, classroom: defaultRoom, teacherName: defaultTchName, teacherId: defaultTchId, taName: defaultTaName, taId: defaultTaId };
+      }
     }
 
     const totalDays = new Date(year, month, 0).getDate();
@@ -1679,9 +904,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       teacherName: defaultTeacherLabel,
       teachingAssistantId: cls?.assistantTeacherId,
       teachingAssistantName: defaultTALabel,
-      defaultTime: cls
-        ? formatScheduleTimeSummary(getClassWeeklySchedule(cls)) || cls.scheduleTime || '7:30 – 9:00pm, Monday/Thursday'
-        : '7:30 – 9:00pm, Monday/Thursday',
+      defaultTime: cls?.scheduleTime || '7:30 – 9:00pm, Monday/Thursday',
       defaultClassroom: cls?.classroom || '1A',
       courseBook: cls?.curriculum || program?.textbook || 'GET READY FOR STARTERS',
       generatedFromTimetable: true,
@@ -1717,7 +940,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updatedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
     };
 
-    commitDataChange(['teachingSchedules'], prev => {
+    setData(prev => {
       const existingIdx = prev.teachingSchedules.findIndex(
         s => s.id === updatedSchedule.id || (s.classId === updatedSchedule.classId && s.month === updatedSchedule.month && s.year === updatedSchedule.year)
       );
@@ -1748,12 +971,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    const target = dataRef.current.teachingSchedules.find(s => s.id === id);
+    const target = data.teachingSchedules.find(s => s.id === id);
     if (!target) {
       return { success: false, error: 'Không tìm thấy lịch giảng dạy cần xóa.' };
     }
 
-    commitDataChange(['teachingSchedules'], prev => ({
+    setData(prev => ({
       ...prev,
       teachingSchedules: prev.teachingSchedules.filter(s => s.id !== id),
     }));
@@ -1794,7 +1017,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 12. Settings & Reset
   const updateSettings = (updates: Partial<CenterSettings>) => {
-    commitDataChange(['settings'], prev => ({
+    setData(prev => ({
       ...prev,
       settings: { ...prev.settings, ...updates }
     }));
@@ -1802,10 +1025,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetAllData = () => {
-    if (currentUser.role !== 'admin') return;
     const refreshed = resetStorage();
-    const allKeys = Object.keys(refreshed as unknown as Record<string, unknown>);
-    commitDataChange(allKeys, () => refreshed, { force: true });
+    setData(refreshed);
     addActivityLog('Khôi phục dữ liệu', 'Đã khôi phục toàn bộ hệ thống về bộ dữ liệu mẫu ban đầu');
   };
 
@@ -1813,16 +1034,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <DataContext.Provider
       value={{
         data,
-        syncStatus,
-        syncError,
-        lastSyncedAt,
-        cloudVersion,
-        pendingSyncCount,
-        unsyncedLocalCount,
-        syncNow,
-        retryPendingSync,
-        mergeUnsyncedLocalData,
-        forcePushLocalToCloud,
         addStudent,
         updateStudent,
         deleteStudent,
