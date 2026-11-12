@@ -2,64 +2,64 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   FileSpreadsheet,
   FileText,
-  Calendar,
   ChevronLeft,
   ChevronRight,
   Plus,
   Lock,
   Unlock,
-  CheckCircle2,
   Clock,
-  AlertTriangle,
   Search,
-  Filter,
   Eye,
   Printer,
-  Download,
-  Share2,
   Save,
   Send,
   X,
   Edit3,
   Trash2,
   UserCheck,
-  Award,
-  BookOpen,
-  Sparkles,
-  Maximize2,
-  Minimize2,
+  UserPlus,
   Check,
-  AlertCircle
+  AlertCircle,
+  History,
+  ShieldCheck,
+  Calendar
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
 import {
   LessonReport,
-  StudentLessonReportEntry,
-  IncompleteReportRecord,
-  MakeupClassSession,
   HomeworkStatus,
-  PreviousLessonStatus
+  PreviousLessonStatus,
+  LessonReportLockAuditEntry
 } from '../../types';
 import {
   exportLessonReportToWord,
-  exportLessonReportToExcel
+  exportLessonReportToExcel,
+  getVietnamTodayISO,
+  isReportExpired,
+  isStudentReportEntryComplete,
+  computeReportDeadlineISO
 } from '../../services/dataService';
 
+const STATUS_OPTIONS = [
+  'Đạt yêu cầu',
+  'Chưa đạt yêu cầu',
+  'Chưa hoàn thành',
+  'Không áp dụng'
+] as const;
+
 export const LessonReportsView: React.FC = () => {
-  const { currentUser, hasPermission } = useAuth();
+  const { currentUser } = useAuth();
   const context = useData();
 
-  // Safely extract methods and data from context with fallback guards
-  const data = context?.data || ({} as any);
+  const data = context?.data;
   const getLessonReportsForDate = context?.getLessonReportsForDate;
   const saveLessonReport = context?.saveLessonReport;
   const submitLessonReport = context?.submitLessonReport;
   const toggleReportLock = context?.toggleReportLock;
   const addMakeupClass = context?.addMakeupClass;
   const deleteMakeupClass = context?.deleteMakeupClass;
-  const resolveIncompleteReport = context?.resolveIncompleteReport;
 
   const { showToast } = useToast();
 
@@ -67,91 +67,57 @@ export const LessonReportsView: React.FC = () => {
   const isAdmin = currentUser?.role === 'admin';
   const isManager = currentUser?.role === 'academic_manager' || isAdmin;
 
-  // View Mode: 'daily_management' | 'incomplete_tracking'
-  const [activeSubTab, setActiveSubTab] = useState<'daily' | 'incomplete'>('daily');
+  // Sub-tabs: Teachers only see 'daily'; Admin & Academic Manager also see 'history', 'audits', 'incomplete'
+  const [activeSubTab, setActiveSubTab] = useState<'daily' | 'history' | 'audits' | 'incomplete'>('daily');
 
-  // Selected Date: Default to today/current local time (2026-11-06)
-  const [selectedDate, setSelectedDate] = useState<string>('2026-11-06');
+  // Default to current date in Vietnam timezone (Asia/Ho_Chi_Minh)
+  const [selectedDate, setSelectedDate] = useState<string>(() => getVietnamTodayISO());
 
-  // Filter States
+  // Filters
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [classFilter, setClassFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [lockFilter, setLockFilter] = useState<string>('all');
+  const [historyDateFilter, setHistoryDateFilter] = useState<string>('');
 
-  // Selected Report for Editing
+  // Selected Report for Editing / Viewing
   const [activeReport, setActiveReport] = useState<LessonReport | null>(null);
-
-  // Parent Preview Mode (Screenshot Mode)
   const [showParentPreview, setShowParentPreview] = useState<boolean>(false);
-  const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
 
   // Make-up Class Modal
   const [showMakeupModal, setShowMakeupModal] = useState<boolean>(false);
   const [makeupForm, setMakeupForm] = useState({
     classId: '',
-    date: '2026-11-06',
+    date: getVietnamTodayISO(),
     time: '18:00 - 19:30',
     classroom: 'Phòng 101 - Smart Room',
     teacherId: '',
     assistantId: '',
-    lessonProgress: 'Unit 2 – Lesson 2 (Học bù)',
-    notes: 'Lớp học bù buổi nghỉ lễ'
+    lessonProgress: 'Buổi học bù',
+    notes: 'Lớp học bù'
   });
 
-  // CRITICAL FIX: Safe Load Daily Reports for Date in useMemo
-  // Prevents 'TypeError: r is not a function' if getLessonReportsForDate is temporarily undefined
+  // Load daily reports automatically from existing class/timetable/weeklySchedule/makeup data
   const dailyReports = useMemo(() => {
     if (typeof getLessonReportsForDate === 'function') {
       try {
         const res = getLessonReportsForDate(selectedDate);
         if (Array.isArray(res)) return res;
       } catch (err) {
-        console.error('Error executing getLessonReportsForDate:', err);
+        console.error('Error loading daily lesson reports:', err);
       }
     }
+    return [];
+  }, [
+    selectedDate,
+    data?.lessonReports,
+    data?.makeupSessions,
+    data?.timetable,
+    data?.classes,
+    data?.students,
+    getLessonReportsForDate
+  ]);
 
-    // High quality client-side fallback
-    const storedReports: LessonReport[] = Array.isArray(data?.lessonReports) ? data.lessonReports : [];
-    const matched = storedReports.filter(r => r.teachingDate === selectedDate);
-    if (matched.length > 0) return matched;
-
-    // Generate fallback template from classes if no reports exist yet
-    const classesList = data?.classes || [];
-    return classesList.slice(0, 3).map((cls: any) => ({
-      id: `LR-${cls.id}-${selectedDate}`,
-      classId: cls.id,
-      className: cls.name,
-      teachingDate: selectedDate,
-      scheduledTime: cls.scheduleTime || '18:00 - 19:30',
-      classroom: cls.classroom || 'Phòng 1A',
-      teacherId: cls.teacherId || '',
-      teacherName: cls.teacherName || 'Giáo viên',
-      teachingAssistantName: cls.assistantTeacherName || '',
-      lessonProgress: 'Unit 1 – Lesson 1',
-      sessionType: 'regular' as const,
-      status: 'not_started' as const,
-      totalStudents: Array.isArray(cls.studentIds) ? cls.studentIds.length : 12,
-      completedStudents: 0,
-      completionPercentage: 0,
-      locked: false,
-      studentReports: (cls.studentIds || []).map((sid: string) => {
-        const stu = (data?.students || []).find((s: any) => s.id === sid);
-        return {
-          studentId: sid,
-          studentName: stu?.fullName || 'Học sinh',
-          homeworkStatus: 'Đạt' as HomeworkStatus,
-          previousLessonStatus: 'Đạt' as PreviousLessonStatus,
-          comments: '',
-          assignedHomework: '',
-          notes: '',
-          completed: false
-        };
-      })
-    }));
-  }, [selectedDate, data?.lessonReports, data?.makeupSessions, data?.timetable, data?.classes, getLessonReportsForDate]);
-
-  // Set default classId for makeup modal
   useEffect(() => {
     const classesList = data?.classes || [];
     if (classesList.length > 0 && !makeupForm.classId) {
@@ -164,98 +130,113 @@ export const LessonReportsView: React.FC = () => {
     }
   }, [data?.classes]);
 
-  // Filtered Daily Reports List
+  const isReportCompleted = (rep: LessonReport): boolean =>
+    (rep.status === 'completed' || rep.status === 'submitted') &&
+    rep.totalStudents > 0 &&
+    rep.completedStudents === rep.totalStudents;
+
+  const isReportEffectivelyLockedForTeacher = (rep: LessonReport): boolean => {
+    if (rep.locked) return true;
+    const expired = isReportExpired(rep);
+    return expired && !rep.unlockedAfterExpiration;
+  };
+
+  // Filtered daily reports (Teacher can access all scheduled classes on the date, including substitute teaching)
   const filteredReports = useMemo(() => {
     return (dailyReports || []).filter(rep => {
-      // Teacher filter: Only see assigned classes
-      if (isTeacher && currentUser?.teacherId) {
-        if (rep.teacherId !== currentUser.teacherId) return false;
-      }
-
-      // Search
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
-        const matchClass = (rep.className && rep.className.toLowerCase().includes(q));
-        const matchTeacher = (rep.teacherName && rep.teacherName.toLowerCase().includes(q));
-        if (!matchClass && !matchTeacher) return false;
+        const matchClass = rep.className?.toLowerCase().includes(q);
+        const matchTeacher = rep.teacherName?.toLowerCase().includes(q);
+        const matchEditor = isManager && rep.lastEditedByName?.toLowerCase().includes(q);
+        if (!matchClass && !matchTeacher && !matchEditor) return false;
       }
 
-      // Class filter
       if (classFilter !== 'all' && rep.classId !== classFilter) return false;
 
-      // Status filter
-      if (statusFilter !== 'all' && rep.status !== statusFilter) return false;
+      if (statusFilter === 'reported' && !isReportCompleted(rep)) return false;
+      if (statusFilter === 'unreported' && isReportCompleted(rep)) return false;
 
-      // Lock filter
-      if (lockFilter === 'locked' && !rep.locked) return false;
-      if (lockFilter === 'open' && rep.locked) return false;
+      if (lockFilter === 'locked' && !rep.locked && !isReportExpired(rep)) return false;
+      if (lockFilter === 'open' && (rep.locked || isReportExpired(rep))) return false;
 
       return true;
     });
-  }, [dailyReports, searchQuery, classFilter, statusFilter, lockFilter, isTeacher, currentUser]);
+  }, [dailyReports, searchQuery, classFilter, statusFilter, lockFilter, isManager]);
 
-  // Date Navigation
-  const handlePrevDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() - 1);
-    setSelectedDate(d.toISOString().slice(0, 10));
-  };
+  // Historical reports (all stored reports, never deleted)
+  const historicalReports = useMemo(() => {
+    const all = Array.isArray(data?.lessonReports) ? [...data.lessonReports] : [];
+    return all
+      .filter(rep => {
+        if (historyDateFilter && rep.teachingDate !== historyDateFilter) return false;
+        if (classFilter !== 'all' && rep.classId !== classFilter) return false;
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          const matchClass = rep.className?.toLowerCase().includes(q);
+          const matchTeacher = rep.teacherName?.toLowerCase().includes(q);
+          const matchEditor = rep.lastEditedByName?.toLowerCase().includes(q);
+          if (!matchClass && !matchTeacher && !matchEditor) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.teachingDate.localeCompare(a.teachingDate));
+  }, [data?.lessonReports, historyDateFilter, classFilter, searchQuery]);
 
-  const handleNextDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + 1);
-    setSelectedDate(d.toISOString().slice(0, 10));
+  const lockAuditLogs: LessonReportLockAuditEntry[] = useMemo(() => {
+    return Array.isArray(data?.lessonReportLockAudits) ? data.lessonReportLockAudits : [];
+  }, [data?.lessonReportLockAudits]);
+
+  const handleShiftDate = (deltaDays: number) => {
+    const match = selectedDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return;
+    const d = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + deltaDays));
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    setSelectedDate(`${y}-${m}-${day}`);
   };
 
   const handleToday = () => {
-    setSelectedDate('2026-11-06');
+    setSelectedDate(getVietnamTodayISO());
   };
 
-  // Open Report Editor
   const handleOpenReport = (report: LessonReport) => {
     setActiveReport(JSON.parse(JSON.stringify(report)));
     setShowParentPreview(false);
   };
 
-  // Open Parent Preview
   const handleOpenParentPreview = (report: LessonReport) => {
     setActiveReport(JSON.parse(JSON.stringify(report)));
     setShowParentPreview(true);
   };
 
-  // Save Report Changes
   const handleSaveActiveReport = () => {
     if (!activeReport) return;
     if (typeof saveLessonReport === 'function') {
       const res = saveLessonReport(activeReport);
       if (res?.success && res?.report) {
         setActiveReport(res.report);
-        showToast(`Đã lưu báo cáo học tập lớp ${activeReport.className}!`, 'success');
+        showToast(`Đã lưu bản nháp báo cáo lớp ${activeReport.className}!`, 'success');
       } else {
-        showToast(res?.error || 'Đã lưu bản báo cáo thành công!', 'success');
+        showToast(res?.error || 'Không thể lưu báo cáo.', 'error');
       }
-    } else {
-      showToast(`Đã lưu báo cáo học tập lớp ${activeReport.className}!`, 'success');
     }
   };
 
-  // Submit Report
   const handleSubmitActiveReport = () => {
     if (!activeReport) return;
     if (typeof submitLessonReport === 'function') {
-      const res = submitLessonReport(activeReport.id);
+      const res = submitLessonReport(activeReport);
       if (res?.success && res?.report) {
         setActiveReport(res.report);
-        showToast(`Đã nộp báo cáo lớp ${activeReport.className} cho Quản lý học thuật kiểm tra!`, 'success');
+        showToast(`Đã nộp báo cáo lớp ${activeReport.className} thành công!`, 'success');
       } else {
-        showToast(`Đã nộp báo cáo lớp ${activeReport.className}!`, 'success');
+        showToast(res?.error || 'Vui lòng hoàn thành đầy đủ thông tin trước khi nộp.', 'error');
       }
-    } else {
-      showToast(`Đã nộp báo cáo lớp ${activeReport.className}!`, 'success');
     }
   };
 
-  // Lock / Unlock Toggle
   const handleToggleLock = (report: LessonReport) => {
     if (!isManager) {
       showToast('Chỉ Quản lý học thuật hoặc Admin mới có quyền khóa/mở khóa báo cáo.', 'error');
@@ -263,41 +244,43 @@ export const LessonReportsView: React.FC = () => {
     }
 
     const nextLock = !report.locked;
-    const confirmMsg = nextLock
-      ? `Khóa sổ báo cáo lớp "${report.className}" ngày ${report.teachingDate}?\n(Sau khi khóa, giáo viên sẽ không thể chỉnh sửa. Nếu báo cáo chưa đầy đủ, hệ thống sẽ tự động ghi nhận vào sổ theo dõi báo cáo thiếu)`
-      : `Mở khóa báo cáo lớp "${report.className}" ngày ${report.teachingDate}?\n(Giáo viên sẽ có thể tiếp tục chỉnh sửa)`;
+    const promptLabel = nextLock
+      ? `Nhập lý do khóa báo cáo lớp "${report.className}" ngày ${report.teachingDate} (tùy chọn):`
+      : `Nhập lý do mở khóa báo cáo lớp "${report.className}" ngày ${report.teachingDate} (tùy chọn):`;
+    const reasonInput = window.prompt(promptLabel, '');
+    if (reasonInput === null) return;
 
-    if (window.confirm(confirmMsg)) {
-      if (typeof toggleReportLock === 'function') {
-        const res = toggleReportLock(report.id, nextLock);
-        if (res?.success !== false) {
-          showToast(nextLock ? 'Đã khóa sổ báo cáo thành công!' : 'Đã mở khóa báo cáo!', 'info');
-          if (activeReport && activeReport.id === report.id) {
-            setActiveReport(prev => prev ? { ...prev, locked: nextLock } : null);
-          }
-        } else {
-          showToast(res?.error || 'Lỗi khi thay đổi trạng thái khóa.', 'error');
+    if (typeof toggleReportLock === 'function') {
+      const res = toggleReportLock(report.id, nextLock, reasonInput, report);
+      if (res?.success !== false) {
+        showToast(nextLock ? 'Đã khóa báo cáo thành công!' : 'Đã mở khóa báo cáo!', 'info');
+        if (activeReport && activeReport.id === report.id) {
+          setActiveReport(prev =>
+            prev
+              ? {
+                  ...prev,
+                  locked: nextLock,
+                  unlockedAfterExpiration: !nextLock && isReportExpired(prev) ? true : !nextLock ? prev.unlockedAfterExpiration : false
+                }
+              : null
+          );
         }
       } else {
-        showToast(nextLock ? 'Đã khóa sổ báo cáo thành công!' : 'Đã mở khóa báo cáo!', 'info');
-        if (activeReport && activeReport.id === report.id) {
-          setActiveReport(prev => prev ? { ...prev, locked: nextLock } : null);
-        }
+        showToast(res?.error || 'Lỗi khi thay đổi trạng thái khóa.', 'error');
       }
     }
   };
 
-  // Add Make-up Class
   const handleCreateMakeup = (e: React.FormEvent) => {
     e.preventDefault();
     const classesList = data?.classes || [];
-    const cls = classesList.find((c: any) => c.id === makeupForm.classId);
+    const cls = classesList.find(c => c.id === makeupForm.classId);
     if (!cls) return;
 
     const teachersList = data?.teachers || [];
     const assistantsList = data?.teachingAssistants || [];
-    const teacher = teachersList.find((t: any) => t.id === makeupForm.teacherId);
-    const assistant = assistantsList.find((ta: any) => ta.id === makeupForm.assistantId);
+    const teacher = teachersList.find(t => t.id === makeupForm.teacherId);
+    const assistant = assistantsList.find(ta => ta.id === makeupForm.assistantId);
 
     if (typeof addMakeupClass === 'function') {
       const res = addMakeupClass({
@@ -307,7 +290,7 @@ export const LessonReportsView: React.FC = () => {
         time: makeupForm.time,
         classroom: makeupForm.classroom,
         teacherId: teacher?.id || cls.teacherId,
-        teacherName: teacher?.vietnameseName || teacher?.fullName || 'Giáo viên',
+        teacherName: teacher?.fullName || 'Giáo viên',
         assistantId: assistant?.id,
         assistantName: assistant?.fullName,
         lessonProgress: makeupForm.lessonProgress,
@@ -320,13 +303,9 @@ export const LessonReportsView: React.FC = () => {
       } else {
         showToast(res?.error || 'Lỗi khi thêm lớp học bù.', 'error');
       }
-    } else {
-      showToast(`Đã thêm lớp học bù cho lớp ${cls.name}!`, 'success');
-      setShowMakeupModal(false);
     }
   };
 
-  // Delete Make-up Class
   const handleDeleteMakeup = (makeupId: string) => {
     if (window.confirm('Bạn có chắc muốn xóa lịch học bù này?')) {
       if (typeof deleteMakeupClass === 'function') {
@@ -334,24 +313,20 @@ export const LessonReportsView: React.FC = () => {
         if (res?.success !== false) {
           showToast('Đã xóa lớp học bù.', 'info');
         }
-      } else {
-        showToast('Đã xóa lớp học bù.', 'info');
       }
     }
   };
 
-  // Export Word (.docx)
   const handleExportWord = async (report: LessonReport) => {
     try {
       await exportLessonReportToWord(report);
-      showToast('Đã xuất file Word (.docx) chuẩn báo cáo phụ huynh!', 'success');
+      showToast('Đã xuất file Word (.docx) Bản phụ huynh!', 'success');
     } catch (err) {
       console.error(err);
       showToast('Lỗi khi xuất Word.', 'error');
     }
   };
 
-  // Export Excel (.xlsx)
   const handleExportExcel = (report: LessonReport) => {
     try {
       exportLessonReportToExcel(report);
@@ -362,39 +337,49 @@ export const LessonReportsView: React.FC = () => {
     }
   };
 
-  // Format Date Helper
   const formatDateDisplay = (dateStr: string) => {
-    try {
-      const [y, m, d] = dateStr.split('-');
-      const dt = new Date(dateStr);
-      const dayNames = ['Chủ Nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
-      return `${dayNames[dt.getDay()]}, Ngày ${d}/${m}/${y}`;
-    } catch {
-      return dateStr;
-    }
+    const match = (dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return dateStr;
+    const dt = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    const dayNames = ['Chủ Nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+    return `${dayNames[dt.getDay()]}, ${match[3]}/${match[2]}/${match[1]}`;
   };
+
+  const formatDeadlineDisplay = (report: LessonReport) => {
+    const deadlineIso = report.deadlineAt || computeReportDeadlineISO(report.teachingDate);
+    const match = deadlineIso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/);
+    if (!match) return '17:00 ngày hôm sau';
+    return `${match[4]} ngày ${match[3]}/${match[2]}/${match[1]}`;
+  };
+
+  const activeReportExpired = activeReport ? isReportExpired(activeReport) : false;
+  const activeReportReadOnly = activeReport
+    ? isTeacher && isReportEffectivelyLockedForTeacher(activeReport)
+    : false;
+
+  const reportedCount = filteredReports.filter(isReportCompleted).length;
+  const unreportedCount = filteredReports.length - reportedCount;
 
   return (
     <div className="space-y-6">
-      {/* Top Navigation & Sub-Tabs */}
+      {/* Top Header & Sub-Tabs */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs print:hidden">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="p-2 bg-red-50 text-red-600 rounded-xl">
-                <FileSpreadsheet className="w-5 h-5" />
-              </span>
-              <div>
-                <h2 className="text-lg font-bold text-slate-800">Báo Cáo Tình Hình Học Tập (Lesson Report)</h2>
-                <p className="text-xs text-slate-400">
-                  Quản lý báo cáo sau buổi học, đánh giá học viên, khóa sổ và xuất báo cáo gửi phụ huynh
-                </p>
-              </div>
+          <div className="flex items-center gap-2.5">
+            <span className="p-2 bg-red-50 text-red-600 rounded-xl">
+              <FileSpreadsheet className="w-5 h-5" />
+            </span>
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">
+                Báo Cáo Tình Hình Học Tập (Lesson Report)
+              </h2>
+              <p className="text-xs text-slate-500">
+                Báo cáo học tập hằng ngày của học viên, theo dõi tiến độ nộp, khóa sổ KPI & xuất Bản phụ huynh
+              </p>
             </div>
           </div>
 
-          {/* Sub-Tabs Switcher */}
-          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
+          <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
             <button
               onClick={() => {
                 setActiveSubTab('daily');
@@ -406,52 +391,84 @@ export const LessonReportsView: React.FC = () => {
                   : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              Lịch học hàng ngày
+              Báo cáo hằng ngày
             </button>
-            <button
-              onClick={() => {
-                setActiveSubTab('incomplete');
-                setActiveReport(null);
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                activeSubTab === 'incomplete'
-                  ? 'bg-white text-slate-800 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
-              <span>Báo cáo chưa xong</span>
-              <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 rounded-full text-[10px]">
-                {(data?.incompleteReports || []).filter((r: any) => r.status === 'pending').length}
-              </span>
-            </button>
+
+            {isManager && (
+              <>
+                <button
+                  onClick={() => {
+                    setActiveSubTab('history');
+                    setActiveReport(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
+                    activeSubTab === 'history'
+                      ? 'bg-white text-slate-800 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <History className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Lịch sử & KPI ({(data?.lessonReports || []).length})</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveSubTab('audits');
+                    setActiveReport(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
+                    activeSubTab === 'audits'
+                      ? 'bg-white text-slate-800 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Nhật ký Khóa/Mở ({lockAuditLogs.length})</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveSubTab('incomplete');
+                    setActiveReport(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    activeSubTab === 'incomplete'
+                      ? 'bg-white text-slate-800 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Chưa xong</span>
+                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px]">
+                    {(data?.incompleteReports || []).filter(r => r.status === 'pending').length}
+                  </span>
+                </button>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Date Selector & Action Toolbar */}
+        {/* Date Selector & Summary Badges */}
         {activeSubTab === 'daily' && !activeReport && (
           <div className="flex flex-wrap items-center justify-between gap-4 pt-4">
-            {/* Date Navigator */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={handlePrevDay}
+                onClick={() => handleShiftDate(-1)}
                 className="p-2 text-slate-600 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors"
                 title="Ngày trước"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
 
-              <div className="relative">
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={e => setSelectedDate(e.target.value)}
-                  className="pl-3 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-red-500"
-                />
-              </div>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={e => setSelectedDate(e.target.value)}
+                className="pl-3 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-red-500"
+              />
 
               <button
-                onClick={handleNextDay}
+                onClick={() => handleShiftDate(1)}
                 className="p-2 text-slate-600 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors"
                 title="Ngày sau"
               >
@@ -465,34 +482,41 @@ export const LessonReportsView: React.FC = () => {
                 Hôm nay
               </button>
 
-              <span className="text-xs font-semibold text-slate-600 ml-2 hidden sm:inline">
-                {formatDateDisplay(selectedDate)}
+              <span className="text-xs font-semibold text-slate-600 ml-1">
+                {formatDateDisplay(selectedDate)} (Giờ VN)
               </span>
             </div>
 
-            {/* Right Buttons: Add Make-up Class */}
-            {isManager && (
-              <button
-                onClick={() => setShowMakeupModal(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ Bổ sung lớp học bù</span>
-              </button>
-            )}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+                {reportedCount} Đã báo cáo
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-red-100 text-red-800 font-bold">
+                {unreportedCount} Chưa báo cáo
+              </span>
+
+              {isManager && (
+                <button
+                  onClick={() => setShowMakeupModal(true)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all ml-1"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Bổ sung lớp học bù</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
 
       {/* ========================================================
-          SUB-TAB 1: DAILY MANAGEMENT INTERFACE
+          SUB-TAB 1: DAILY CLASS CARDS
          ======================================================== */}
       {activeSubTab === 'daily' && !activeReport && (
         <div className="space-y-4">
-          {/* Filters Bar */}
+          {/* Filters */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Search */}
+            <div className="flex flex-wrap items-center gap-2.5">
               <div className="relative w-48 sm:w-60">
                 <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
@@ -504,462 +528,652 @@ export const LessonReportsView: React.FC = () => {
                 />
               </div>
 
-              {/* Class Filter */}
               <select
                 value={classFilter}
                 onChange={e => setClassFilter(e.target.value)}
                 className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium"
               >
                 <option value="all">Tất cả lớp học</option>
-                {(data?.classes || []).map((c: any) => (
+                {(data?.classes || []).map(c => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
               </select>
 
-              {/* Status Filter */}
               <select
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
                 className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium"
               >
                 <option value="all">Tất cả trạng thái</option>
-                <option value="not_started">Chưa bắt đầu</option>
-                <option value="in_progress">Đang thực hiện</option>
-                <option value="submitted">Đã nộp</option>
-                <option value="completed">Đã hoàn thành</option>
+                <option value="reported">Đã báo cáo</option>
+                <option value="unreported">Chưa báo cáo</option>
               </select>
 
-              {/* Lock Filter */}
               <select
                 value={lockFilter}
                 onChange={e => setLockFilter(e.target.value)}
                 className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium"
               >
                 <option value="all">Tất cả tình trạng khóa</option>
-                <option value="open">Đang mở (Open)</option>
-                <option value="locked">Đã khóa sổ (Locked)</option>
+                <option value="open">Đang mở</option>
+                <option value="locked">Đã khóa / Hết hạn</option>
               </select>
             </div>
 
             <div className="text-slate-500 font-medium">
-              Tìm thấy: <strong>{filteredReports.length}</strong> lớp học trong ngày
+              Hạn chỉnh sửa: <strong>17:00 ngày hôm sau</strong>
             </div>
           </div>
 
-          {/* Table of Daily Classes */}
+          {/* Class Cards Grid */}
+          {filteredReports.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-dashed border-slate-300 py-12 px-4 text-center text-slate-500 text-xs">
+              <Calendar className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+              <div className="font-bold text-slate-700 text-sm">
+                Không có lớp học nào được lên lịch vào {formatDateDisplay(selectedDate)}
+              </div>
+              <div className="mt-1">
+                Chọn ngày khác hoặc bấm "Bổ sung lớp học bù" (dành cho Quản lý) nếu có buổi học phát sinh.
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredReports.map(rep => {
+                const completed = isReportCompleted(rep);
+                const expired = isReportExpired(rep);
+                const effectivelyLocked = isReportEffectivelyLockedForTeacher(rep);
+
+                return (
+                  <div
+                    key={rep.id}
+                    className={`rounded-2xl border p-5 transition-all flex flex-col justify-between gap-4 ${
+                      completed
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                        : 'bg-red-50 border-red-300 text-red-950'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      {/* Top badges: Completion + Lock/Deadline */}
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                            completed
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-red-600 text-white'
+                          }`}
+                        >
+                          {completed ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                          <span>{completed ? 'Đã báo cáo' : 'Chưa báo cáo'}</span>
+                        </span>
+
+                        <div className="flex items-center gap-1.5">
+                          {rep.sessionType === 'makeup' && (
+                            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-bold">
+                              HỌC BÙ
+                            </span>
+                          )}
+                          {rep.locked ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-900 text-white">
+                              <Lock className="w-3 h-3" /> Đã khóa
+                            </span>
+                          ) : expired && !rep.unlockedAfterExpiration ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-700 text-white">
+                              <Clock className="w-3 h-3" /> Hết hạn 17:00
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/80 text-slate-700 border border-slate-200">
+                              <Unlock className="w-3 h-3" /> Đang mở
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Class Name & Date */}
+                      <div>
+                        <h3 className="font-extrabold text-base leading-snug">{rep.className}</h3>
+                        <div className="text-xs opacity-80 mt-0.5">
+                          {formatDateDisplay(rep.teachingDate)} • {rep.scheduledTime}
+                        </div>
+                      </div>
+
+                      {/* Teacher, TA, Progress */}
+                      <div
+                        className={`space-y-1.5 pt-2.5 border-t text-xs ${
+                          completed ? 'border-emerald-200' : 'border-red-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <UserCheck className="w-3.5 h-3.5 shrink-0 opacity-80" />
+                          <span>
+                            GV: <strong>{rep.teacherName}</strong>
+                          </span>
+                        </div>
+                        {rep.teachingAssistantName && (
+                          <div className="flex items-center gap-1.5">
+                            <UserPlus className="w-3.5 h-3.5 shrink-0 opacity-80" />
+                            <span>
+                              TA: <strong>{rep.teachingAssistantName}</strong>
+                            </span>
+                          </div>
+                        )}
+                        <div className="text-[11px] opacity-85">
+                          Hoàn thành: <strong>{rep.completedStudents}/{rep.totalStudents}</strong> học viên ({rep.completionPercentage}%)
+                        </div>
+
+                        {/* Last Editor Audit (Visible ONLY to Admin & Academic Manager) */}
+                        {isManager && (
+                          <div className="pt-1.5 text-[11px] bg-white/70 rounded-lg px-2.5 py-1.5 border border-slate-200/70 text-slate-700">
+                            <div>
+                              Người sửa cuối:{' '}
+                              <strong>{rep.lastEditedByName || 'Chưa có ai chỉnh sửa'}</strong>
+                            </div>
+                            {rep.lastEditedAt && (
+                              <div className="text-[10px] text-slate-500">
+                                Lúc: {rep.lastEditedAt} ({rep.lastEditedByUsername})
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenReport(rep)}
+                        className="flex-1 px-3 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>{isTeacher && effectivelyLocked ? 'Xem báo cáo' : 'Mở báo cáo'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenParentPreview(rep)}
+                        className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-xs cursor-pointer"
+                        title="Bản phụ huynh"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Bản PH</span>
+                      </button>
+
+                      {isManager && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleLock(rep)}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer ${
+                            rep.locked
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                              : 'bg-slate-800 hover:bg-slate-900 text-white'
+                          }`}
+                          title={rep.locked ? 'Mở khóa báo cáo' : 'Khóa báo cáo'}
+                        >
+                          {rep.locked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                          <span>{rep.locked ? 'Mở khóa' : 'Khóa'}</span>
+                        </button>
+                      )}
+
+                      {isManager && rep.sessionType === 'makeup' && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMakeup(rep.id.replace('LR-MAKEUP-', ''))}
+                          className="p-2 bg-white hover:bg-rose-50 text-rose-600 border border-slate-300 rounded-xl cursor-pointer"
+                          title="Xóa lớp học bù"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================
+          SUB-TAB 2: HISTORICAL REPORTS & KPI (ADMIN / MANAGER ONLY)
+         ======================================================== */}
+      {isManager && activeSubTab === 'history' && !activeReport && (
+        <div className="space-y-4">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-wrap items-center gap-3 text-xs">
+            <div className="relative w-56">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Tìm lớp, GV, người sửa cuối..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-slate-600">Lọc ngày:</span>
+              <input
+                type="date"
+                value={historyDateFilter}
+                onChange={e => setHistoryDateFilter(e.target.value)}
+                className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
+              />
+              {historyDateFilter && (
+                <button
+                  onClick={() => setHistoryDateFilter('')}
+                  className="text-red-600 font-semibold hover:underline"
+                >
+                  Xóa lọc
+                </button>
+              )}
+            </div>
+
+            <div className="ml-auto text-slate-500">
+              Tổng cộng: <strong>{historicalReports.length}</strong> bản báo cáo đã lưu
+            </div>
+          </div>
+
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
-                    <th className="py-3 px-4">Lớp học (Class)</th>
-                    <th className="py-3 px-4">Ca học & Phòng</th>
-                    <th className="py-3 px-4">Giáo viên phụ trách</th>
-                    <th className="py-3 px-4">Tiến độ bài học</th>
-                    <th className="py-3 px-4 text-center">Tiến độ nhập báo cáo</th>
-                    <th className="py-3 px-4 text-center">Tình trạng khóa</th>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[11px]">
+                    <th className="py-3 px-4">Ngày học</th>
+                    <th className="py-3 px-4">Lớp học</th>
+                    <th className="py-3 px-4">GV theo lịch</th>
+                    <th className="py-3 px-4">Người sửa cuối (KPI Audit)</th>
+                    <th className="py-3 px-4 text-center">Trạng thái</th>
+                    <th className="py-3 px-4 text-center">Khóa / Hạn 17:00</th>
                     <th className="py-3 px-4 text-right">Thao tác</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-800">
-                  {filteredReports.length > 0 ? (
-                    filteredReports.map(rep => {
-                      const isComplete = rep.status === 'completed';
-                      const isMakeup = rep.sessionType === 'makeup';
-
+                <tbody className="divide-y divide-slate-100">
+                  {historicalReports.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-10 text-center text-slate-400">
+                        Chưa có báo cáo lịch sử nào được lưu.
+                      </td>
+                    </tr>
+                  ) : (
+                    historicalReports.map(rep => {
+                      const completed = isReportCompleted(rep);
+                      const expired = isReportExpired(rep);
                       return (
-                        <tr key={rep.id} className="hover:bg-slate-50/70 transition-colors">
-                          {/* Class Name */}
-                          <td className="py-3.5 px-4 font-semibold text-slate-900">
-                            <div className="flex items-center gap-2">
-                              <span>{rep.className}</span>
-                              {isMakeup && (
-                                <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-bold tracking-wider">
-                                  HỌC BÙ
-                                </span>
-                              )}
+                        <tr key={rep.id} className="hover:bg-slate-50">
+                          <td className="py-3 px-4 font-semibold">{rep.teachingDate}</td>
+                          <td className="py-3 px-4 font-bold text-slate-900">{rep.className}</td>
+                          <td className="py-3 px-4">{rep.teacherName}</td>
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-slate-800">
+                              {rep.lastEditedByName || '—'}
                             </div>
-                          </td>
-
-                          {/* Time & Room */}
-                          <td className="py-3.5 px-4 text-slate-600">
-                            <div>{rep.scheduledTime}</div>
-                            <div className="text-[11px] text-slate-400">{rep.classroom}</div>
-                          </td>
-
-                          {/* Teacher & TA */}
-                          <td className="py-3.5 px-4">
-                            <div className="font-medium text-slate-800">{rep.teacherName}</div>
-                            {rep.teachingAssistantName && (
-                              <div className="text-[11px] text-slate-400">T.A: {rep.teachingAssistantName}</div>
+                            {rep.lastEditedAt && (
+                              <div className="text-[10px] text-slate-400">
+                                {rep.lastEditedAt} • {rep.lastEditedByUsername}
+                              </div>
                             )}
                           </td>
-
-                          {/* Lesson Progress */}
-                          <td className="py-3.5 px-4">
-                            <span className="font-medium text-blue-700 bg-blue-50 px-2 py-1 rounded-md">
-                              {rep.lessonProgress || 'Chưa cập nhật'}
+                          <td className="py-3 px-4 text-center">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                                completed
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-red-100 text-red-800'
+                              }`}
+                            >
+                              {completed ? 'Đã báo cáo' : 'Chưa báo cáo'} ({rep.completedStudents}/{rep.totalStudents})
                             </span>
                           </td>
-
-                          {/* Report Status & Progress */}
-                          <td className="py-3.5 px-4 text-center">
-                            <div className="inline-flex flex-col items-center">
-                              <span
-                                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${
-                                  rep.status === 'completed'
-                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                    : rep.status === 'submitted'
-                                    ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                    : rep.status === 'in_progress'
-                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                    : 'bg-slate-100 text-slate-600'
-                                }`}
-                              >
-                                {rep.status === 'completed' && 'Đã hoàn thành'}
-                                {rep.status === 'submitted' && 'Đã nộp báo cáo'}
-                                {rep.status === 'in_progress' && `Đang nhập (${rep.completedStudents}/${rep.totalStudents})`}
-                                {rep.status === 'not_started' && 'Chưa bắt đầu'}
-                              </span>
-                              <div className="text-[10px] text-slate-400 mt-0.5">
-                                {rep.completedStudents}/{rep.totalStudents} học sinh ({rep.completionPercentage}%)
-                              </div>
+                          <td className="py-3 px-4 text-center">
+                            <div className="font-semibold">
+                              {rep.locked ? 'Đã khóa' : expired ? 'Hết hạn 17:00' : 'Đang mở'}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              Hạn: {formatDeadlineDisplay(rep)}
                             </div>
                           </td>
-
-                          {/* Lock Status */}
-                          <td className="py-3.5 px-4 text-center">
-                            {rep.locked ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                <Lock className="w-3 h-3 text-rose-600" />
-                                Đã khóa
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                <Unlock className="w-3 h-3 text-emerald-600" />
-                                Đang mở
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Actions */}
-                          <td className="py-3.5 px-4 text-right">
+                          <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
-                              {/* Open Report */}
                               <button
                                 onClick={() => handleOpenReport(rep)}
-                                className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg font-semibold transition-colors flex items-center gap-1"
+                                className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg font-semibold"
                               >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                <span>Nhập/Sửa</span>
+                                Xem
                               </button>
-
-                              {/* Parent Preview */}
                               <button
-                                onClick={() => handleOpenParentPreview(rep)}
-                                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors flex items-center gap-1"
-                                title="Xem bản báo cáo phụ huynh"
+                                onClick={() => handleToggleLock(rep)}
+                                className={`px-2.5 py-1 rounded-lg font-semibold ${
+                                  rep.locked
+                                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                }`}
                               >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Bản PH</span>
+                                {rep.locked ? 'Mở khóa' : 'Khóa'}
                               </button>
-
-                              {/* Lock Toggle (Manager only) */}
-                              {isManager && (
-                                <button
-                                  onClick={() => handleToggleLock(rep)}
-                                  className={`p-1.5 rounded-lg border transition-colors ${
-                                    rep.locked
-                                      ? 'text-rose-600 hover:bg-rose-50 border-rose-200'
-                                      : 'text-slate-600 hover:bg-slate-100 border-slate-200'
-                                  }`}
-                                  title={rep.locked ? 'Bấm để mở khóa sổ' : 'Bấm để khóa sổ báo cáo'}
-                                >
-                                  {rep.locked ? <Lock className="w-4 h-4 text-rose-600" /> : <Unlock className="w-4 h-4 text-slate-500" />}
-                                </button>
-                              )}
-
-                              {/* Delete Makeup */}
-                              {isManager && isMakeup && (
-                                <button
-                                  onClick={() => handleDeleteMakeup(rep.id.replace('LR-MAKEUP-', ''))}
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition-colors"
-                                  title="Xóa lớp học bù"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
                             </div>
                           </td>
                         </tr>
                       );
                     })
-                  ) : (
-                    <tr>
-                      <td colSpan={7} className="py-12 text-center text-slate-400">
-                        <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-                        <div className="font-semibold text-slate-600">Không có lịch học nào trong ngày này</div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          Chọn ngày khác hoặc bấm "+ Bổ sung lớp học bù" nếu có lịch học phát sinh.
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================
+          SUB-TAB 3: APPEND-ONLY LOCK/UNLOCK AUDIT HISTORY
+         ======================================================== */}
+      {isManager && activeSubTab === 'audits' && !activeReport && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 text-xs text-slate-600">
+            <strong>Nhật ký Khóa / Mở khóa báo cáo (Append-only):</strong> Ghi nhận mọi thao tác khóa và mở khóa thủ công của Admin / Quản lý học thuật (không thể chỉnh sửa hoặc xóa).
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[11px]">
+                  <th className="py-3 px-4">Thời gian (Giờ VN)</th>
+                  <th className="py-3 px-4">Thao tác</th>
+                  <th className="py-3 px-4">Lớp / Ngày học</th>
+                  <th className="py-3 px-4">Người thực hiện</th>
+                  <th className="py-3 px-4">Lý do</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {lockAuditLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-10 text-center text-slate-400">
+                      Chưa có lịch sử khóa/mở khóa thủ công nào.
+                    </td>
+                  </tr>
+                ) : (
+                  lockAuditLogs.map(log => (
+                    <tr key={log.id} className="hover:bg-slate-50">
+                      <td className="py-3 px-4 font-mono text-[11px]">{log.timestamp}</td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            log.action === 'LOCK'
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}
+                        >
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-800">{log.className}</div>
+                        <div className="text-[10px] text-slate-400">
+                          Ngày: {log.teachingDate} • ID: {log.reportId}
                         </div>
                       </td>
+                      <td className="py-3 px-4">
+                        <div className="font-semibold">{log.actorName}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {log.actorUserId} • {log.actorUsername}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-slate-600">{log.reason || '—'}</td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {/* ========================================================
-          SUB-TAB 2: INCOMPLETE REPORTS TRACKING (CRITICAL FEATURE)
+          SUB-TAB 4: INCOMPLETE REPORTS TRACKING
          ======================================================== */}
-      {activeSubTab === 'incomplete' && (
-        <div className="space-y-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div>
-              <div className="font-bold text-sm text-amber-800">Sổ Theo Dõi Báo Cáo Chưa Hoàn Thành</div>
-              <p className="mt-0.5 text-amber-700 leading-relaxed">
-                Hệ thống tự động ghi nhận vĩnh viễn các lớp chưa hoàn thành đủ nhận xét/bài tập ngay khi Quản lý học thuật thực hiện thao tác Khóa sổ. Dữ liệu này giúp Ban giám đốc và Quản lý học thuật theo dõi KPI và đôn đốc giáo viên hoàn thiện báo cáo phụ huynh.
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
-                    <th className="py-3 px-4">Ngày học</th>
-                    <th className="py-3 px-4">Lớp học</th>
-                    <th className="py-3 px-4">Giáo viên phụ trách</th>
-                    <th className="py-3 px-4 text-center">Tiến độ lúc khóa</th>
-                    <th className="py-3 px-4">Thông tin còn thiếu</th>
-                    <th className="py-3 px-4">Thời gian khóa</th>
-                    <th className="py-3 px-4 text-center">Trạng thái</th>
-                    <th className="py-3 px-4 text-right">Thao tác</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-800">
-                  {(data?.incompleteReports || []).length > 0 ? (
-                    (data.incompleteReports || []).map((inc: any) => (
-                      <tr key={inc.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-3 px-4 font-semibold text-slate-900">{inc.teachingDate}</td>
-                        <td className="py-3 px-4 font-bold text-slate-900">{inc.className}</td>
-                        <td className="py-3 px-4 font-medium text-slate-800">{inc.teacherName}</td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
-                            {inc.completionPercentage}% ({inc.incompleteStudentCount} HS thiếu)
+      {isManager && activeSubTab === 'incomplete' && !activeReport && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
+                  <th className="py-3 px-4">Ngày học</th>
+                  <th className="py-3 px-4">Lớp học</th>
+                  <th className="py-3 px-4">Giáo viên</th>
+                  <th className="py-3 px-4 text-center">Tiến độ lúc khóa</th>
+                  <th className="py-3 px-4">Thông tin còn thiếu</th>
+                  <th className="py-3 px-4">Thời gian khóa</th>
+                  <th className="py-3 px-4 text-center">Trạng thái</th>
+                  <th className="py-3 px-4 text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-800">
+                {(data?.incompleteReports || []).length > 0 ? (
+                  (data?.incompleteReports || []).map(inc => (
+                    <tr key={inc.id} className="hover:bg-slate-50/70">
+                      <td className="py-3 px-4 font-semibold">{inc.teachingDate}</td>
+                      <td className="py-3 px-4 font-bold">{inc.className}</td>
+                      <td className="py-3 px-4">{inc.teacherName}</td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
+                          {inc.completionPercentage}% ({inc.incompleteStudentCount} HS thiếu)
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-rose-600 max-w-xs truncate" title={inc.missingFields}>
+                        {inc.missingFields}
+                      </td>
+                      <td className="py-3 px-4 text-slate-500">
+                        <div>{inc.lockedAt}</div>
+                        <div className="text-[10px] text-slate-400">bởi {inc.lockedBy}</div>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        {inc.status === 'resolved' ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
+                            Đã bổ sung xong
                           </span>
-                        </td>
-                        <td className="py-3 px-4 text-rose-600 max-w-xs truncate" title={inc.missingFields}>
-                          {inc.missingFields}
-                        </td>
-                        <td className="py-3 px-4 text-slate-500">
-                          <div>{inc.lockedAt}</div>
-                          <div className="text-[10px] text-slate-400">bởi {inc.lockedBy}</div>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          {inc.status === 'resolved' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              <Check className="w-3 h-3" /> Đã bổ sung xong
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                              <AlertCircle className="w-3 h-3" /> Chưa hoàn thành
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <button
-                            onClick={() => {
-                              const storedReports = data?.lessonReports || [];
-                              const rep = storedReports.find((r: any) => r.id === inc.reportId);
-                              if (rep) {
-                                setActiveSubTab('daily');
-                                setSelectedDate(inc.teachingDate);
-                                handleOpenReport(rep);
-                              } else {
-                                showToast('Không tìm thấy bản báo cáo gốc.', 'error');
-                              }
-                            }}
-                            className="px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg font-semibold transition-colors"
-                          >
-                            Mở báo cáo
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={8} className="py-8 text-center text-slate-400">
-                        Chưa có ghi nhận báo cáo thiếu nào.
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700">
+                            Chưa hoàn thành
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => {
+                            const rep = (data?.lessonReports || []).find(r => r.id === inc.reportId);
+                            if (rep) {
+                              setActiveSubTab('daily');
+                              setSelectedDate(inc.teachingDate);
+                              handleOpenReport(rep);
+                            } else {
+                              showToast('Không tìm thấy bản báo cáo gốc.', 'error');
+                            }
+                          }}
+                          className="px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg font-semibold"
+                        >
+                          Mở báo cáo
+                        </button>
                       </td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-slate-400">
+                      Chưa có ghi nhận báo cáo thiếu nào.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {/* ========================================================
-          CLASS REPORT EDITOR OR PARENT PREVIEW
+          DETAIL VIEW: EDITOR OR "BẢN PHỤ HUYNH"
          ======================================================== */}
       {activeReport && (
         <div className="bg-white rounded-2xl border border-slate-300 shadow-lg overflow-hidden">
-          {/* Top Controls Toolbar */}
+          {/* Toolbar */}
           <div className="p-4 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 print:hidden">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setActiveReport(null)}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1"
               >
                 <ChevronLeft className="w-4 h-4" />
-                <span>Quay lại danh sách</span>
+                <span>Quay lại</span>
               </button>
 
               <div className="text-xs text-slate-300">
-                Lớp: <strong className="text-white">{activeReport.className}</strong> &bull; Ngày: <strong className="text-white">{activeReport.teachingDate}</strong>
+                Lớp: <strong className="text-white">{activeReport.className}</strong> • Ngày:{' '}
+                <strong className="text-white">{activeReport.teachingDate}</strong>
               </div>
             </div>
 
-            {/* Right action buttons */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* Toggle Preview / Edit */}
               <button
                 onClick={() => setShowParentPreview(!showParentPreview)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${
                   showParentPreview
                     ? 'bg-blue-600 text-white'
                     : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
                 }`}
               >
                 <Eye className="w-3.5 h-3.5" />
-                <span>{showParentPreview ? 'Quay lại chỉnh sửa' : 'Xem bản Phụ huynh (Chụp ảnh)'}</span>
+                <span>{showParentPreview ? 'Quay lại nhập liệu' : 'Bản phụ huynh'}</span>
               </button>
 
-              {/* Export Word */}
               <button
                 onClick={() => handleExportWord(activeReport)}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                title="Xuất file Word (.docx)"
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5"
               >
                 <FileText className="w-3.5 h-3.5 text-blue-400" />
                 <span>Word</span>
               </button>
 
-              {/* Export Excel */}
               <button
                 onClick={() => handleExportExcel(activeReport)}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                title="Xuất file Excel (.xlsx)"
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Excel</span>
               </button>
 
-              {/* Print */}
               <button
                 onClick={() => window.print()}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>In</span>
+                <span>In / PDF</span>
               </button>
 
-              {/* Lock Toggle (Manager only) */}
               {isManager && (
                 <button
                   onClick={() => handleToggleLock(activeReport)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
                     activeReport.locked
-                      ? 'bg-rose-600 text-white hover:bg-rose-700'
-                      : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      : 'bg-rose-600 hover:bg-rose-700 text-white'
                   }`}
                 >
-                  {activeReport.locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
-                  <span>{activeReport.locked ? 'Mở khóa' : 'Khóa sổ'}</span>
+                  {activeReport.locked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                  <span>{activeReport.locked ? 'Mở khóa báo cáo' : 'Khóa báo cáo'}</span>
                 </button>
               )}
 
-              {/* Save Button */}
-              {!activeReport.locked && (
-                <button
-                  onClick={handleSaveActiveReport}
-                  className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>Lưu báo cáo</span>
-                </button>
-              )}
-
-              {/* Submit Button */}
-              {!activeReport.locked && isTeacher && (
-                <button
-                  onClick={handleSubmitActiveReport}
-                  className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Nộp báo cáo</span>
-                </button>
+              {!activeReportReadOnly && !showParentPreview && (
+                <>
+                  <button
+                    onClick={handleSaveActiveReport}
+                    className="px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Lưu nháp</span>
+                  </button>
+                  <button
+                    onClick={handleSubmitActiveReport}
+                    className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Nộp báo cáo</span>
+                  </button>
+                </>
               )}
             </div>
           </div>
 
-          {/* Locked Alert Banner */}
-          {activeReport.locked && (
-            <div className="bg-rose-50 border-b border-rose-200 p-4 flex items-center justify-between text-xs text-rose-800 print:hidden">
-              <div className="flex items-center gap-2">
-                <Lock className="w-4 h-4 text-rose-600 shrink-0" />
-                <span>
-                  <strong>REPORT LOCKED:</strong> Báo cáo này đã được Quản lý học thuật khóa sổ vào {activeReport.lockedAt} bởi {activeReport.lockedBy}. Vui lòng liên hệ Quản lý học thuật nếu cần mở khóa chỉnh sửa.
-                </span>
-              </div>
+          {/* Lock / Expiration / Last-Editor Banner (Hidden in Parent Preview & Print) */}
+          {!showParentPreview && (
+            <div className="print:hidden">
+              {(activeReport.locked || activeReportExpired) && (
+                <div className="bg-rose-50 border-b border-rose-200 p-3.5 flex flex-wrap items-center justify-between gap-2 text-xs text-rose-800">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>
+                      {activeReport.locked
+                        ? `Đã khóa báo cáo${activeReport.lockedAt ? ` lúc ${activeReport.lockedAt}` : ''}${activeReport.lockedBy ? ` bởi ${activeReport.lockedBy}` : ''}.`
+                        : activeReport.unlockedAfterExpiration
+                        ? `Báo cáo đã quá hạn gốc (${formatDeadlineDisplay(activeReport)}) nhưng đã được Quản lý mở khóa để chỉnh sửa bổ sung.`
+                        : `Báo cáo đã tự động hết hạn chỉnh sửa lúc ${formatDeadlineDisplay(activeReport)}.`}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {isManager && activeReport.lastEditedByName && (
+                <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Người chỉnh sửa cuối: <strong className="text-slate-900">{activeReport.lastEditedByName}</strong> ({activeReport.lastEditedByUsername}) • Lúc: <strong>{activeReport.lastEditedAt}</strong>
+                  </span>
+                  {activeReport.submittedAt && (
+                    <span>
+                      Nộp lúc: <strong>{activeReport.submittedAt}</strong>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {/* ========================================================
-              MODE A: PARENT REPORT PREVIEW (SCREENSHOT-FRIENDLY LAYOUT)
+              MODE A: BẢN PHỤ HUYNH (CLEAN PARENT-FRIENDLY LAYOUT)
              ======================================================== */}
           {showParentPreview ? (
             <div className="p-8 md:p-12 bg-white text-slate-900 font-serif print:p-0">
-              {/* Document Header */}
               <div className="text-center mb-6 space-y-1">
-                <h1 className="text-lg md:text-2xl font-bold tracking-tight text-red-600 uppercase font-serif">
-                  BÁO CÁO TÌNH HÌNH HỌC TẬP CỦA LỚP {(activeReport.className || '').toUpperCase()}
+                <div className="text-xs font-sans font-bold tracking-widest text-red-600 uppercase">
+                  LeeGo English Center
+                </div>
+                <h1 className="text-lg md:text-2xl font-bold tracking-tight text-red-600 uppercase">
+                  BÁO CÁO TÌNH HÌNH HỌC TẬP – LỚP {(activeReport.className || '').toUpperCase()}
                 </h1>
-                <h2 className="text-base md:text-lg font-bold text-slate-800 uppercase font-serif">
+                <h2 className="text-sm md:text-base font-bold text-slate-800 uppercase">
                   BUỔI HỌC NGÀY {(activeReport.teachingDate || '').split('-').reverse().join('/')}
                 </h2>
-                <div className="text-sm md:text-base font-semibold text-blue-700 pt-1">
-                  TIẾN ĐỘ BÀI HỌC: {activeReport.lessonProgress || 'Chưa cập nhật'}
-                </div>
+                {activeReport.lessonProgress && (
+                  <div className="text-xs md:text-sm font-semibold text-blue-700 pt-1">
+                    NỘI DUNG BÀI HỌC: {activeReport.lessonProgress}
+                  </div>
+                )}
               </div>
 
-              {/* 7-Column Parent Report Table */}
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse border border-black text-xs md:text-sm font-serif">
                   <thead>
                     <tr className="bg-slate-100 text-black font-bold text-center">
-                      <th className="border border-black p-2.5 w-24">Lớp</th>
-                      <th className="border border-black p-2.5 w-44">Học viên</th>
-                      <th className="border border-black p-2.5 w-32">Tình hình làm BVN</th>
+                      <th className="border border-black p-2.5 w-28">Lớp</th>
+                      <th className="border border-black p-2.5 w-40">Học viên</th>
+                      <th className="border border-black p-2.5 w-32">Tình hình làm BTVN</th>
                       <th className="border border-black p-2.5 w-32">Tình hình học bài cũ</th>
                       <th className="border border-black p-2.5 min-w-[200px]">Nhận xét</th>
-                      <th className="border border-black p-2.5 min-w-[160px]">Giao BVN</th>
+                      <th className="border border-black p-2.5 w-32">Giáo viên</th>
                       <th className="border border-black p-2.5 min-w-[140px]">Ghi chú</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(activeReport.studentReports || []).map((student, idx) => (
                       <tr key={student.studentId || idx} className="align-middle">
-                        {/* Class Column: Merged appearance */}
                         {idx === 0 ? (
                           <td
                             rowSpan={activeReport.studentReports.length}
@@ -969,32 +1183,26 @@ export const LessonReportsView: React.FC = () => {
                           </td>
                         ) : null}
 
-                        {/* Student Name */}
                         <td className="border border-black p-2.5 font-bold text-slate-900">
                           {student.studentName}
                         </td>
 
-                        {/* Homework Status */}
                         <td className="border border-black p-2.5 text-center font-medium">
                           {student.homeworkStatus || '—'}
                         </td>
 
-                        {/* Previous Lesson Status */}
                         <td className="border border-black p-2.5 text-center font-medium">
                           {student.previousLessonStatus || '—'}
                         </td>
 
-                        {/* Comments */}
                         <td className="border border-black p-2.5 whitespace-pre-line text-left leading-relaxed">
                           {student.comments || '—'}
                         </td>
 
-                        {/* Assigned Homework */}
-                        <td className="border border-black p-2.5 whitespace-pre-line text-left leading-relaxed">
-                          {student.assignedHomework || '—'}
+                        <td className="border border-black p-2.5 text-center font-medium">
+                          {activeReport.teacherName || '—'}
                         </td>
 
-                        {/* Notes (Test Scores, etc.) */}
                         <td className="border border-black p-2.5 whitespace-pre-line text-left leading-relaxed font-semibold text-red-600">
                           {student.notes || ''}
                         </td>
@@ -1004,208 +1212,166 @@ export const LessonReportsView: React.FC = () => {
                 </table>
               </div>
 
-              {/* Document Footer Signature */}
-              <div className="mt-8 pt-4 flex items-center justify-between text-xs text-slate-500 font-sans border-t border-slate-100">
-                <div>Trung tâm Anh ngữ LeeGo Center &bull; www.leego.edu.vn</div>
+              <div className="mt-6 pt-4 flex items-center justify-between text-xs text-slate-500 font-sans border-t border-slate-100">
+                <div>LeeGo English Center</div>
                 <div>Giáo viên phụ trách: {activeReport.teacherName}</div>
               </div>
             </div>
           ) : (
             /* ========================================================
-                MODE B: TEACHER INPUT & EDITOR FORM
+                MODE B: REPORT EDITOR (7 COLUMNS, GHI CHÚ AT THE END)
                ======================================================== */
-            <div className="p-6 space-y-6">
-              {/* Header Info & Progress */}
+            <div className="p-6 space-y-5">
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-4 text-xs">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-800 text-sm">
-                      {activeReport.className} – Buổi học ngày {(activeReport.teachingDate || '').split('-').reverse().join('/')}
-                    </span>
-                    <span className="text-slate-400">|</span>
-                    <span className="text-slate-600">GV: {activeReport.teacherName}</span>
-                    {activeReport.teachingAssistantName && (
-                      <span className="text-slate-500">(TA: {activeReport.teachingAssistantName})</span>
-                    )}
+                <div className="space-y-1.5">
+                  <div className="font-bold text-slate-800 text-sm">
+                    {activeReport.className} – {formatDateDisplay(activeReport.teachingDate)} ({activeReport.scheduledTime})
                   </div>
-
-                  {/* Editable Lesson Progress Line */}
-                  <div className="flex items-center gap-2 pt-1">
-                    <span className="font-bold text-slate-700">TIẾN ĐỘ BÀI HỌC:</span>
-                    {!activeReport.locked ? (
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-700">Nội dung bài học:</span>
+                    {!activeReportReadOnly ? (
                       <input
                         type="text"
                         value={activeReport.lessonProgress}
                         onChange={e =>
                           setActiveReport({ ...activeReport, lessonProgress: e.target.value })
                         }
-                        className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-bold text-blue-700 text-xs focus:ring-2 focus:ring-blue-500 w-72"
-                        placeholder="Ví dụ: Unit 3 – Lesson 2, Revision 1..."
+                        className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-semibold text-blue-700 text-xs w-72"
+                        placeholder="Ví dụ: Unit 3 – Lesson 2..."
                       />
                     ) : (
-                      <span className="font-bold text-blue-700 text-sm">{activeReport.lessonProgress}</span>
+                      <span className="font-semibold text-blue-700">{activeReport.lessonProgress || '—'}</span>
                     )}
                   </div>
                 </div>
 
-                {/* Completion Progress Metric */}
                 <div className="text-right">
-                  <div className="text-xs font-semibold text-slate-700">
-                    Tiến độ hoàn thành: <strong className="text-blue-600">{activeReport.completedStudents}/{activeReport.totalStudents}</strong> học sinh
+                  <div>
+                    Hoàn thành:{' '}
+                    <strong className="text-blue-600">
+                      {activeReport.studentReports.filter(isStudentReportEntryComplete).length}/{activeReport.studentReports.length}
+                    </strong>{' '}
+                    học viên
                   </div>
-                  <div className="w-48 h-2 bg-slate-200 rounded-full mt-1.5 overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-300 ${
-                        activeReport.completionPercentage === 100
-                          ? 'bg-emerald-500'
-                          : 'bg-blue-600'
-                      }`}
-                      style={{ width: `${activeReport.completionPercentage}%` }}
-                    />
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    Hạn chỉnh sửa: {formatDeadlineDisplay(activeReport)}
                   </div>
                 </div>
               </div>
 
-              {/* 7-Column Input Table */}
               <div className="overflow-x-auto border border-slate-200 rounded-xl">
                 <table className="w-full border-collapse text-xs text-left">
                   <thead>
                     <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-[11px] border-b border-slate-200">
-                      <th className="p-3 w-12 text-center">STT</th>
+                      <th className="p-3 w-28">Lớp</th>
                       <th className="p-3 w-40">Học viên</th>
-                      <th className="p-3 w-36">Tình hình làm BVN</th>
-                      <th className="p-3 w-36">Học bài cũ</th>
-                      <th className="p-3 min-w-[220px]">Nhận xét của giáo viên</th>
-                      <th className="p-3 min-w-[180px]">Giao BVN</th>
-                      <th className="p-3 min-w-[150px]">Ghi chú (Điểm thi)</th>
+                      <th className="p-3 w-40">Tình hình làm BTVN</th>
+                      <th className="p-3 w-40">Tình hình học bài cũ</th>
+                      <th className="p-3 min-w-[220px]">Nhận xét</th>
+                      <th className="p-3 w-36">Giáo viên</th>
+                      <th className="p-3 min-w-[160px]">Ghi chú</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 text-slate-800">
                     {(activeReport.studentReports || []).map((student, idx) => {
-                      const isComplete = Boolean(
-                        student.homeworkStatus &&
-                        student.previousLessonStatus &&
-                        student.comments &&
-                        student.comments.trim().length > 0
+                      const isComplete = isStudentReportEntryComplete(student);
+                      const hwOptions = Array.from(
+                        new Set([...STATUS_OPTIONS, student.homeworkStatus].filter(Boolean))
+                      );
+                      const prevOptions = Array.from(
+                        new Set([...STATUS_OPTIONS, student.previousLessonStatus].filter(Boolean))
                       );
 
                       return (
                         <tr
                           key={student.studentId || idx}
-                          className={`hover:bg-slate-50 transition-colors ${
-                            !isComplete ? 'bg-amber-50/20' : ''
-                          }`}
+                          className={!isComplete ? 'bg-red-50/30' : 'hover:bg-slate-50'}
                         >
-                          {/* STT */}
-                          <td className="p-3 text-center text-slate-400 font-semibold">{idx + 1}</td>
+                          <td className="p-3 font-semibold text-slate-700">{activeReport.className}</td>
 
-                          {/* Student Name */}
                           <td className="p-3 font-bold text-slate-900">
                             <div>{student.studentName}</div>
-                            <div className="text-[10px] text-slate-400 font-normal">{student.studentId}</div>
+                            {!isTeacher && (
+                              <div className="text-[10px] text-slate-400 font-normal">{student.studentId}</div>
+                            )}
                           </td>
 
-                          {/* Homework Status */}
                           <td className="p-3">
                             <select
-                              disabled={activeReport.locked}
-                              value={student.homeworkStatus || 'Đạt'}
+                              disabled={activeReportReadOnly}
+                              value={student.homeworkStatus || 'Đạt yêu cầu'}
                               onChange={e => {
                                 const next = [...activeReport.studentReports];
-                                next[idx].homeworkStatus = e.target.value as HomeworkStatus;
-                                next[idx].completed = Boolean(
-                                  next[idx].homeworkStatus &&
-                                  next[idx].previousLessonStatus &&
-                                  next[idx].comments &&
-                                  next[idx].comments.trim()
-                                );
+                                next[idx] = {
+                                  ...next[idx],
+                                  homeworkStatus: e.target.value as HomeworkStatus
+                                };
+                                next[idx].completed = isStudentReportEntryComplete(next[idx]);
                                 setActiveReport({ ...activeReport, studentReports: next });
                               }}
-                              className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                              className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold disabled:bg-slate-100"
                             >
-                              <option value="Đạt">Đạt</option>
-                              <option value="Chưa đạt">Chưa đạt</option>
-                              <option value="Chưa hoàn thành">Chưa hoàn thành</option>
-                              <option value="Không giao BVN">Không giao BVN</option>
+                              {hwOptions.map(opt => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
                             </select>
                           </td>
 
-                          {/* Previous Lesson Status */}
                           <td className="p-3">
                             <select
-                              disabled={activeReport.locked}
-                              value={student.previousLessonStatus || 'Đạt'}
+                              disabled={activeReportReadOnly}
+                              value={student.previousLessonStatus || 'Đạt yêu cầu'}
                               onChange={e => {
                                 const next = [...activeReport.studentReports];
-                                next[idx].previousLessonStatus = e.target.value as PreviousLessonStatus;
-                                next[idx].completed = Boolean(
-                                  next[idx].homeworkStatus &&
-                                  next[idx].previousLessonStatus &&
-                                  next[idx].comments &&
-                                  next[idx].comments.trim()
-                                );
+                                next[idx] = {
+                                  ...next[idx],
+                                  previousLessonStatus: e.target.value as PreviousLessonStatus
+                                };
+                                next[idx].completed = isStudentReportEntryComplete(next[idx]);
                                 setActiveReport({ ...activeReport, studentReports: next });
                               }}
-                              className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                              className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold disabled:bg-slate-100"
                             >
-                              <option value="Đạt">Đạt</option>
-                              <option value="Chưa đạt">Chưa đạt</option>
-                              <option value="Chưa thuộc bài">Chưa thuộc bài</option>
-                              <option value="Chưa chuẩn bị">Chưa chuẩn bị</option>
+                              {prevOptions.map(opt => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
                             </select>
                           </td>
 
-                          {/* Comments */}
                           <td className="p-3">
                             <textarea
-                              disabled={activeReport.locked}
+                              disabled={activeReportReadOnly}
                               rows={2}
                               value={student.comments || ''}
                               onChange={e => {
                                 const next = [...activeReport.studentReports];
-                                next[idx].comments = e.target.value;
-                                next[idx].completed = Boolean(
-                                  next[idx].homeworkStatus &&
-                                  next[idx].previousLessonStatus &&
-                                  next[idx].comments &&
-                                  next[idx].comments.trim()
-                                );
+                                next[idx] = { ...next[idx], comments: e.target.value };
+                                next[idx].completed = isStudentReportEntryComplete(next[idx]);
                                 setActiveReport({ ...activeReport, studentReports: next });
                               }}
-                              placeholder="Nhập nhận xét chi tiết cho học viên..."
-                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                              placeholder="Nhập nhận xét tiến độ học tập..."
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs disabled:bg-slate-100"
                             />
                           </td>
 
-                          {/* Assigned Homework */}
-                          <td className="p-3">
-                            <textarea
-                              disabled={activeReport.locked}
-                              rows={2}
-                              value={student.assignedHomework || ''}
-                              onChange={e => {
-                                const next = [...activeReport.studentReports];
-                                next[idx].assignedHomework = e.target.value;
-                                setActiveReport({ ...activeReport, studentReports: next });
-                              }}
-                              placeholder="Bài tập về nhà..."
-                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
-                            />
-                          </td>
+                          <td className="p-3 text-slate-700 font-medium">{activeReport.teacherName}</td>
 
-                          {/* Notes (Test Scores, etc.) */}
                           <td className="p-3">
                             <textarea
-                              disabled={activeReport.locked}
+                              disabled={activeReportReadOnly}
                               rows={2}
                               value={student.notes || ''}
                               onChange={e => {
                                 const next = [...activeReport.studentReports];
-                                next[idx].notes = e.target.value;
+                                next[idx] = { ...next[idx], notes: e.target.value };
                                 setActiveReport({ ...activeReport, studentReports: next });
                               }}
-                              placeholder="Điểm thi Speaking, Written..."
-                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-red-600 focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                              placeholder="Ghi chú thêm..."
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-red-600 disabled:bg-slate-100"
                             />
                           </td>
                         </tr>
@@ -1215,23 +1381,21 @@ export const LessonReportsView: React.FC = () => {
                 </table>
               </div>
 
-              {/* Bottom Submit/Save Actions */}
-              {!activeReport.locked && (
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
+              {!activeReportReadOnly && (
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
                   <button
                     onClick={handleSaveActiveReport}
-                    className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-2"
+                    className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center gap-2"
                   >
                     <Save className="w-4 h-4" />
                     <span>Lưu bản nháp</span>
                   </button>
-
                   <button
                     onClick={handleSubmitActiveReport}
-                    className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                    className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-2"
                   >
                     <Send className="w-4 h-4" />
-                    <span>Nộp báo cáo chính thức</span>
+                    <span>Nộp báo cáo</span>
                   </button>
                 </div>
               )}
@@ -1241,21 +1405,13 @@ export const LessonReportsView: React.FC = () => {
       )}
 
       {/* ========================================================
-          MODAL: ADD MAKE-UP CLASS (BỔ SUNG LỚP HỌC BÙ)
+          MODAL: ADD MAKE-UP CLASS
          ======================================================== */}
       {showMakeupModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-red-50 text-red-600 rounded-xl">
-                  <Plus className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-800">Bổ sung lớp học bù (Make-up Class)</h3>
-                  <p className="text-xs text-slate-400">Tạo buổi học bù ngoài thời khóa biểu cố định</p>
-                </div>
-              </div>
+              <h3 className="text-base font-bold text-slate-800">Bổ sung lớp học bù</h3>
               <button
                 onClick={() => setShowMakeupModal(false)}
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
@@ -1265,15 +1421,12 @@ export const LessonReportsView: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateMakeup} className="space-y-3.5 text-xs">
-              {/* Select Class */}
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Chọn lớp học bù <span className="text-red-500">*</span>
-                </label>
+                <label className="block font-semibold text-slate-700 mb-1">Chọn lớp</label>
                 <select
                   value={makeupForm.classId}
                   onChange={e => {
-                    const c = (data?.classes || []).find((cls: any) => cls.id === e.target.value);
+                    const c = (data?.classes || []).find(cls => cls.id === e.target.value);
                     setMakeupForm({
                       ...makeupForm,
                       classId: e.target.value,
@@ -1284,20 +1437,17 @@ export const LessonReportsView: React.FC = () => {
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold"
                   required
                 >
-                  {(data?.classes || []).map((c: any) => (
+                  {(data?.classes || []).map(c => (
                     <option key={c.id} value={c.id}>
-                      {c.name} ({c.code || c.id})
+                      {c.name}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* Date & Time */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Ngày học bù <span className="text-red-500">*</span>
-                  </label>
+                  <label className="block font-semibold text-slate-700 mb-1">Ngày học bù</label>
                   <input
                     type="date"
                     value={makeupForm.date}
@@ -1313,35 +1463,21 @@ export const LessonReportsView: React.FC = () => {
                     value={makeupForm.time}
                     onChange={e => setMakeupForm({ ...makeupForm, time: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
-                    placeholder="18:00 - 19:30"
                   />
                 </div>
               </div>
 
-              {/* Classroom */}
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Phòng học</label>
-                <input
-                  type="text"
-                  value={makeupForm.classroom}
-                  onChange={e => setMakeupForm({ ...makeupForm, classroom: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
-                  placeholder="Phòng 101 - Smart Room"
-                />
-              </div>
-
-              {/* Teacher & TA */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Giáo viên phụ trách</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Giáo viên</label>
                   <select
                     value={makeupForm.teacherId}
                     onChange={e => setMakeupForm({ ...makeupForm, teacherId: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
                   >
-                    {(data?.teachers || []).map((t: any) => (
+                    {(data?.teachers || []).map(t => (
                       <option key={t.id} value={t.id}>
-                        {t.vietnameseName || t.fullName}
+                        {t.fullName}
                       </option>
                     ))}
                   </select>
@@ -1354,7 +1490,7 @@ export const LessonReportsView: React.FC = () => {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
                   >
                     <option value="">Không có</option>
-                    {(data?.teachingAssistants || []).map((ta: any) => (
+                    {(data?.teachingAssistants || []).map(ta => (
                       <option key={ta.id} value={ta.id}>
                         {ta.fullName}
                       </option>
@@ -1363,42 +1499,17 @@ export const LessonReportsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Lesson Progress */}
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Tiến độ bài học dự kiến</label>
-                <input
-                  type="text"
-                  value={makeupForm.lessonProgress}
-                  onChange={e => setMakeupForm({ ...makeupForm, lessonProgress: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-blue-700"
-                  placeholder="Unit 2 – Lesson 2"
-                />
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Ghi chú lý do học bù</label>
-                <input
-                  type="text"
-                  value={makeupForm.notes}
-                  onChange={e => setMakeupForm({ ...makeupForm, notes: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
-                  placeholder="Lớp học bù buổi nghỉ lễ, thời tiết..."
-                />
-              </div>
-
-              {/* Buttons */}
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setShowMakeupModal(false)}
                   className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium"
                 >
-                  Hủy bỏ
+                  Hủy
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-xs"
+                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold"
                 >
                   Tạo lớp học bù
                 </button>
