@@ -123,6 +123,7 @@ interface DataContextType {
   updateSettings: (settings: Partial<CenterSettings>) => void;
   resetAllData: () => void;
   addActivityLog: (action: string, details: string) => void;
+  refreshData: () => void;
 
   // Lesson Reports
   getLessonReportsForDate?: (date: string) => LessonReport[];
@@ -158,9 +159,34 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [data, setData] = useState<AppDataStore>(() => loadInitialStorage());
   const { currentUser, hasPermission } = useAuth();
 
+  const refreshData = () => {
+    try {
+      const latest = loadInitialStorage();
+      setData(latest);
+    } catch (e) {
+      console.error('Failed to reload storage data:', e);
+    }
+  };
+
   useEffect(() => {
     saveStorage(data);
   }, [data]);
+
+  // Synchronize data in real-time across tabs/windows when storage changes
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'leego_center_storage_v1' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          setData(parsed);
+        } catch (err) {
+          console.error('Failed to parse cross-tab storage change:', err);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   const addActivityLog = (action: string, details: string) => {
     const newLog: ActivityLog = {
@@ -1164,11 +1190,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const cls = classes.find(c => c.id === s.classId);
         if (cls && cls.status === 'cancelled') return;
         const reportId = `LR-${s.classId}-${date}`;
-        const existing = storedReports.find(r => r.id === reportId || (r.classId === s.classId && r.teachingDate === date && r.sessionType !== 'makeup'));
+        const existing = storedReports.find(
+          r => r.id === reportId || (r.classId === s.classId && r.teachingDate === date && r.sessionType !== 'makeup')
+        );
         const teacher = teachers.find(t => t.id === (s.teacherId || cls?.teacherId));
         const ta = assistants.find(a => a.id === (s.assistantId || cls?.assistantTeacherId));
         const base: LessonReport = existing
-          ? { ...existing }
+          ? { ...existing, id: reportId }
           : {
               id: reportId,
               classId: s.classId,
@@ -1190,7 +1218,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
               studentReports: []
             };
         const entries = buildStudentEntriesForClass(s.classId, base.studentReports);
-        reportsByKey.set(base.id, computeReportMetrics(base, entries));
+        reportsByKey.set(reportId, computeReportMetrics(base, entries));
       });
 
     // 2. Classes scheduled via weeklySchedule or legacy scheduleDays (if not already in timetable)
@@ -1217,7 +1245,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         : legacySlot?.timeRange || cls.scheduleTime || '';
 
       const base: LessonReport = existing
-        ? { ...existing }
+        ? { ...existing, id: reportId }
         : {
             id: reportId,
             classId: cls.id,
@@ -1239,7 +1267,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             studentReports: []
           };
       const entries = buildStudentEntriesForClass(cls.id, base.studentReports);
-      reportsByKey.set(base.id, computeReportMetrics(base, entries));
+      reportsByKey.set(reportId, computeReportMetrics(base, entries));
     });
 
     // 3. Make-up sessions for this date
@@ -1249,7 +1277,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const reportId = `LR-MAKEUP-${m.id}`;
         const existing = storedReports.find(r => r.id === reportId);
         const base: LessonReport = existing
-          ? { ...existing }
+          ? { ...existing, id: reportId }
           : {
               id: reportId,
               classId: m.classId,
@@ -1271,19 +1299,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
               studentReports: []
             };
         const entries = buildStudentEntriesForClass(m.classId, base.studentReports);
-        reportsByKey.set(base.id, computeReportMetrics(base, entries));
+        reportsByKey.set(reportId, computeReportMetrics(base, entries));
       });
 
     return Array.from(reportsByKey.values());
   };
 
   const saveLessonReport = (report: LessonReport) => {
-    const expired = isReportExpired(report) && !report.unlockedAfterExpiration;
-    if (currentUser.role === 'teacher' && (report.locked || expired)) {
+    // 1. Authoritative Lock & Expiration check from persistent state
+    const prevReports = Array.isArray(data.lessonReports) ? data.lessonReports : [];
+    const currentStored = prevReports.find(
+      r => r.id === report.id || (r.classId === report.classId && r.teachingDate === report.teachingDate && r.sessionType === report.sessionType)
+    );
+
+    const isCurrentlyLocked = currentStored ? Boolean(currentStored.locked) : Boolean(report.locked);
+    const isUnlockedAfterExp = currentStored ? Boolean(currentStored.unlockedAfterExpiration) : Boolean(report.unlockedAfterExpiration);
+    const originalDeadline = currentStored?.deadlineAt || report.deadlineAt || computeReportDeadlineISO(report.teachingDate);
+    const expired = isReportExpired({ teachingDate: report.teachingDate, deadlineAt: originalDeadline }) && !isUnlockedAfterExp;
+
+    if (currentUser.role === 'teacher' && (isCurrentlyLocked || expired)) {
       return {
         success: false,
-        error: report.locked
-          ? 'Báo cáo đã bị khóa bởi Quản lý học thuật.'
+        error: isCurrentlyLocked
+          ? 'Báo cáo đã được khóa. Bạn không thể chỉnh sửa báo cáo này.'
           : 'Báo cáo đã quá hạn chỉnh sửa (17:00 ngày hôm sau).'
       };
     }
@@ -1293,9 +1331,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...entry,
       completed: isStudentReportEntryComplete(entry)
     }));
+
+    const canonicalId = report.id || `LR-${report.classId}-${report.teachingDate}`;
     const updatedReport = computeReportMetrics(
       {
         ...report,
+        id: canonicalId,
+        locked: isCurrentlyLocked,
+        lockedAt: currentStored?.lockedAt || report.lockedAt,
+        lockedBy: currentStored?.lockedBy || report.lockedBy,
+        unlockedAfterExpiration: isUnlockedAfterExp,
+        submittedAt: currentStored?.submittedAt || report.submittedAt,
+        submittedBy: currentStored?.submittedBy || report.submittedBy,
         lastEditedById: currentUser.id,
         lastEditedByUsername: currentUser.email,
         lastEditedByName: currentUser.name,
@@ -1305,16 +1352,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     setData(prev => {
-      const prevReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
-      const exists = prevReports.some(r => r.id === updatedReport.id);
+      const pReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
+      const exists = pReports.some(
+        r => r.id === updatedReport.id || (r.classId === updatedReport.classId && r.teachingDate === updatedReport.teachingDate && r.sessionType === updatedReport.sessionType)
+      );
       const nextReports = exists
-        ? prevReports.map(r => (r.id === updatedReport.id ? updatedReport : r))
-        : [updatedReport, ...prevReports];
+        ? pReports.map(r =>
+            r.id === updatedReport.id || (r.classId === updatedReport.classId && r.teachingDate === updatedReport.teachingDate && r.sessionType === updatedReport.sessionType)
+              ? updatedReport
+              : r
+          )
+        : [updatedReport, ...pReports];
 
-      return {
+      const nextData = {
         ...prev,
         lessonReports: nextReports
       };
+      saveStorage(nextData);
+      return nextData;
     });
 
     addActivityLog('Lưu báo cáo học tập', `Đã lưu Lesson Report lớp ${updatedReport.className} ngày ${updatedReport.teachingDate}`);
@@ -1323,19 +1378,31 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const submitLessonReport = (reportIdOrReport: string | LessonReport) => {
     const targetId = typeof reportIdOrReport === 'string' ? reportIdOrReport : reportIdOrReport.id;
-    const stored = (data.lessonReports || []).find(r => r.id === targetId);
-    const baseReport = typeof reportIdOrReport === 'string' ? stored : reportIdOrReport;
+    const prevReports = Array.isArray(data.lessonReports) ? data.lessonReports : [];
+    const currentStored = prevReports.find(
+      r =>
+        r.id === targetId ||
+        (typeof reportIdOrReport !== 'string' &&
+          r.classId === reportIdOrReport.classId &&
+          r.teachingDate === reportIdOrReport.teachingDate &&
+          r.sessionType === reportIdOrReport.sessionType)
+    );
+    const baseReport = typeof reportIdOrReport === 'string' ? currentStored : reportIdOrReport;
 
     if (!baseReport) {
       return { success: false, error: 'Không tìm thấy báo cáo để nộp.' };
     }
 
-    const expired = isReportExpired(baseReport) && !baseReport.unlockedAfterExpiration;
-    if (currentUser.role === 'teacher' && (baseReport.locked || expired)) {
+    const isCurrentlyLocked = currentStored ? Boolean(currentStored.locked) : Boolean(baseReport.locked);
+    const isUnlockedAfterExp = currentStored ? Boolean(currentStored.unlockedAfterExpiration) : Boolean(baseReport.unlockedAfterExpiration);
+    const originalDeadline = currentStored?.deadlineAt || baseReport.deadlineAt || computeReportDeadlineISO(baseReport.teachingDate);
+    const expired = isReportExpired({ teachingDate: baseReport.teachingDate, deadlineAt: originalDeadline }) && !isUnlockedAfterExp;
+
+    if (currentUser.role === 'teacher' && (isCurrentlyLocked || expired)) {
       return {
         success: false,
-        error: baseReport.locked
-          ? 'Báo cáo đã bị khóa.'
+        error: isCurrentlyLocked
+          ? 'Báo cáo đã được khóa. Bạn không thể chỉnh sửa báo cáo này.'
           : 'Báo cáo đã quá hạn nộp (17:00 ngày hôm sau).'
       };
     }
@@ -1354,9 +1421,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const nowFormatted = getVietnamNowFormatted();
+    const canonicalId = baseReport.id || `LR-${baseReport.classId}-${baseReport.teachingDate}`;
     const submittedReport = computeReportMetrics(
       {
         ...baseReport,
+        id: canonicalId,
+        locked: isCurrentlyLocked,
+        lockedAt: currentStored?.lockedAt || baseReport.lockedAt,
+        lockedBy: currentStored?.lockedBy || baseReport.lockedBy,
+        unlockedAfterExpiration: isUnlockedAfterExp,
         submittedAt: nowFormatted,
         submittedBy: currentUser.name,
         lastEditedById: currentUser.id,
@@ -1369,22 +1442,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     setData(prev => {
-      const prevReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
-      const exists = prevReports.some(r => r.id === submittedReport.id);
+      const pReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
+      const exists = pReports.some(
+        r => r.id === submittedReport.id || (r.classId === submittedReport.classId && r.teachingDate === submittedReport.teachingDate && r.sessionType === submittedReport.sessionType)
+      );
       const nextReports = exists
-        ? prevReports.map(r => (r.id === submittedReport.id ? submittedReport : r))
-        : [submittedReport, ...prevReports];
+        ? pReports.map(r =>
+            r.id === submittedReport.id || (r.classId === submittedReport.classId && r.teachingDate === submittedReport.teachingDate && r.sessionType === submittedReport.sessionType)
+              ? submittedReport
+              : r
+          )
+        : [submittedReport, ...pReports];
 
       const prevIncomplete = Array.isArray(prev.incompleteReports) ? prev.incompleteReports : [];
       const nextIncomplete = prevIncomplete.map(inc =>
         inc.reportId === submittedReport.id ? { ...inc, status: 'resolved' as const } : inc
       );
 
-      return {
+      const nextData = {
         ...prev,
         lessonReports: nextReports,
         incompleteReports: nextIncomplete
       };
+      saveStorage(nextData);
+      return nextData;
     });
 
     addActivityLog('Nộp Lesson Report', `Đã nộp báo cáo lớp ${submittedReport.className} ngày ${submittedReport.teachingDate}`);
@@ -1401,7 +1482,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: 'Chỉ Admin hoặc Quản lý học thuật mới có quyền khóa/mở khóa báo cáo.' };
     }
 
-    const existing = (data.lessonReports || []).find(r => r.id === reportId) || reportSnapshot;
+    const prevReports = Array.isArray(data.lessonReports) ? data.lessonReports : [];
+    const existing = prevReports.find(r => r.id === reportId) || reportSnapshot;
     if (!existing) {
       return { success: false, error: 'Không tìm thấy báo cáo.' };
     }
@@ -1437,11 +1519,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setData(prev => {
-      const prevReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
-      const exists = prevReports.some(r => r.id === updatedReport.id);
+      const pReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
+      const exists = pReports.some(
+        r => r.id === updatedReport.id || (r.classId === updatedReport.classId && r.teachingDate === updatedReport.teachingDate && r.sessionType === updatedReport.sessionType)
+      );
       const nextReports = exists
-        ? prevReports.map(r => (r.id === updatedReport.id ? updatedReport : r))
-        : [updatedReport, ...prevReports];
+        ? pReports.map(r =>
+            r.id === updatedReport.id || (r.classId === updatedReport.classId && r.teachingDate === updatedReport.teachingDate && r.sessionType === updatedReport.sessionType)
+              ? updatedReport
+              : r
+          )
+        : [updatedReport, ...pReports];
 
       const prevAudits = Array.isArray(prev.lessonReportLockAudits) ? prev.lessonReportLockAudits : [];
       const nextAudits = [auditEntry, ...prevAudits];
@@ -1476,12 +1564,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      return {
+      const nextData = {
         ...prev,
         lessonReports: nextReports,
         lessonReportLockAudits: nextAudits,
         incompleteReports: nextIncomplete
       };
+      saveStorage(nextData);
+      return nextData;
     });
 
     addActivityLog(
@@ -1587,6 +1677,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateSettings,
         resetAllData,
         addActivityLog,
+        refreshData,
         getLessonReportsForDate,
         saveLessonReport,
         submitLessonReport,
