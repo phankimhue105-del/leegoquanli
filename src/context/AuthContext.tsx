@@ -1,162 +1,96 @@
-import React, { createContext, useContext, useState } from 'react';
-import { Teacher, User, UserRole } from '../types';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { User, UserRole } from '../types';
 import { initialUsers } from '../data/initialData';
-import {
-  clearUserSession,
-  getStoredUserSession,
-  normalizeUserRole as normalizeAuthRole,
-  saveUserSession
-} from '../services/authService';
-
-export interface AppsScriptAuthUser {
-  userId?: string;
-  id?: string;
-  username?: string;
-  fullName?: string;
-  name?: string;
-  email?: string;
-  role: string;
-  status?: string;
-  teacherId?: string;
-  permissions?: string[];
-  assignedClasses?: string[];
-  phone?: string;
-  avatar?: string;
-  lastLogin?: string;
-  createdAt?: string;
-}
 
 interface AuthContextType {
   currentUser: User;
   isAuthenticated: boolean;
-  isLoading: boolean;
-  switchUser: (userId: string, usersList?: User[]) => void;
+  switchUser: (userId: string) => void;
   switchRoleQuick: (role: UserRole) => void;
   hasPermission: (permission: string) => boolean;
   canAccessClass: (classId: string, assignedClassIds?: string[]) => boolean;
   canAccessTeacher: (teacherId: string) => boolean;
-  resolveTeacherProfile: (teachers: Teacher[]) => Teacher | null;
   logout: () => void;
-  loginAs: (user: User | AppsScriptAuthUser, rememberMe?: boolean) => void;
+  loginAs: (user: User) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const REMEMBER_ME_KEY = 'leego_remember_me_v1';
-
-// Inactive placeholder used only to satisfy non-null User typing while unauthenticated;
-// App.tsx gates on !isAuthenticated and renders LoginPage whenever userState is null.
-const UNAUTHENTICATED_PLACEHOLDER: User = {
-  id: '',
-  name: '',
-  email: '',
-  role: 'teacher',
-  status: 'inactive',
-  createdAt: ''
-};
-
-function sanitizeAuthUser(rawUser: User | AppsScriptAuthUser): User {
-  const role = normalizeAuthRole(rawUser.role);
-  const teacherId = role === 'teacher' ? String(rawUser.teacherId || '').trim() || undefined : undefined;
-  const status = String(rawUser.status || 'active').trim().toLowerCase() === 'inactive' ? 'inactive' : 'active';
-  const id = String(rawUser.id || (rawUser as AppsScriptAuthUser).userId || '').trim();
-
-  return {
-    id: id || `USR-${Date.now()}`,
-    username: rawUser.username ? String(rawUser.username).trim() : undefined,
-    name: String(rawUser.name || (rawUser as AppsScriptAuthUser).fullName || rawUser.username || '').trim() || 'User',
-    email: rawUser.email ? String(rawUser.email).trim() : '',
-    role,
-    ...(rawUser.avatar ? { avatar: rawUser.avatar } : {}),
-    ...(rawUser.phone ? { phone: rawUser.phone } : {}),
-    ...(teacherId ? { teacherId } : {}),
-    ...(Array.isArray(rawUser.permissions) ? { permissions: rawUser.permissions } : {}),
-    ...(Array.isArray(rawUser.assignedClasses) ? { assignedClasses: rawUser.assignedClasses } : {}),
-    status,
-    ...(rawUser.lastLogin ? { lastLogin: rawUser.lastLogin } : {}),
-    createdAt: rawUser.createdAt || new Date().toISOString().slice(0, 10)
-  };
-}
-
-export function findTeacherForUser(user: User | null, teachers: Teacher[]): Teacher | null {
-  if (!user || user.role !== 'teacher') return null;
-
-  const linkedTeacherId = String(user.teacherId || '').trim();
-  if (linkedTeacherId) {
-    return teachers.find(t => t.id === linkedTeacherId) || null;
-  }
-
-  // Legacy fallback only when email is explicitly present
-  const userEmail = String(user.email || '').trim().toLowerCase();
-  if (userEmail) {
-    return teachers.find(t => t.email && t.email.trim().toLowerCase() === userEmail) || null;
-  }
-
-  return null;
-}
+const AUTH_USER_KEY = 'leego_auth_user_v1';
+const AUTH_STATUS_KEY = 'leego_auth_status_v1';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [userState, setUserState] = useState<User | null>(() => {
-    const stored = getStoredUserSession();
-    if (!stored || !stored.id) return null;
-    const sanitized = sanitizeAuthUser(stored);
-    return sanitized.status === 'active' && sanitized.id ? sanitized : null;
+  const [currentUser, setCurrentUser] = useState<User>(() => {
+    try {
+      const stored = localStorage.getItem(AUTH_USER_KEY);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    // Default to Admin
+    return initialUsers[0];
   });
 
-  const isLoading = false;
-  const isAuthenticated = Boolean(userState && userState.id && userState.status === 'active');
-  const currentUser: User = userState || UNAUTHENTICATED_PLACEHOLDER;
-
-  const getRememberPreference = (): boolean => {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(REMEMBER_ME_KEY) === 'true';
-    } catch {
-      return false;
+      const status = localStorage.getItem(AUTH_STATUS_KEY);
+      if (status !== null) {
+        return status === 'true';
+      }
+    } catch (e) {
+      console.error(e);
     }
-  };
+    return true;
+  });
 
-  const switchUser = (userId: string, usersList?: User[]) => {
-    const sourceUsers = usersList && usersList.length > 0 ? usersList : initialUsers;
-    const user = sourceUsers.find(u => u.id === userId) || initialUsers.find(u => u.id === userId);
-    if (user && user.status === 'active') {
-      const sanitized = sanitizeAuthUser(user);
-      saveUserSession(sanitized, getRememberPreference());
-      setUserState(sanitized);
+  useEffect(() => {
+    try {
+      if (currentUser) {
+        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(currentUser));
+      }
+      localStorage.setItem(AUTH_STATUS_KEY, isAuthenticated ? 'true' : 'false');
+    } catch (e) {
+      console.error(e);
+    }
+  }, [currentUser, isAuthenticated]);
+
+  const switchUser = (userId: string) => {
+    const user = initialUsers.find(u => u.id === userId);
+    if (user) {
+      setCurrentUser(user);
+      setIsAuthenticated(true);
     }
   };
 
   const switchRoleQuick = (role: UserRole) => {
     const targetUser = initialUsers.find(u => u.role === role);
-    if (targetUser && targetUser.status === 'active') {
-      const sanitized = sanitizeAuthUser(targetUser);
-      saveUserSession(sanitized, getRememberPreference());
-      setUserState(sanitized);
+    if (targetUser) {
+      setCurrentUser(targetUser);
+      setIsAuthenticated(true);
     }
   };
 
-  const loginAs = (user: User | AppsScriptAuthUser, rememberMe: boolean = true) => {
-    const sanitized = sanitizeAuthUser(user);
-    if (!sanitized.id || sanitized.status !== 'active') {
-      return;
-    }
-    saveUserSession(sanitized, rememberMe);
-    setUserState(sanitized);
+  const loginAs = (user: User) => {
+    setCurrentUser(user);
+    setIsAuthenticated(true);
   };
 
   const logout = () => {
-    clearUserSession();
-    setUserState(null);
+    try {
+      localStorage.removeItem(AUTH_STATUS_KEY);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsAuthenticated(false);
   };
 
   /**
    * RBAC Permission Matrix
    */
   const hasPermission = (permission: string): boolean => {
-    if (!userState || userState.status !== 'active') {
-      return false;
-    }
-
-    const role = userState.role;
+    const role = currentUser.role;
 
     if (role === 'admin') {
       return true; // Admin has full access to all system features
@@ -219,13 +153,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccessClass = (classId: string, assignedClassIds?: string[]): boolean => {
-    if (!userState || userState.status !== 'active') {
-      return false;
-    }
-    if (userState.role === 'admin' || userState.role === 'academic_manager') {
+    if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
       return true;
     }
-    if (userState.role === 'teacher') {
+    if (currentUser.role === 'teacher') {
       if (!assignedClassIds) return false;
       return assignedClassIds.includes(classId);
     }
@@ -233,20 +164,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccessTeacher = (teacherId: string): boolean => {
-    if (!userState || userState.status !== 'active') {
-      return false;
-    }
-    if (userState.role === 'admin' || userState.role === 'academic_manager') {
+    if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
       return true;
     }
-    if (userState.role === 'teacher') {
-      return Boolean(userState.teacherId) && userState.teacherId === teacherId;
+    if (currentUser.role === 'teacher') {
+      return currentUser.teacherId === teacherId;
     }
     return false;
-  };
-
-  const resolveTeacherProfile = (teachers: Teacher[]): Teacher | null => {
-    return findTeacherForUser(userState, teachers);
   };
 
   return (
@@ -254,13 +178,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         currentUser,
         isAuthenticated,
-        isLoading,
         switchUser,
         switchRoleQuick,
         hasPermission,
         canAccessClass,
         canAccessTeacher,
-        resolveTeacherProfile,
         logout,
         loginAs
       }}
