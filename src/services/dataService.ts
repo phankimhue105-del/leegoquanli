@@ -664,7 +664,7 @@ export async function exportLessonReportToWord(report: LessonReport) {
       'Tình hình làm BTVN',
       'Tình hình học bài cũ',
       'Nhận xét',
-      'Giáo viên',
+      'Giao BVN',
       'Ghi chú'
     ].map(
       text =>
@@ -742,11 +742,9 @@ export async function exportLessonReportToWord(report: LessonReport) {
           }),
           new TableCell({
             borders: cellBorders,
-            verticalAlign: VerticalAlign.CENTER,
             children: [
               new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [new TextRun({ text: report.teacherName || '—', size: 20, font: 'Times New Roman' })]
+                children: [new TextRun({ text: s.assignedHomework || '—', size: 20, font: 'Times New Roman' })]
               })
             ]
           }),
@@ -960,7 +958,7 @@ export function exportLessonReportToExcel(report: LessonReport) {
     'Tình hình làm BTVN': s.homeworkStatus || '',
     'Tình hình học bài cũ': s.previousLessonStatus || '',
     'Nhận xét': s.comments || '',
-    'Giáo viên': report.teacherName || '',
+    'Giao BVN': s.assignedHomework || '',
     'Ghi chú': s.notes || ''
   }));
   const worksheet = XLSX.utils.json_to_sheet(rows);
