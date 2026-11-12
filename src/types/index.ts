@@ -2,15 +2,12 @@ export type UserRole = 'admin' | 'academic_manager' | 'teacher';
 
 export interface User {
   id: string;
-  username?: string;
   name: string;
   email: string;
   role: UserRole;
   avatar?: string;
   phone?: string;
   teacherId?: string; // Links to teacher record if role is teacher
-  permissions?: string[];
-  assignedClasses?: string[];
   status: 'active' | 'inactive';
   lastLogin?: string;
   createdAt: string;
@@ -32,8 +29,6 @@ export interface Student {
   address: string;
   enrollmentDate: string;
   currentLevel: string; // Pre A1 Starters, A1 Movers, A2 Flyers, A2 KET, B1 PET, IELTS Foundation
-  entryTestResult?: string;
-  suitableClassId?: string; // Existing Class ID or 'Chờ lớp'
   classIds: string[];
   status: StudentStatus;
   notes: string;
@@ -54,14 +49,6 @@ export interface Parent {
 
 export type ClassStatus = 'upcoming' | 'ongoing' | 'completed' | 'cancelled';
 
-export interface ClassScheduleSlot {
-  dayOfWeek: number; // 1: Thứ 2 ... 7: Chủ Nhật
-  startTime: string; // "17:30"
-  endTime: string;   // "19:00"
-  teacherId?: string;
-  assistantTeacherId?: string;
-}
-
 export interface ClassItem {
   id: string; // e.g. CLS-STA-01
   name: string;
@@ -74,7 +61,6 @@ export interface ClassItem {
   classroom: string;
   scheduleDays: string; // e.g., "Thứ 2, Thứ 4"
   scheduleTime: string; // e.g., "17:30 - 19:00"
-  weeklySchedule?: ClassScheduleSlot[];
   startDate: string;
   endDate: string;
   maxCapacity: number;
@@ -293,3 +279,71 @@ export interface MonthlyTeachingSchedule {
   updatedBy: string;
   updatedAt: string;
 }
+
+export type HomeworkStatus = 'Đạt' | 'Chưa đạt' | 'Chưa hoàn thành' | 'Không giao BVN';
+export type PreviousLessonStatus = 'Đạt' | 'Chưa đạt' | 'Chưa thuộc bài' | 'Chưa chuẩn bị';
+
+export interface StudentLessonReportEntry {
+  studentId: string;
+  studentName: string;
+  homeworkStatus: HomeworkStatus;
+  previousLessonStatus: PreviousLessonStatus;
+  comments: string;
+  assignedHomework: string;
+  notes: string;
+  completed: boolean;
+}
+
+export interface LessonReport {
+  id: string;
+  classId: string;
+  className: string;
+  teachingDate: string;
+  scheduledTime: string;
+  classroom: string;
+  teacherId: string;
+  teacherName: string;
+  teachingAssistantName?: string;
+  lessonProgress: string;
+  sessionType: 'regular' | 'makeup';
+  status: 'not_started' | 'in_progress' | 'submitted' | 'completed';
+  totalStudents: number;
+  completedStudents: number;
+  completionPercentage: number;
+  locked: boolean;
+  lockedAt?: string;
+  lockedBy?: string;
+  studentReports: StudentLessonReportEntry[];
+}
+
+export interface IncompleteReportRecord {
+  id: string;
+  reportId: string;
+  classId: string;
+  className: string;
+  teachingDate: string;
+  teacherName: string;
+  completionPercentage: number;
+  incompleteStudentCount: number;
+  missingFields: string;
+  lockedAt: string;
+  lockedBy: string;
+  status: 'pending' | 'resolved';
+}
+
+export interface MakeupClassSession {
+  id: string;
+  classId: string;
+  className: string;
+  date: string;
+  time: string;
+  classroom: string;
+  teacherId: string;
+  teacherName: string;
+  assistantId?: string;
+  assistantName?: string;
+  lessonProgress: string;
+  notes?: string;
+}
+
+
