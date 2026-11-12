@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   Bell,
   Search,
@@ -9,12 +9,9 @@ import {
   RotateCcw,
   CheckCircle2,
   Database,
+  ExternalLink,
   Menu,
-  Clock,
-  LogOut,
-  RefreshCw,
-  AlertTriangle,
-  UploadCloud
+  Clock
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
@@ -36,37 +33,13 @@ export const Header: React.FC<HeaderProps> = ({
   searchQuery,
   setSearchQuery
 }) => {
-  const { currentUser, logout } = useAuth();
-  const {
-    data,
-    resetAllData,
-    syncStatus,
-    syncError,
-    lastSyncedAt,
-    cloudVersion,
-    pendingSyncCount,
-    unsyncedLocalCount,
-    syncNow,
-    retryPendingSync,
-    mergeUnsyncedLocalData,
-    forcePushLocalToCloud
-  } = useData();
+  const { currentUser, switchUser } = useAuth();
+  const { data, resetAllData } = useData();
   const { showToast } = useToast();
 
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [showActivityDrawer, setShowActivityDrawer] = useState(false);
   const [showFirebaseModal, setShowFirebaseModal] = useState(false);
-  const [isManualSyncing, setIsManualSyncing] = useState(false);
-  const lastNotifiedErrorRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (syncError && syncError !== lastNotifiedErrorRef.current) {
-      lastNotifiedErrorRef.current = syncError;
-      showToast(syncError, 'error');
-    } else if (!syncError) {
-      lastNotifiedErrorRef.current = null;
-    }
-  }, [syncError, showToast]);
 
   const tabTitles: Record<NavigationTab, { title: string; subtitle: string }> = {
     dashboard: { title: 'Bảng Điều Khiển (Dashboard)', subtitle: 'Tổng quan vận hành và thống kê trung tâm LeeGo' },
@@ -74,24 +47,23 @@ export const Header: React.FC<HeaderProps> = ({
     parents: { title: 'Quản Lý Phụ Huynh (Parents)', subtitle: 'Thông tin liên hệ, học sinh phụ thuộc và lịch sử trao đổi' },
     classes: { title: 'Quản Lý Lớp Học (Classes)', subtitle: 'Danh sách lớp, phân công giáo viên và phòng học' },
     teaching_schedule: { title: 'Lịch Giảng Dạy (Teaching Schedule)', subtitle: 'Kế hoạch giảng dạy hàng tháng, nội dung buổi dạy và xuất văn bản Word/Excel' },
-    course_duration: { title: 'Quản Lý Thời Gian Khóa Học (Course Duration)', subtitle: 'Theo dõi tiến độ, hạn hoàn thành, ngày nghỉ lễ và học bù' },
     programs: { title: 'Chương Trình Học (Curricula)', subtitle: 'Khung Cambridge Starters, Movers, Flyers, KET, PET' },
     teachers: { title: 'Quản Lý Giáo Viên (Teachers)', subtitle: 'Đội ngũ giáo viên bản ngữ & Việt Nam, tải giờ giảng dạy' },
     assistants: { title: 'Quản Lý Trợ Giảng (Assistants)', subtitle: 'Đội ngũ trợ giảng hỗ trợ lớp học và sửa bài tập' },
     timetable: { title: 'Thời Khóa Biểu (Timetable)', subtitle: 'Lịch học hàng tuần và tự động phát hiện xung đột lịch' },
     attendance: { title: 'Điểm Danh Lớp Học (Attendance)', subtitle: 'Ghi nhận chuyên cần, đi muộn, có phép và vắng mặt' },
-    lesson_reports: { title: 'Báo Cáo Tình Hình Học Tập (Lesson Report)', subtitle: 'Đánh giá sau buổi học, khóa sổ và xuất báo cáo phụ huynh' },
     assessments: { title: 'Đánh Giá Học Tập (Assessments)', subtitle: 'Bảng điểm 4 kỹ năng Cambridge, nhận xét và xếp loại' },
     lesson_plans: { title: 'Giáo Án & Báo Cáo Buổi Dạy', subtitle: 'Nộp báo cáo bài giảng và quản lý học thuật phê duyệt' },
+    lesson_reports: { title: 'Báo Cáo Tình Hình Học Tập (Lesson Report)', subtitle: 'Quản lý báo cáo sau buổi học, đánh giá học viên, khóa sổ và xuất báo cáo gửi phụ huynh' },
     reports: { title: 'Báo Cáo Học Thuật (Academic Reports)', subtitle: 'Thống kê tuyển sinh, chuyên cần, giờ dạy và xuất Excel' },
     users: { title: 'Quản Lý Người Dùng & Phân Quyền', subtitle: 'Tài khoản hệ thống và thiết lập quyền truy cập (Admin)' },
     settings: { title: 'Cài Đặt Hệ Thống (Settings)', subtitle: 'Năm học, phòng học, kết nối database và dữ liệu mẫu' }
   };
 
-  const handleLogout = () => {
+  const handleRoleChange = (userId: string) => {
+    switchUser(userId);
     setShowRoleMenu(false);
-    logout();
-    showToast('Đã đăng xuất khỏi hệ thống', 'info');
+    showToast(`Đã chuyển sang tài khoản: ${data.users.find(u => u.id === userId)?.name}`, 'info');
   };
 
   const handleResetData = () => {
@@ -100,65 +72,6 @@ export const Header: React.FC<HeaderProps> = ({
       showToast('Đã khôi phục dữ liệu mẫu thành công!', 'success');
     }
   };
-
-  const handleManualSync = async () => {
-    setIsManualSyncing(true);
-    try {
-      const ok = await syncNow();
-      if (ok) {
-        showToast('Đã đồng bộ dữ liệu mới nhất từ Google Sheets!', 'success');
-      } else {
-        showToast('Đồng bộ chưa thành công. Vui lòng kiểm tra trạng thái kết nối.', 'error');
-      }
-    } finally {
-      setIsManualSyncing(false);
-    }
-  };
-
-  const handleRetryPending = async () => {
-    setIsManualSyncing(true);
-    try {
-      const ok = await retryPendingSync();
-      if (ok) {
-        showToast('Đã đẩy toàn bộ thay đổi lên Google Sheets thành công!', 'success');
-      }
-    } finally {
-      setIsManualSyncing(false);
-    }
-  };
-
-  const handleMergeLocal = async () => {
-    setIsManualSyncing(true);
-    try {
-      const ok = await mergeUnsyncedLocalData();
-      if (ok) {
-        showToast('Đã gộp dữ liệu cục bộ lên Google Sheets an toàn!', 'success');
-      }
-    } finally {
-      setIsManualSyncing(false);
-    }
-  };
-
-  const handleForcePushLocal = async () => {
-    if (
-      !window.confirm(
-        'Thao tác này sẽ ghi đè dữ liệu trên Google Sheets bằng toàn bộ dữ liệu hiện tại trên máy bạn. Chỉ sử dụng khi muốn khôi phục từ máy này. Bạn có chắc chắn?'
-      )
-    ) {
-      return;
-    }
-    setIsManualSyncing(true);
-    try {
-      const ok = await forcePushLocalToCloud();
-      if (ok) {
-        showToast('Đã đẩy toàn bộ dữ liệu hiện tại lên Google Sheets!', 'success');
-      }
-    } finally {
-      setIsManualSyncing(false);
-    }
-  };
-
-  const isBusy = isManualSyncing || syncStatus === 'syncing' || syncStatus === 'saving';
 
   return (
     <>
@@ -195,53 +108,14 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
 
-          {/* Shared Cloud Sync Status Indicator */}
+          {/* Database Mode Indicator */}
           <button
             onClick={() => setShowFirebaseModal(true)}
-            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-              syncStatus === 'error'
-                ? 'bg-red-50 text-red-800 border-red-200 hover:bg-red-100'
-                : isBusy
-                ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-            }`}
-            title="Xem trạng thái đồng bộ dữ liệu dùng chung (Google Sheets)"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium hover:bg-emerald-100 transition-colors"
+            title="Xem trạng thái lưu trữ & kết nối Firestore"
           >
-            {syncStatus === 'error' ? (
-              <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-            ) : isBusy ? (
-              <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-            ) : (
-              <Database className="w-3.5 h-3.5 text-emerald-600" />
-            )}
-            <span>
-              {syncStatus === 'error'
-                ? pendingSyncCount > 0
-                  ? `Chờ đồng bộ (${pendingSyncCount})`
-                  : 'Lỗi đồng bộ'
-                : syncStatus === 'saving'
-                ? 'Đang lưu Cloud...'
-                : isBusy
-                ? 'Đang đồng bộ...'
-                : cloudVersion > 0
-                ? `Cloud Sync v${cloudVersion}`
-                : 'Cloud Sync'}
-            </span>
-            {unsyncedLocalCount > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
-                +{unsyncedLocalCount}
-              </span>
-            )}
-          </button>
-
-          {/* Quick Refresh Button */}
-          <button
-            onClick={handleManualSync}
-            disabled={isBusy}
-            className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
-            title="Đồng bộ dữ liệu mới nhất từ Google Sheets"
-          >
-            <RefreshCw className={`w-4 h-4 ${isBusy ? 'animate-spin text-amber-600' : ''}`} />
+            <Database className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Local Sync</span>
           </button>
 
           {/* Activity Logs Notification Bell */}
@@ -258,14 +132,14 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          {/* USER PROFILE DROPDOWN */}
+          {/* ROLE SWITCHER DROPDOWN */}
           <div className="relative">
             <button
               onClick={() => setShowRoleMenu(!showRoleMenu)}
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 transition-all text-xs font-semibold"
             >
               <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold bg-red-600">
-                {(currentUser.name || 'U').charAt(0)}
+                {currentUser.name.charAt(0)}
               </div>
               <div className="text-left hidden md:block">
                 <div className="text-xs font-bold leading-tight truncate max-w-[140px] text-slate-900">
@@ -284,57 +158,65 @@ export const Header: React.FC<HeaderProps> = ({
 
             {showRoleMenu && (
               <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
-                <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-3">
-                  <div
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
-                      currentUser.role === 'admin'
-                        ? 'bg-amber-100 text-amber-800'
-                        : currentUser.role === 'academic_manager'
-                        ? 'bg-blue-100 text-blue-800'
-                        : 'bg-emerald-100 text-emerald-800'
-                    }`}
-                  >
-                    {currentUser.role === 'admin' ? (
-                      <Shield className="w-4 h-4" />
-                    ) : currentUser.role === 'academic_manager' ? (
-                      <Briefcase className="w-4 h-4" />
-                    ) : (
-                      <GraduationCap className="w-4 h-4" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-bold text-slate-900 text-xs truncate">{currentUser.name}</div>
-                    <div className="text-[11px] text-slate-500 truncate">
-                      {currentUser.username || currentUser.email || currentUser.id}
-                      {currentUser.role === 'teacher' && currentUser.teacherId
-                        ? ` • ${currentUser.teacherId}`
-                        : ''}
-                    </div>
-                  </div>
+                <div className="px-4 py-2 border-b border-slate-100">
+                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    Chuyển tài khoản & Phân quyền
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Thử nghiệm hệ thống với các vai trò thực tế:
+                  </p>
                 </div>
 
-                {currentUser.role === 'admin' && (
-                  <div className="pt-1 px-1">
-                    <button
-                      onClick={() => {
-                        setShowRoleMenu(false);
-                        handleResetData();
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      <span>Khôi phục dữ liệu mẫu ban đầu</span>
-                    </button>
-                  </div>
-                )}
+                <div className="p-1 space-y-1">
+                  {data.users.map(u => {
+                    const isSelected = currentUser.id === u.id;
+                    return (
+                      <button
+                        key={u.id}
+                        onClick={() => handleRoleChange(u.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left text-xs transition-colors ${
+                          isSelected ? 'bg-red-50 text-red-700 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${
+                              u.role === 'admin'
+                                ? 'bg-amber-100 text-amber-800'
+                                : u.role === 'academic_manager'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {u.role === 'admin' ? (
+                              <Shield className="w-3.5 h-3.5" />
+                            ) : u.role === 'academic_manager' ? (
+                              <Briefcase className="w-3.5 h-3.5" />
+                            ) : (
+                              <GraduationCap className="w-3.5 h-3.5" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-slate-900">{u.name}</div>
+                            <div className="text-[11px] text-slate-500">{u.email}</div>
+                          </div>
+                        </div>
+                        {isSelected && <CheckCircle2 className="w-4 h-4 text-red-600" />}
+                      </button>
+                    );
+                  })}
+                </div>
 
                 <div className="border-t border-slate-100 mt-1 pt-1 px-1">
                   <button
-                    onClick={handleLogout}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-600 hover:bg-red-50 rounded-lg transition-colors font-bold"
+                    onClick={() => {
+                      setShowRoleMenu(false);
+                      handleResetData();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
                   >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Đăng xuất</span>
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Khôi phục dữ liệu mẫu ban đầu</span>
                   </button>
                 </div>
               </div>
@@ -382,7 +264,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       )}
 
-      {/* Shared Cloud Sync Details Modal */}
+      {/* Firebase / Storage Info Modal */}
       {showFirebaseModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
@@ -391,99 +273,40 @@ export const Header: React.FC<HeaderProps> = ({
           />
           <div className="relative bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl z-10 border border-slate-200">
             <div className="flex items-center gap-3 mb-4">
-              <div
-                className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                  syncStatus === 'error'
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-emerald-100 text-emerald-700'
-                }`}
-              >
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
                 <Database className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-900 text-base">Đồng bộ dữ liệu dùng chung (Google Sheets)</h3>
-                <p className="text-xs text-slate-500">
-                  Phiên bản Cloud: v{cloudVersion} {lastSyncedAt ? `• Đồng bộ lúc ${lastSyncedAt}` : ''}
-                </p>
+                <h3 className="font-bold text-slate-900 text-base">Cơ chế lưu trữ & Sẵn sàng Firebase</h3>
+                <p className="text-xs text-slate-500">LeeGo English Center Data Architecture</p>
               </div>
             </div>
 
             <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="font-bold text-slate-800 mb-1 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Nguồn dữ liệu trung tâm dùng chung</span>
-                </div>
+                <div className="font-bold text-slate-800 mb-1">Hiện trạng dữ liệu:</div>
                 <p>
-                  Toàn bộ dữ liệu Học sinh, Lớp học, Giáo viên, Thời khóa biểu, Điểm danh, Đánh giá và Lịch giảng dạy được đồng bộ qua Google Sheets (<code className="font-mono">leegodata</code>) để mọi tài khoản được phân quyền trên các máy khác nhau đều thấy cùng một dữ liệu.
+                  Hệ thống đang hoạt động ở chế độ <span className="font-semibold text-emerald-700">Persistent Local Storage</span>. Mọi thay đổi về Học sinh, Lớp học, Điểm danh, Đánh giá, Báo cáo và Phân quyền đều được lưu trữ trực tiếp và tự động đồng bộ trên trình duyệt của bạn mà không bị mất khi tải lại trang.
                 </p>
               </div>
 
-              {syncError && (
-                <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-red-900">
-                  <div className="font-bold mb-1 flex items-center gap-1.5 text-red-800">
-                    <AlertTriangle className="w-4 h-4 text-red-600" />
-                    <span>Cảnh báo đồng bộ</span>
-                  </div>
-                  <p className="text-red-700">{syncError}</p>
+              <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-red-900">
+                <div className="font-bold mb-1 flex items-center gap-1.5 text-red-800">
+                  <CheckCircle2 className="w-4 h-4 text-red-600" />
+                  Sẵn sàng kết nối Firebase Firestore
                 </div>
-              )}
-
-              {unsyncedLocalCount > 0 && (
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 space-y-2">
-                  <div className="font-bold flex items-center gap-1.5 text-amber-800">
-                    <UploadCloud className="w-4 h-4 text-amber-600" />
-                    <span>Phát hiện {unsyncedLocalCount} bản ghi cục bộ chưa có trên Cloud</span>
-                  </div>
-                  <p className="text-amber-800">
-                    Bấm nút bên dưới để gộp an toàn các bản ghi đã tạo cục bộ trên máy này lên Google Sheets mà không ghi đè dữ liệu hiện có của tài khoản khác.
-                  </p>
-                  <button
-                    onClick={handleMergeLocal}
-                    disabled={isBusy}
-                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold transition-colors disabled:opacity-50"
-                  >
-                    Gộp {unsyncedLocalCount} bản ghi lên Cloud
-                  </button>
-                </div>
-              )}
+                <p className="text-red-700">
+                  Cấu trúc dữ liệu đã được chuẩn hóa theo định dạng Document/Collection tương thích 100% với Google Cloud Firestore và Firebase Auth.
+                </p>
+              </div>
             </div>
 
-            <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
-              {pendingSyncCount > 0 && (
-                <button
-                  onClick={handleRetryPending}
-                  disabled={isBusy}
-                  className="px-3.5 py-2 bg-amber-600 text-white rounded-xl text-xs font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50"
-                >
-                  Thử gửi lại ({pendingSyncCount})
-                </button>
-              )}
-
-              {currentUser.role === 'admin' && (
-                <button
-                  onClick={handleForcePushLocal}
-                  disabled={isBusy}
-                  className="px-3.5 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-semibold hover:bg-slate-200 transition-colors disabled:opacity-50"
-                >
-                  Đẩy toàn bộ máy này lên Cloud
-                </button>
-              )}
-
-              <button
-                onClick={handleManualSync}
-                disabled={isBusy}
-                className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-semibold hover:bg-red-700 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isBusy ? 'animate-spin' : ''}`} />
-                <span>Đồng bộ từ Cloud ngay</span>
-              </button>
-
+            <div className="mt-6 flex justify-end">
               <button
                 onClick={() => setShowFirebaseModal(false)}
                 className="px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-semibold hover:bg-slate-900 transition-colors"
               >
-                Đóng
+                Đã hiểu
               </button>
             </div>
           </div>
