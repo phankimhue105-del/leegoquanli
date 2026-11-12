@@ -448,16 +448,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              <button
-                onClick={() => onNavigate('students')}
-                className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-red-50 text-slate-700 hover:text-red-700 border border-slate-200 hover:border-red-200 transition-colors text-xs font-semibold text-left"
-              >
-                <div className="flex items-center gap-2.5">
-                  <Users className="w-4 h-4 text-blue-600" />
-                  <span>Tra cứu & Tiếp nhận học sinh mới</span>
-                </div>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {role !== 'teacher' && (
+                <button
+                  onClick={() => onNavigate('students')}
+                  className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-red-50 text-slate-700 hover:text-red-700 border border-slate-200 hover:border-red-200 transition-colors text-xs font-semibold text-left"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Users className="w-4 h-4 text-blue-600" />
+                    <span>Tra cứu & Tiếp nhận học sinh mới</span>
+                  </div>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
 
               <button
                 onClick={() => onNavigate('lesson_plans')}
