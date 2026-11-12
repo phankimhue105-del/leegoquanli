@@ -17,7 +17,8 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  FileSpreadsheet
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -34,6 +35,7 @@ export type NavigationTab =
   | 'attendance'
   | 'assessments'
   | 'lesson_plans'
+  | 'lesson_reports'
   | 'reports'
   | 'users'
   | 'settings';
@@ -140,6 +142,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       sublabel: 'Lesson Plans',
       icon: FileText,
       allowedRoles: ['admin', 'academic_manager', 'teacher'],
+    },
+    {
+      id: 'lesson_reports',
+      label: 'Lesson Report',
+      sublabel: 'Báo cáo buổi học',
+      icon: FileSpreadsheet,
+      allowedRoles: ['admin', 'teacher'],
     },
     {
       id: 'reports',
