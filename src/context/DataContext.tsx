@@ -18,9 +18,22 @@ import {
   MonthlyTeachingSchedule,
   TeachingSession,
   LessonReport,
-  MakeupClassSession
+  MakeupClassSession,
+  IncompleteReportRecord,
+  LessonReportLockAuditEntry,
+  StudentLessonReportEntry
 } from '../types';
-import { loadInitialStorage, saveStorage, resetStorage, AppDataStore } from '../services/dataService';
+import {
+  loadInitialStorage,
+  saveStorage,
+  resetStorage,
+  AppDataStore,
+  getClassWeeklySchedule,
+  getVietnamNowFormatted,
+  computeReportDeadlineISO,
+  isReportExpired,
+  isStudentReportEntryComplete
+} from '../services/dataService';
 import { useAuth } from './AuthContext';
 
 export interface ScheduleConflictResult {
@@ -114,8 +127,13 @@ interface DataContextType {
   // Lesson Reports
   getLessonReportsForDate?: (date: string) => LessonReport[];
   saveLessonReport?: (report: LessonReport) => { success: boolean; report?: LessonReport; error?: string };
-  submitLessonReport?: (reportId: string) => { success: boolean; report?: LessonReport; error?: string };
-  toggleReportLock?: (reportId: string, locked: boolean) => { success: boolean; error?: string };
+  submitLessonReport?: (reportIdOrReport: string | LessonReport) => { success: boolean; report?: LessonReport; error?: string };
+  toggleReportLock?: (
+    reportId: string,
+    locked: boolean,
+    reason?: string,
+    reportSnapshot?: LessonReport
+  ) => { success: boolean; error?: string };
   addMakeupClass?: (session: Omit<MakeupClassSession, 'id'>) => { success: boolean; error?: string };
   deleteMakeupClass?: (makeupId: string) => { success: boolean; error?: string };
   resolveIncompleteReport?: (incompleteId: string) => void;
@@ -1052,7 +1070,464 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
-  // 12. Settings & Reset
+  // 12. Daily Lesson Reports & KPI Audit
+  const buildStudentEntriesForClass = (
+    classId: string,
+    existingEntries?: StudentLessonReportEntry[]
+  ): StudentLessonReportEntry[] => {
+    const cls = (data.classes || []).find(c => c.id === classId);
+    const existingMap = new Map((existingEntries || []).map(e => [e.studentId, e]));
+    const studentIds = cls?.studentIds || [];
+
+    return studentIds.map(sid => {
+      const stu = (data.students || []).find(s => s.id === sid);
+      const displayName = stu?.vietnameseName?.trim() || stu?.fullName || sid;
+      const prev = existingMap.get(sid);
+      if (prev) {
+        return {
+          ...prev,
+          studentName: displayName,
+          completed: isStudentReportEntryComplete(prev)
+        };
+      }
+      return {
+        studentId: sid,
+        studentName: displayName,
+        homeworkStatus: 'Đạt yêu cầu',
+        previousLessonStatus: 'Đạt yêu cầu',
+        comments: '',
+        assignedHomework: '',
+        notes: '',
+        completed: false
+      };
+    });
+  };
+
+  const computeReportMetrics = (
+    report: LessonReport,
+    entries: StudentLessonReportEntry[],
+    forceSubmitted?: boolean
+  ): LessonReport => {
+    const totalStudents = entries.length;
+    const completedStudents = entries.filter(isStudentReportEntryComplete).length;
+    const completionPercentage =
+      totalStudents > 0 ? Math.round((completedStudents / totalStudents) * 100) : 0;
+
+    let status: LessonReport['status'] = 'not_started';
+    if (forceSubmitted && completedStudents === totalStudents && totalStudents > 0) {
+      status = 'completed';
+    } else if (
+      (report.status === 'completed' || report.status === 'submitted') &&
+      completedStudents === totalStudents &&
+      totalStudents > 0
+    ) {
+      status = report.status;
+    } else if (
+      completedStudents > 0 ||
+      entries.some(e => Boolean(e.comments?.trim() || e.notes?.trim()))
+    ) {
+      status = 'in_progress';
+    }
+
+    return {
+      ...report,
+      totalStudents,
+      completedStudents,
+      completionPercentage,
+      status,
+      deadlineAt: report.deadlineAt || computeReportDeadlineISO(report.teachingDate),
+      studentReports: entries
+    };
+  };
+
+  const getLessonReportsForDate = (date: string): LessonReport[] => {
+    const storedReports = Array.isArray(data.lessonReports) ? data.lessonReports : [];
+    const makeupSessions = Array.isArray(data.makeupSessions) ? data.makeupSessions : [];
+    const classes = Array.isArray(data.classes) ? data.classes : [];
+    const timetable = Array.isArray(data.timetable) ? data.timetable : [];
+    const teachers = Array.isArray(data.teachers) ? data.teachers : [];
+    const assistants = Array.isArray(data.teachingAssistants) ? data.teachingAssistants : [];
+
+    const match = (date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const dateObj = match
+      ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+      : new Date();
+    const jsDay = dateObj.getDay();
+    const dayOfWeek = jsDay === 0 ? 7 : jsDay;
+
+    const reportsByKey = new Map<string, LessonReport>();
+
+    // 1. Timetable sessions for this weekday/date
+    timetable
+      .filter(s => s.status !== 'cancelled' && s.dayOfWeek === dayOfWeek && (!s.date || s.date === date))
+      .forEach(s => {
+        const cls = classes.find(c => c.id === s.classId);
+        if (cls && cls.status === 'cancelled') return;
+        const reportId = `LR-${s.classId}-${date}`;
+        const existing = storedReports.find(r => r.id === reportId || (r.classId === s.classId && r.teachingDate === date && r.sessionType !== 'makeup'));
+        const teacher = teachers.find(t => t.id === (s.teacherId || cls?.teacherId));
+        const ta = assistants.find(a => a.id === (s.assistantId || cls?.assistantTeacherId));
+        const base: LessonReport = existing
+          ? { ...existing }
+          : {
+              id: reportId,
+              classId: s.classId,
+              className: cls?.name || s.className,
+              teachingDate: date,
+              scheduledTime: `${s.startTime} - ${s.endTime}`,
+              classroom: s.classroom || cls?.classroom || 'Phòng học',
+              teacherId: s.teacherId || cls?.teacherId || '',
+              teacherName: teacher?.fullName || s.teacherName || 'Giáo viên',
+              teachingAssistantName: ta?.fullName || s.assistantName || '',
+              lessonProgress: cls?.curriculum || '',
+              sessionType: 'regular',
+              status: 'not_started',
+              totalStudents: 0,
+              completedStudents: 0,
+              completionPercentage: 0,
+              locked: false,
+              deadlineAt: computeReportDeadlineISO(date),
+              studentReports: []
+            };
+        const entries = buildStudentEntriesForClass(s.classId, base.studentReports);
+        reportsByKey.set(base.id, computeReportMetrics(base, entries));
+      });
+
+    // 2. Classes scheduled via weeklySchedule or legacy scheduleDays (if not already in timetable)
+    classes.forEach(cls => {
+      if (cls.status === 'cancelled') return;
+      const reportId = `LR-${cls.id}-${date}`;
+      if (reportsByKey.has(reportId)) return;
+
+      const weeklySlot = cls.weeklySchedule?.find(w => w.dayOfWeek === dayOfWeek);
+      const parsedSlots = weeklySlot ? [] : getClassWeeklySchedule(cls);
+      const legacySlot = parsedSlots.find(s => s.dayOfWeek === dayOfWeek);
+
+      if (!weeklySlot && !legacySlot) return;
+
+      const existing = storedReports.find(
+        r => r.id === reportId || (r.classId === cls.id && r.teachingDate === date && r.sessionType !== 'makeup')
+      );
+      const effTeacherId = weeklySlot?.teacherId || cls.teacherId || '';
+      const effTaId = weeklySlot?.assistantTeacherId || cls.assistantTeacherId || '';
+      const teacher = teachers.find(t => t.id === effTeacherId);
+      const ta = assistants.find(a => a.id === effTaId);
+      const scheduledTime = weeklySlot
+        ? `${weeklySlot.startTime} - ${weeklySlot.endTime}`
+        : legacySlot?.timeRange || cls.scheduleTime || '';
+
+      const base: LessonReport = existing
+        ? { ...existing }
+        : {
+            id: reportId,
+            classId: cls.id,
+            className: cls.name,
+            teachingDate: date,
+            scheduledTime,
+            classroom: cls.classroom || 'Phòng học',
+            teacherId: effTeacherId,
+            teacherName: teacher?.fullName || 'Chưa phân công GV',
+            teachingAssistantName: ta?.fullName || '',
+            lessonProgress: cls.curriculum || '',
+            sessionType: 'regular',
+            status: 'not_started',
+            totalStudents: 0,
+            completedStudents: 0,
+            completionPercentage: 0,
+            locked: false,
+            deadlineAt: computeReportDeadlineISO(date),
+            studentReports: []
+          };
+      const entries = buildStudentEntriesForClass(cls.id, base.studentReports);
+      reportsByKey.set(base.id, computeReportMetrics(base, entries));
+    });
+
+    // 3. Make-up sessions for this date
+    makeupSessions
+      .filter(m => m.date === date)
+      .forEach(m => {
+        const reportId = `LR-MAKEUP-${m.id}`;
+        const existing = storedReports.find(r => r.id === reportId);
+        const base: LessonReport = existing
+          ? { ...existing }
+          : {
+              id: reportId,
+              classId: m.classId,
+              className: m.className,
+              teachingDate: date,
+              scheduledTime: m.time,
+              classroom: m.classroom,
+              teacherId: m.teacherId,
+              teacherName: m.teacherName,
+              teachingAssistantName: m.assistantName || '',
+              lessonProgress: m.lessonProgress,
+              sessionType: 'makeup',
+              status: 'not_started',
+              totalStudents: 0,
+              completedStudents: 0,
+              completionPercentage: 0,
+              locked: false,
+              deadlineAt: computeReportDeadlineISO(date),
+              studentReports: []
+            };
+        const entries = buildStudentEntriesForClass(m.classId, base.studentReports);
+        reportsByKey.set(base.id, computeReportMetrics(base, entries));
+      });
+
+    return Array.from(reportsByKey.values());
+  };
+
+  const saveLessonReport = (report: LessonReport) => {
+    const expired = isReportExpired(report) && !report.unlockedAfterExpiration;
+    if (currentUser.role === 'teacher' && (report.locked || expired)) {
+      return {
+        success: false,
+        error: report.locked
+          ? 'Báo cáo đã bị khóa bởi Quản lý học thuật.'
+          : 'Báo cáo đã quá hạn chỉnh sửa (17:00 ngày hôm sau).'
+      };
+    }
+
+    const nowFormatted = getVietnamNowFormatted();
+    const cleanedEntries = (report.studentReports || []).map(entry => ({
+      ...entry,
+      completed: isStudentReportEntryComplete(entry)
+    }));
+    const updatedReport = computeReportMetrics(
+      {
+        ...report,
+        lastEditedById: currentUser.id,
+        lastEditedByUsername: currentUser.email,
+        lastEditedByName: currentUser.name,
+        lastEditedAt: nowFormatted
+      },
+      cleanedEntries
+    );
+
+    setData(prev => {
+      const prevReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
+      const exists = prevReports.some(r => r.id === updatedReport.id);
+      const nextReports = exists
+        ? prevReports.map(r => (r.id === updatedReport.id ? updatedReport : r))
+        : [updatedReport, ...prevReports];
+
+      return {
+        ...prev,
+        lessonReports: nextReports
+      };
+    });
+
+    addActivityLog('Lưu báo cáo học tập', `Đã lưu Lesson Report lớp ${updatedReport.className} ngày ${updatedReport.teachingDate}`);
+    return { success: true, report: updatedReport };
+  };
+
+  const submitLessonReport = (reportIdOrReport: string | LessonReport) => {
+    const targetId = typeof reportIdOrReport === 'string' ? reportIdOrReport : reportIdOrReport.id;
+    const stored = (data.lessonReports || []).find(r => r.id === targetId);
+    const baseReport = typeof reportIdOrReport === 'string' ? stored : reportIdOrReport;
+
+    if (!baseReport) {
+      return { success: false, error: 'Không tìm thấy báo cáo để nộp.' };
+    }
+
+    const expired = isReportExpired(baseReport) && !baseReport.unlockedAfterExpiration;
+    if (currentUser.role === 'teacher' && (baseReport.locked || expired)) {
+      return {
+        success: false,
+        error: baseReport.locked
+          ? 'Báo cáo đã bị khóa.'
+          : 'Báo cáo đã quá hạn nộp (17:00 ngày hôm sau).'
+      };
+    }
+
+    const cleanedEntries = (baseReport.studentReports || []).map(entry => ({
+      ...entry,
+      completed: isStudentReportEntryComplete(entry)
+    }));
+
+    const incompleteCount = cleanedEntries.filter(e => !e.completed).length;
+    if (cleanedEntries.length === 0 || incompleteCount > 0) {
+      return {
+        success: false,
+        error: `Còn ${incompleteCount} học viên chưa nhập đủ trạng thái BTVN, bài cũ và nhận xét.`
+      };
+    }
+
+    const nowFormatted = getVietnamNowFormatted();
+    const submittedReport = computeReportMetrics(
+      {
+        ...baseReport,
+        submittedAt: nowFormatted,
+        submittedBy: currentUser.name,
+        lastEditedById: currentUser.id,
+        lastEditedByUsername: currentUser.email,
+        lastEditedByName: currentUser.name,
+        lastEditedAt: nowFormatted
+      },
+      cleanedEntries,
+      true
+    );
+
+    setData(prev => {
+      const prevReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
+      const exists = prevReports.some(r => r.id === submittedReport.id);
+      const nextReports = exists
+        ? prevReports.map(r => (r.id === submittedReport.id ? submittedReport : r))
+        : [submittedReport, ...prevReports];
+
+      const prevIncomplete = Array.isArray(prev.incompleteReports) ? prev.incompleteReports : [];
+      const nextIncomplete = prevIncomplete.map(inc =>
+        inc.reportId === submittedReport.id ? { ...inc, status: 'resolved' as const } : inc
+      );
+
+      return {
+        ...prev,
+        lessonReports: nextReports,
+        incompleteReports: nextIncomplete
+      };
+    });
+
+    addActivityLog('Nộp Lesson Report', `Đã nộp báo cáo lớp ${submittedReport.className} ngày ${submittedReport.teachingDate}`);
+    return { success: true, report: submittedReport };
+  };
+
+  const toggleReportLock = (
+    reportId: string,
+    locked: boolean,
+    reason?: string,
+    reportSnapshot?: LessonReport
+  ) => {
+    if (currentUser.role !== 'admin' && currentUser.role !== 'academic_manager') {
+      return { success: false, error: 'Chỉ Admin hoặc Quản lý học thuật mới có quyền khóa/mở khóa báo cáo.' };
+    }
+
+    const existing = (data.lessonReports || []).find(r => r.id === reportId) || reportSnapshot;
+    if (!existing) {
+      return { success: false, error: 'Không tìm thấy báo cáo.' };
+    }
+
+    const nowFormatted = getVietnamNowFormatted();
+    const nowIso = new Date().toISOString();
+    const originalDeadlineAt = existing.deadlineAt || computeReportDeadlineISO(existing.teachingDate);
+    const wasExpired = isReportExpired({ teachingDate: existing.teachingDate, deadlineAt: originalDeadlineAt });
+
+    const updatedReport: LessonReport = {
+      ...existing,
+      deadlineAt: originalDeadlineAt,
+      locked,
+      lockedAt: locked ? nowFormatted : existing.lockedAt,
+      lockedBy: locked ? currentUser.name : existing.lockedBy,
+      unlockedAfterExpiration: !locked && wasExpired ? true : locked ? false : existing.unlockedAfterExpiration
+    };
+
+    const auditEntry: LessonReportLockAuditEntry = {
+      id: `AUDIT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      reportId: updatedReport.id,
+      classId: updatedReport.classId,
+      className: updatedReport.className,
+      teachingDate: updatedReport.teachingDate,
+      action: locked ? 'LOCK' : 'UNLOCK',
+      actorUserId: currentUser.id,
+      actorUsername: currentUser.email,
+      actorName: currentUser.name,
+      timestamp: nowFormatted,
+      timestampIso: nowIso,
+      reason: reason?.trim() || undefined,
+      originalDeadlineAt
+    };
+
+    setData(prev => {
+      const prevReports = Array.isArray(prev.lessonReports) ? prev.lessonReports : [];
+      const exists = prevReports.some(r => r.id === updatedReport.id);
+      const nextReports = exists
+        ? prevReports.map(r => (r.id === updatedReport.id ? updatedReport : r))
+        : [updatedReport, ...prevReports];
+
+      const prevAudits = Array.isArray(prev.lessonReportLockAudits) ? prev.lessonReportLockAudits : [];
+      const nextAudits = [auditEntry, ...prevAudits];
+
+      let nextIncomplete = Array.isArray(prev.incompleteReports) ? [...prev.incompleteReports] : [];
+      if (locked && updatedReport.completionPercentage < 100) {
+        const missingCount = updatedReport.totalStudents - updatedReport.completedStudents;
+        const missingNames = updatedReport.studentReports
+          .filter(s => !isStudentReportEntryComplete(s))
+          .map(s => s.studentName)
+          .slice(0, 3)
+          .join(', ');
+        const incRecord: IncompleteReportRecord = {
+          id: `INC-${Date.now()}`,
+          reportId: updatedReport.id,
+          classId: updatedReport.classId,
+          className: updatedReport.className,
+          teachingDate: updatedReport.teachingDate,
+          teacherName: updatedReport.lastEditedByName || updatedReport.teacherName,
+          completionPercentage: updatedReport.completionPercentage,
+          incompleteStudentCount: missingCount,
+          missingFields: missingNames ? `Thiếu nhận xét: ${missingNames}${missingCount > 3 ? '...' : ''}` : 'Chưa hoàn thành nhận xét',
+          lockedAt: nowFormatted,
+          lockedBy: currentUser.name,
+          status: 'pending'
+        };
+        const alreadyLogged = nextIncomplete.some(
+          i => i.reportId === updatedReport.id && i.status === 'pending'
+        );
+        if (!alreadyLogged) {
+          nextIncomplete = [incRecord, ...nextIncomplete];
+        }
+      }
+
+      return {
+        ...prev,
+        lessonReports: nextReports,
+        lessonReportLockAudits: nextAudits,
+        incompleteReports: nextIncomplete
+      };
+    });
+
+    addActivityLog(
+      locked ? 'Khóa Lesson Report' : 'Mở khóa Lesson Report',
+      `${locked ? 'LOCK' : 'UNLOCK'} lớp ${updatedReport.className} (${updatedReport.teachingDate})`
+    );
+    return { success: true };
+  };
+
+  const addMakeupClass = (session: Omit<MakeupClassSession, 'id'>) => {
+    if (currentUser.role !== 'admin' && currentUser.role !== 'academic_manager') {
+      return { success: false, error: 'Không có quyền thêm lớp học bù.' };
+    }
+    const newSession: MakeupClassSession = {
+      ...session,
+      id: `MK-${Date.now().toString().slice(-6)}`
+    };
+    setData(prev => ({
+      ...prev,
+      makeupSessions: [newSession, ...(prev.makeupSessions || [])]
+    }));
+    addActivityLog('Bổ sung lớp học bù', `Đã thêm lịch học bù lớp ${session.className} ngày ${session.date}`);
+    return { success: true };
+  };
+
+  const deleteMakeupClass = (makeupId: string) => {
+    if (currentUser.role !== 'admin' && currentUser.role !== 'academic_manager') {
+      return { success: false, error: 'Không có quyền xóa lớp học bù.' };
+    }
+    setData(prev => ({
+      ...prev,
+      makeupSessions: (prev.makeupSessions || []).filter(m => m.id !== makeupId)
+    }));
+    return { success: true };
+  };
+
+  const resolveIncompleteReport = (incompleteId: string) => {
+    setData(prev => ({
+      ...prev,
+      incompleteReports: (prev.incompleteReports || []).map(inc =>
+        inc.id === incompleteId ? { ...inc, status: 'resolved' } : inc
+      )
+    }));
+  };
+
+  // 13. Settings & Reset
   const updateSettings = (updates: Partial<CenterSettings>) => {
     setData(prev => ({
       ...prev,
@@ -1111,7 +1586,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         copyScheduleContent,
         updateSettings,
         resetAllData,
-        addActivityLog
+        addActivityLog,
+        getLessonReportsForDate,
+        saveLessonReport,
+        submitLessonReport,
+        toggleReportLock,
+        addMakeupClass,
+        deleteMakeupClass,
+        resolveIncompleteReport
       }}
     >
       {children}
