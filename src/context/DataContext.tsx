@@ -791,13 +791,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 11. Teaching Schedule Management
   const getScheduleByClassAndMonth = (classId: string, month: number, year: number): MonthlyTeachingSchedule | undefined => {
-    return data.teachingSchedules.find(
+    return (data.teachingSchedules || []).find(
       s => s.classId === classId && s.month === Number(month) && s.year === Number(year)
     );
   };
 
   const getSchedulesByClass = (classId: string): MonthlyTeachingSchedule[] => {
-    return data.teachingSchedules
+    return (data.teachingSchedules || [])
       .filter(s => s.classId === classId)
       .sort((a, b) => b.year - a.year || b.month - a.month);
   };
