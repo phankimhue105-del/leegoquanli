@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { ToastProvider } from './components/common/Toast';
 import { Sidebar, NavigationTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
-import { LoginPage } from './components/LoginPage';
 
 // Views
 import { DashboardView } from './components/views/DashboardView';
@@ -12,43 +11,27 @@ import { StudentsView } from './components/views/StudentsView';
 import { ParentsView } from './components/views/ParentsView';
 import { ClassesView } from './components/views/ClassesView';
 import { TeachingScheduleView } from './components/views/TeachingScheduleView';
-import { CourseDurationView } from './components/views/CourseDurationView';
 import { ProgramsView } from './components/views/ProgramsView';
 import { TeachersView } from './components/views/TeachersView';
 import { TeachingAssistantsView } from './components/views/TeachingAssistantsView';
 import { TimetableView } from './components/views/TimetableView';
 import { AttendanceView } from './components/views/AttendanceView';
-import { LessonReportsView } from './components/views/LessonReportsView';
 import { AssessmentsView } from './components/views/AssessmentsView';
 import { LessonPlansView } from './components/views/LessonPlansView';
+import { LessonReportsView } from './components/views/LessonReportsView';
 import { AcademicReportsView } from './components/views/AcademicReportsView';
 import { UserManagementView } from './components/views/UserManagementView';
 import { SettingsView } from './components/views/SettingsView';
+import { ShieldAlert } from 'lucide-react';
 
 const AppContent: React.FC = () => {
-  const { currentUser, isAuthenticated, isLoading } = useAuth();
+  const { currentUser, hasPermission } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setCurrentTab('dashboard');
-      setMobileSidebarOpen(false);
-    }
-  }, [isAuthenticated]);
-
-  if (isLoading) {
-    return null;
-  }
-
-  // 1. Unauthenticated gate: Display Login screen
-  if (!isAuthenticated || !currentUser || !currentUser.id) {
-    return <LoginPage />;
-  }
-
-  // 2. Validate permission for currentTab
+  // Validate permission for currentTab
   const role = currentUser.role;
 
   const isTabAllowed = (tab: NavigationTab): boolean => {
@@ -57,18 +40,7 @@ const AppContent: React.FC = () => {
       return !['users', 'settings'].includes(tab);
     }
     if (role === 'teacher') {
-      return [
-        'dashboard',
-        'students',
-        'classes',
-        'teaching_schedule',
-        'course_duration',
-        'timetable',
-        'attendance',
-        'lesson_reports',
-        'assessments',
-        'lesson_plans'
-      ].includes(tab);
+      return ['dashboard', 'students', 'classes', 'teaching_schedule', 'timetable', 'attendance', 'assessments', 'lesson_plans', 'lesson_reports'].includes(tab);
     }
     return false;
   };
@@ -131,15 +103,14 @@ const AppContent: React.FC = () => {
             {activeTab === 'parents' && <ParentsView />}
             {activeTab === 'classes' && <ClassesView />}
             {activeTab === 'teaching_schedule' && <TeachingScheduleView />}
-            {activeTab === 'course_duration' && <CourseDurationView />}
             {activeTab === 'programs' && <ProgramsView />}
             {activeTab === 'teachers' && <TeachersView />}
             {activeTab === 'assistants' && <TeachingAssistantsView />}
             {activeTab === 'timetable' && <TimetableView />}
             {activeTab === 'attendance' && <AttendanceView />}
-            {activeTab === 'lesson_reports' && <LessonReportsView />}
             {activeTab === 'assessments' && <AssessmentsView />}
             {activeTab === 'lesson_plans' && <LessonPlansView />}
+            {activeTab === 'lesson_reports' && <LessonReportsView />}
             {activeTab === 'reports' && <AcademicReportsView />}
             {activeTab === 'users' && <UserManagementView />}
             {activeTab === 'settings' && <SettingsView />}
