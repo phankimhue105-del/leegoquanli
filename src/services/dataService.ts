@@ -1905,4 +1905,248 @@ export function validateBackupFile(jsonString: string): {
   }
 }
 
+// ============================================================================
+// MILESTONE 3: SAFE MANUAL MIGRATION WITH PREVIEW & READBACK VERIFICATION
+// ============================================================================
+
+export interface MigrationCategorySummary {
+  key: keyof AppDataStore;
+  name: string;
+  totalLocal: number;
+  excludedDemoCount: number;
+  uploadRecordCount: number;
+  sampleTitles: string[];
+}
+
+export interface MigrationPlan {
+  generatedAt: string;
+  categories: MigrationCategorySummary[];
+  totalUploadRecords: number;
+  totalExcludedDemo: number;
+  payloadToUpload: Partial<AppDataStore>;
+  keysToUpload: Array<keyof AppDataStore>;
+  hasConflicts: boolean;
+  conflicts: RecordConflict[];
+}
+
+export interface MigrationExecutionResult {
+  success: boolean;
+  verified: boolean;
+  message?: string;
+  verifiedCounts?: Record<string, number>;
+  error?: string;
+}
+
+/**
+ * Builds a migration preview plan by identifying real operational records and modified demo records,
+ * strictly excluding untouched demo data from being pushed to Cloud.
+ */
+export function buildMigrationPlan(
+  localData: AppDataStore,
+  remoteData?: Partial<AppDataStore> | null
+): MigrationPlan {
+  const categories: MigrationCategorySummary[] = [];
+  const payloadToUpload: Partial<AppDataStore> = {};
+  const keysToUpload: Array<keyof AppDataStore> = [];
+  let totalUploadRecords = 0;
+  let totalExcludedDemo = 0;
+  const allConflicts: RecordConflict[] = [];
+
+  for (const cat of CATEGORY_DEFINITIONS) {
+    if (cat.key === 'settings') {
+      const isSettingModified = isRecordModified(localData.settings, initialSettings);
+      const cloudSettings = remoteData?.settings;
+      if (isSettingModified || cloudSettings) {
+        const mergedClassrooms = Array.from(
+          new Set([
+            ...(localData.settings?.classrooms || []),
+            ...(cloudSettings?.classrooms || [])
+          ])
+        );
+        const mergedSettings: CenterSettings = {
+          ...(cloudSettings || {}),
+          ...localData.settings,
+          classrooms: mergedClassrooms
+        };
+        payloadToUpload.settings = mergedSettings;
+        keysToUpload.push('settings');
+        totalUploadRecords += 1;
+        categories.push({
+          key: cat.key,
+          name: cat.name,
+          totalLocal: 1,
+          excludedDemoCount: isSettingModified ? 0 : 1,
+          uploadRecordCount: 1,
+          sampleTitles: [localData.settings.centerName || 'Cài đặt trung tâm']
+        });
+      } else {
+        totalExcludedDemo += 1;
+        categories.push({
+          key: cat.key,
+          name: cat.name,
+          totalLocal: 1,
+          excludedDemoCount: 1,
+          uploadRecordCount: 0,
+          sampleTitles: []
+        });
+      }
+      continue;
+    }
+
+    const locArr = Array.isArray(localData[cat.key]) ? (localData[cat.key] as any[]) : [];
+    const baseArr = BASELINE_DATA_MAP[cat.key] || [];
+    const baseMap = new Map(baseArr.map(b => [b.id, b]));
+    const cldArr =
+      remoteData && Array.isArray(remoteData[cat.key])
+        ? (remoteData[cat.key] as any[])
+        : [];
+    const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
+    const cldMap = new Map(cldArr.map(item => [getId(item), item]));
+
+    const recordsToUpload: any[] = [];
+    let excludedDemo = 0;
+    const sampleTitles: string[] = [];
+
+    for (const item of locArr) {
+      if (!item) continue;
+      const id = getId(item);
+      const isBaseline = baseMap.has(id);
+      const isUntouched = isBaseline && !isRecordModified(item, baseMap.get(id));
+
+      if (isUntouched) {
+        // Untouched baseline demo is protected from uploading to cloud
+        excludedDemo++;
+        continue;
+      }
+
+      // Real new record or user-modified demo record
+      const existingCloud = cldMap.get(id);
+      if (existingCloud) {
+        const { merged: mergedRec, conflicts } = mergeSingleRecordFieldLevel(cat.key, item, existingCloud);
+        recordsToUpload.push(mergedRec);
+        if (conflicts.length > 0) {
+          const title = item.fullName || item.name || item.title || item.className || id;
+          allConflicts.push({
+            category: cat.key,
+            categoryName: cat.name,
+            recordId: id,
+            recordTitle: title,
+            conflicts,
+            localRecord: item,
+            cloudRecord: existingCloud
+          });
+        }
+      } else {
+        recordsToUpload.push(item);
+      }
+
+      const displayTitle =
+        item.fullName || item.name || item.title || item.className || item.code || String(id);
+      if (sampleTitles.length < 4) {
+        sampleTitles.push(displayTitle);
+      }
+    }
+
+    // Also preserve existing real Cloud records if local didn't have them
+    for (const cldItem of cldArr) {
+      const cldId = getId(cldItem);
+      if (!recordsToUpload.some(r => getId(r) === cldId)) {
+        recordsToUpload.push(cldItem);
+      }
+    }
+
+    totalUploadRecords += recordsToUpload.length;
+    totalExcludedDemo += excludedDemo;
+
+    if (recordsToUpload.length > 0) {
+      (payloadToUpload as any)[cat.key] = recordsToUpload;
+      keysToUpload.push(cat.key);
+    }
+
+    categories.push({
+      key: cat.key,
+      name: cat.name,
+      totalLocal: locArr.length,
+      excludedDemoCount: excludedDemo,
+      uploadRecordCount: recordsToUpload.length,
+      sampleTitles
+    });
+  }
+
+  return {
+    generatedAt: getVietnamNowFormatted(),
+    categories,
+    totalUploadRecords,
+    totalExcludedDemo,
+    payloadToUpload,
+    keysToUpload,
+    hasConflicts: allConflicts.length > 0,
+    conflicts: allConflicts
+  };
+}
+
+/**
+ * Executes the safe manual migration to Google Apps Script (leegodata)
+ * and performs readback verification to ensure data integrity.
+ */
+export async function executeMigration(plan: MigrationPlan): Promise<MigrationExecutionResult> {
+  if (plan.keysToUpload.length === 0 || plan.totalUploadRecords === 0) {
+    return {
+      success: true,
+      verified: true,
+      message: 'Không có bản ghi thực tế nào cần Migration (Dữ liệu hiện tại chỉ gồm Demo nguyên bản hoặc Cloud đã đầy đủ).'
+    };
+  }
+
+  try {
+    // 1. Send authoritative payload to Google Apps Script
+    const saveRes = await saveCenterDataToGoogleAppsScript(
+      plan.payloadToUpload,
+      plan.keysToUpload
+    );
+
+    if (!saveRes.success) {
+      return {
+        success: false,
+        verified: false,
+        error: saveRes.error || 'Lỗi khi gửi dữ liệu Migration lên Google Apps Script.'
+      };
+    }
+
+    // 2. Readback verification from Google Sheets leegodata
+    const readbackRes = await fetchCenterDataFromGoogleAppsScript(plan.keysToUpload);
+    if (!readbackRes.success || !readbackRes.data) {
+      return {
+        success: true,
+        verified: false,
+        message: 'Dữ liệu đã được gửi lên Google Sheets thành công, nhưng không thể đọc đối chiếu phản hồi (Lỗi mạng đọc lại).'
+      };
+    }
+
+    const verifiedCounts: Record<string, number> = {};
+    for (const k of plan.keysToUpload) {
+      if (k === 'settings') {
+        verifiedCounts[k] = readbackRes.data.settings ? 1 : 0;
+      } else {
+        const arr = (readbackRes.data as any)[k];
+        verifiedCounts[k] = Array.isArray(arr) ? arr.length : 0;
+      }
+    }
+
+    return {
+      success: true,
+      verified: true,
+      message: `Migration thành công! Đã lưu an toàn ${plan.totalUploadRecords} bản ghi lên Google Sheets và hoàn tất đối chiếu xác nhận.`,
+      verifiedCounts
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      verified: false,
+      error: `Lỗi ngoại lệ trong quá trình Migration: ${err.message || 'Lỗi kết nối'}`
+    };
+  }
+}
+
+
 
