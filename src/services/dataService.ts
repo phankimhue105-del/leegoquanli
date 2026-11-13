@@ -52,6 +52,7 @@ import {
   initialParents,
   initialTeachingSchedules
 } from '../data/initialData';
+import { APPS_SCRIPT_URL } from './authService';
 
 const STORAGE_KEY = 'leego_center_storage_v1';
 
@@ -159,6 +160,249 @@ export function resetStorage(): AppDataStore {
   };
   saveStorage(defaultData);
   return defaultData;
+}
+
+export interface GasDataResult {
+  success: boolean;
+  data?: Partial<AppDataStore>;
+  message?: string;
+  error?: string;
+  timestamp?: string;
+  updatedKeys?: string[];
+}
+
+/**
+ * Loads shared data from Google Apps Script backend (`leegodata` sheet)
+ */
+export async function fetchCenterDataFromGoogleAppsScript(
+  keys?: Array<keyof AppDataStore>
+): Promise<GasDataResult> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
+  try {
+    const payload: { action: string; keys?: string[] } = { action: 'getCenterData' };
+    if (Array.isArray(keys) && keys.length > 0) {
+      payload.keys = keys as string[];
+    }
+
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Máy chủ Google Apps Script phản hồi mã lỗi (${response.status})`
+      };
+    }
+
+    const result: GasDataResult = await response.json();
+    return result;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return {
+        success: false,
+        error: 'Yêu cầu tải dữ liệu từ Google Apps Script quá thời gian chờ (15s).'
+      };
+    }
+    return {
+      success: false,
+      error: 'Không thể kết nối máy chủ Google Apps Script. Vui lòng kiểm tra mạng.'
+    };
+  }
+}
+
+/**
+ * Saves shared data to Google Apps Script backend (`leegodata` sheet)
+ */
+export async function saveCenterDataToGoogleAppsScript(
+  dataToSave: Partial<AppDataStore>,
+  keysToSave?: Array<keyof AppDataStore>
+): Promise<GasDataResult> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout for write
+
+  try {
+    const targetKeys = keysToSave || (Object.keys(dataToSave) as Array<keyof AppDataStore>);
+    const payload = {
+      action: 'saveCenterData',
+      keys: targetKeys,
+      data: dataToSave
+    };
+
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Lỗi kết nối máy chủ (${response.status}) khi lưu dữ liệu lên Google Sheets.`
+      };
+    }
+
+    const result: GasDataResult = await response.json();
+    return result;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return {
+        success: false,
+        error: 'Thao tác lưu lên Google Sheets quá thời gian chờ (20s).'
+      };
+    }
+    return {
+      success: false,
+      error: 'Lỗi mạng khi lưu lên Google Sheets.'
+    };
+  }
+}
+
+/**
+ * Safely merges remote center data into local store without losing local modifications
+ */
+export function mergeCenterData(
+  local: AppDataStore,
+  remote: Partial<AppDataStore>
+): { merged: AppDataStore; needsUpload: boolean } {
+  let needsUpload = false;
+  const merged: AppDataStore = { ...local };
+
+  // 1. Merge Lesson Reports safely
+  if (Array.isArray(remote.lessonReports)) {
+    const localReports = Array.isArray(local.lessonReports) ? local.lessonReports : [];
+    const remoteReportMap = new Map(remote.lessonReports.map(r => [r.id, r]));
+    const localReportMap = new Map(localReports.map(r => [r.id, r]));
+
+    const combinedReports: LessonReport[] = [];
+
+    // All remote reports
+    for (const rem of remote.lessonReports) {
+      const loc = localReportMap.get(rem.id);
+      if (!loc) {
+        combinedReports.push(rem);
+      } else {
+        const remTime = rem.lastEditedAt || rem.lockedAt || rem.submittedAt || '';
+        const locTime = loc.lastEditedAt || loc.lockedAt || loc.submittedAt || '';
+
+        // If remote has authoritative lock/unlock state change from manager
+        if (rem.locked && !loc.locked) {
+          // Manager locked on server -> client must be locked
+          combinedReports.push(rem);
+        } else if (!rem.locked && loc.locked && rem.unlockedAfterExpiration) {
+          // Manager explicitly unlocked after expiration on server -> client must be unlocked
+          combinedReports.push(rem);
+        } else if (remTime >= locTime) {
+          combinedReports.push(rem);
+        } else {
+          // Local has newer edits offline
+          // Ensure remote lock is maintained if server is locked
+          combinedReports.push({
+            ...loc,
+            locked: rem.locked ? true : loc.locked,
+            lockedAt: rem.locked ? rem.lockedAt : loc.lockedAt,
+            lockedBy: rem.locked ? rem.lockedBy : loc.lockedBy
+          });
+          needsUpload = true;
+        }
+      }
+    }
+
+    // Keep any local reports that remote doesn't have yet
+    for (const loc of localReports) {
+      if (!remoteReportMap.has(loc.id)) {
+        combinedReports.push(loc);
+        needsUpload = true;
+      }
+    }
+
+    merged.lessonReports = combinedReports;
+  } else if (Array.isArray(local.lessonReports) && local.lessonReports.length > 0) {
+    needsUpload = true;
+  }
+
+  // 2. Merge Incomplete Reports
+  if (Array.isArray(remote.incompleteReports)) {
+    const remoteIncMap = new Map(remote.incompleteReports.map(i => [i.id || i.reportId, i]));
+    const localIncs = Array.isArray(local.incompleteReports) ? local.incompleteReports : [];
+    const combinedIncs = [...remote.incompleteReports];
+    for (const loc of localIncs) {
+      if (!remoteIncMap.has(loc.id || loc.reportId)) {
+        combinedIncs.push(loc);
+        needsUpload = true;
+      }
+    }
+    merged.incompleteReports = combinedIncs;
+  } else if (Array.isArray(local.incompleteReports) && local.incompleteReports.length > 0) {
+    needsUpload = true;
+  }
+
+  // 3. Merge Make-up Sessions
+  if (Array.isArray(remote.makeupSessions)) {
+    const remoteMakeupMap = new Map(remote.makeupSessions.map(m => [m.id, m]));
+    const localMakeups = Array.isArray(local.makeupSessions) ? local.makeupSessions : [];
+    const combinedMakeups = [...remote.makeupSessions];
+    for (const loc of localMakeups) {
+      if (!remoteMakeupMap.has(loc.id)) {
+        combinedMakeups.push(loc);
+        needsUpload = true;
+      }
+    }
+    merged.makeupSessions = combinedMakeups;
+  } else if (Array.isArray(local.makeupSessions) && local.makeupSessions.length > 0) {
+    needsUpload = true;
+  }
+
+  // 4. Merge Lesson Report Lock Audits
+  if (Array.isArray(remote.lessonReportLockAudits)) {
+    const remoteAuditMap = new Map(remote.lessonReportLockAudits.map(a => [a.id, a]));
+    const localAudits = Array.isArray(local.lessonReportLockAudits) ? local.lessonReportLockAudits : [];
+    const combinedAudits = [...remote.lessonReportLockAudits];
+    for (const loc of localAudits) {
+      if (!remoteAuditMap.has(loc.id)) {
+        combinedAudits.push(loc);
+        needsUpload = true;
+      }
+    }
+    merged.lessonReportLockAudits = combinedAudits;
+  } else if (Array.isArray(local.lessonReportLockAudits) && local.lessonReportLockAudits.length > 0) {
+    needsUpload = true;
+  }
+
+  // 5. Merge other store keys if remote provides them and non-empty
+  const otherKeys: Array<keyof AppDataStore> = [
+    'students', 'classes', 'teachers', 'teachingAssistants', 'programs',
+    'timetable', 'attendance', 'assessments', 'lessonPlans', 'parents',
+    'settings', 'activityLogs', 'teachingSchedules'
+  ];
+  for (const k of otherKeys) {
+    const remoteVal = remote[k];
+    if (Array.isArray(remoteVal) && remoteVal.length > 0) {
+      (merged as any)[k] = remoteVal;
+    } else if (remoteVal && typeof remoteVal === 'object' && !Array.isArray(remoteVal) && Object.keys(remoteVal).length > 0) {
+      (merged as any)[k] = remoteVal;
+    }
+  }
+
+  return { merged, needsUpload };
 }
 
 // Excel Export Functions
