@@ -4,6 +4,7 @@ import {
   ClassItem,
   Teacher,
   TeachingAssistant,
+  AcademicManager,
   AcademicProgram,
   TimetableSession,
   AttendanceRecord,
@@ -35,7 +36,9 @@ import {
   isStudentReportEntryComplete,
   fetchCenterDataFromGoogleAppsScript,
   saveCenterDataToGoogleAppsScript,
-  mergeCenterData
+  mergeCenterData,
+  RecordConflict,
+  resolveConflict as resolveConflictUtil
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
 
@@ -73,6 +76,9 @@ interface DataContextType {
   addAssistant: (assistant: Omit<TeachingAssistant, 'id'>) => TeachingAssistant;
   updateAssistant: (id: string, updates: Partial<TeachingAssistant>) => void;
   deleteAssistant: (id: string) => void;
+  addAcademicManager?: (manager: Omit<AcademicManager, 'id'>) => AcademicManager;
+  updateAcademicManager?: (id: string, updates: Partial<AcademicManager>) => void;
+  deleteAcademicManager?: (id: string) => void;
 
   // Academic Programs
   addProgram: (prog: Omit<AcademicProgram, 'id'>) => AcademicProgram;
@@ -125,10 +131,19 @@ interface DataContextType {
   // Settings & System
   updateSettings: (settings: Partial<CenterSettings>) => void;
   resetAllData: () => void;
+  restoreFromBackup?: (backupStore: AppDataStore) => { success: boolean; message?: string };
   addActivityLog: (action: string, details: string) => void;
   refreshData: (force?: boolean) => Promise<void> | void;
   isSyncing?: boolean;
   lastSyncTime?: string | null;
+
+  // Conflict Resolution (Milestone 2)
+  conflicts?: RecordConflict[];
+  resolveConflict?: (
+    conflict: RecordConflict,
+    resolution: 'keep_local' | 'keep_cloud' | 'custom',
+    customRecord?: any
+  ) => void;
 
   // Lesson Reports
   getLessonReportsForDate?: (date: string) => LessonReport[];
@@ -164,6 +179,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [data, setData] = useState<AppDataStore>(() => loadInitialStorage());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<RecordConflict[]>([]);
   const { currentUser, hasPermission, isAuthenticated } = useAuth();
 
   const lastRefreshCallRef = React.useRef<number>(0);
@@ -192,8 +208,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const remoteResult = await fetchCenterDataFromGoogleAppsScript();
       if (remoteResult.success && remoteResult.data) {
         setData(prev => {
-          const { merged, needsUpload } = mergeCenterData(prev, remoteResult.data!);
+          const { merged, needsUpload, hasConflicts, conflicts: detectedConflicts } = mergeCenterData(prev, remoteResult.data!);
           saveStorage(merged);
+          if (hasConflicts && detectedConflicts.length > 0) {
+            setConflicts(detectedConflicts);
+          }
           if (needsUpload && !initialUploadDoneRef.current) {
             initialUploadDoneRef.current = true;
             saveCenterDataToGoogleAppsScript(
@@ -232,8 +251,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const remoteResult = await fetchCenterDataFromGoogleAppsScript();
         if (remoteResult.success && remoteResult.data && isMounted) {
           setData(prev => {
-            const { merged, needsUpload } = mergeCenterData(prev, remoteResult.data!);
+            const { merged, needsUpload, hasConflicts, conflicts: detectedConflicts } = mergeCenterData(prev, remoteResult.data!);
             saveStorage(merged);
+            if (hasConflicts && detectedConflicts.length > 0) {
+              setConflicts(detectedConflicts);
+            }
             if (needsUpload && !initialUploadDoneRef.current) {
               initialUploadDoneRef.current = true;
               saveCenterDataToGoogleAppsScript(
@@ -629,6 +651,35 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       teachingAssistants: prev.teachingAssistants.filter(a => a.id !== id)
     }));
+  };
+
+  const addAcademicManager = (managerData: Omit<AcademicManager, 'id'>): AcademicManager => {
+    const existingCount = Array.isArray(data.academicManagers) ? data.academicManagers.length : 0;
+    const newId = `AM-${String(existingCount + 1).padStart(3, '0')}`;
+    const newManager: AcademicManager = { ...managerData, id: newId };
+    setData(prev => ({
+      ...prev,
+      academicManagers: [...(prev.academicManagers || []), newManager]
+    }));
+    addActivityLog('Thêm hồ sơ QLHT', `Đã thêm hồ sơ Quản lý học thuật: ${newManager.fullName} (${newId})`);
+    return newManager;
+  };
+
+  const updateAcademicManager = (id: string, updates: Partial<AcademicManager>) => {
+    setData(prev => ({
+      ...prev,
+      academicManagers: (prev.academicManagers || []).map(m => (m.id === id ? { ...m, ...updates } : m))
+    }));
+    addActivityLog('Cập nhật hồ sơ QLHT', `Đã cập nhật hồ sơ Quản lý học thuật: ${id}`);
+  };
+
+  const deleteAcademicManager = (id: string) => {
+    const m = (data.academicManagers || []).find(mgr => mgr.id === id);
+    setData(prev => ({
+      ...prev,
+      academicManagers: (prev.academicManagers || []).filter(mgr => mgr.id !== id)
+    }));
+    addActivityLog('Xóa hồ sơ QLHT', `Đã xóa hồ sơ Quản lý học thuật: ${m?.fullName || id}`);
   };
 
   // 5. Academic Programs
@@ -1758,6 +1809,35 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     addActivityLog('Khôi phục dữ liệu', 'Đã khôi phục toàn bộ hệ thống về bộ dữ liệu mẫu ban đầu');
   };
 
+  const restoreFromBackup = (backupStore: AppDataStore): { success: boolean; message?: string } => {
+    try {
+      setData(backupStore);
+      saveStorage(backupStore);
+      addActivityLog('Khôi phục sao lưu', 'Đã phục hồi dữ liệu từ file sao lưu JSON an toàn');
+      return { success: true, message: 'Đã phục hồi dữ liệu thành công từ file sao lưu.' };
+    } catch (err: any) {
+      return { success: false, message: `Lỗi phục hồi: ${err.message || 'Không thể lưu dữ liệu'}` };
+    }
+  };
+
+  const handleResolveConflict = (
+    conflict: RecordConflict,
+    resolution: 'keep_local' | 'keep_cloud' | 'custom',
+    customRecord?: any
+  ) => {
+    setData(prev => {
+      const updated = resolveConflictUtil(prev, conflict, resolution, customRecord);
+      return updated;
+    });
+    setConflicts(prev =>
+      prev.filter(c => !(c.category === conflict.category && c.recordId === conflict.recordId))
+    );
+    addActivityLog(
+      'Giải quyết xung đột',
+      `Đã giải quyết xung đột bản ghi ${conflict.recordTitle} (${resolution})`
+    );
+  };
+
   return (
     <DataContext.Provider
       value={{
@@ -1779,6 +1859,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addAssistant,
         updateAssistant,
         deleteAssistant,
+        addAcademicManager,
+        updateAcademicManager,
+        deleteAcademicManager,
         addProgram,
         updateProgram,
         deleteProgram,
@@ -1802,10 +1885,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         copyScheduleContent,
         updateSettings,
         resetAllData,
+        restoreFromBackup,
         addActivityLog,
         refreshData,
         isSyncing,
         lastSyncTime,
+        conflicts,
+        resolveConflict: handleResolveConflict,
         getLessonReportsForDate,
         saveLessonReport,
         submitLessonReport,
