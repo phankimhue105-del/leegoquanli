@@ -32,7 +32,10 @@ import {
   getVietnamNowFormatted,
   computeReportDeadlineISO,
   isReportExpired,
-  isStudentReportEntryComplete
+  isStudentReportEntryComplete,
+  fetchCenterDataFromGoogleAppsScript,
+  saveCenterDataToGoogleAppsScript,
+  mergeCenterData
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
 
@@ -123,7 +126,9 @@ interface DataContextType {
   updateSettings: (settings: Partial<CenterSettings>) => void;
   resetAllData: () => void;
   addActivityLog: (action: string, details: string) => void;
-  refreshData: () => void;
+  refreshData: () => Promise<void> | void;
+  isSyncing?: boolean;
+  lastSyncTime?: string | null;
 
   // Lesson Reports
   getLessonReportsForDate?: (date: string) => LessonReport[];
@@ -157,16 +162,79 @@ function isTimeOverlapping(startA: string, endA: string, startB: string, endB: s
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [data, setData] = useState<AppDataStore>(() => loadInitialStorage());
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const { currentUser, hasPermission } = useAuth();
 
-  const refreshData = () => {
+  const refreshData = async () => {
     try {
       const latest = loadInitialStorage();
       setData(latest);
+      setIsSyncing(true);
+      const remoteResult = await fetchCenterDataFromGoogleAppsScript();
+      if (remoteResult.success && remoteResult.data) {
+        setData(prev => {
+          const { merged, needsUpload } = mergeCenterData(prev, remoteResult.data!);
+          saveStorage(merged);
+          if (needsUpload) {
+            saveCenterDataToGoogleAppsScript(
+              {
+                lessonReports: merged.lessonReports,
+                incompleteReports: merged.incompleteReports,
+                makeupSessions: merged.makeupSessions,
+                lessonReportLockAudits: merged.lessonReportLockAudits
+              },
+              ['lessonReports', 'incompleteReports', 'makeupSessions', 'lessonReportLockAudits']
+            ).catch(e => console.warn('Background sync error on refresh:', e));
+          }
+          return merged;
+        });
+        setLastSyncTime(new Date().toLocaleTimeString('vi-VN'));
+      }
     } catch (e) {
       console.error('Failed to reload storage data:', e);
+    } finally {
+      setIsSyncing(false);
     }
   };
+
+  // Initial mount: pull shared data from Google Apps Script (leegodata) and safely merge
+  useEffect(() => {
+    let isMounted = true;
+    const initSharedSync = async () => {
+      setIsSyncing(true);
+      try {
+        const remoteResult = await fetchCenterDataFromGoogleAppsScript();
+        if (remoteResult.success && remoteResult.data && isMounted) {
+          setData(prev => {
+            const { merged, needsUpload } = mergeCenterData(prev, remoteResult.data!);
+            saveStorage(merged);
+            if (needsUpload) {
+              saveCenterDataToGoogleAppsScript(
+                {
+                  lessonReports: merged.lessonReports,
+                  incompleteReports: merged.incompleteReports,
+                  makeupSessions: merged.makeupSessions,
+                  lessonReportLockAudits: merged.lessonReportLockAudits
+                },
+                ['lessonReports', 'incompleteReports', 'makeupSessions', 'lessonReportLockAudits']
+              ).catch(e => console.warn('Initial migration upload error:', e));
+            }
+            return merged;
+          });
+          setLastSyncTime(new Date().toLocaleTimeString('vi-VN'));
+        }
+      } catch (err) {
+        console.warn('Initial shared data sync warning:', err);
+      } finally {
+        if (isMounted) setIsSyncing(false);
+      }
+    };
+    initSharedSync();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     saveStorage(data);
@@ -1369,6 +1437,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         lessonReports: nextReports
       };
       saveStorage(nextData);
+      saveCenterDataToGoogleAppsScript(
+        { lessonReports: nextReports },
+        ['lessonReports']
+      ).catch(e => console.warn('Background sync error on saveLessonReport:', e));
       return nextData;
     });
 
@@ -1465,6 +1537,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         incompleteReports: nextIncomplete
       };
       saveStorage(nextData);
+      saveCenterDataToGoogleAppsScript(
+        { lessonReports: nextReports, incompleteReports: nextIncomplete },
+        ['lessonReports', 'incompleteReports']
+      ).catch(e => console.warn('Background sync error on submitLessonReport:', e));
       return nextData;
     });
 
@@ -1571,6 +1647,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         incompleteReports: nextIncomplete
       };
       saveStorage(nextData);
+      saveCenterDataToGoogleAppsScript(
+        {
+          lessonReports: nextReports,
+          lessonReportLockAudits: nextAudits,
+          incompleteReports: nextIncomplete
+        },
+        ['lessonReports', 'lessonReportLockAudits', 'incompleteReports']
+      ).catch(e => console.warn('Background sync error on toggleReportLock:', e));
       return nextData;
     });
 
@@ -1589,10 +1673,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...session,
       id: `MK-${Date.now().toString().slice(-6)}`
     };
-    setData(prev => ({
-      ...prev,
-      makeupSessions: [newSession, ...(prev.makeupSessions || [])]
-    }));
+    setData(prev => {
+      const nextMakeup = [newSession, ...(prev.makeupSessions || [])];
+      const nextData = {
+        ...prev,
+        makeupSessions: nextMakeup
+      };
+      saveStorage(nextData);
+      saveCenterDataToGoogleAppsScript({ makeupSessions: nextMakeup }, ['makeupSessions']).catch(e =>
+        console.warn('Background sync error on addMakeupClass:', e)
+      );
+      return nextData;
+    });
     addActivityLog('Bổ sung lớp học bù', `Đã thêm lịch học bù lớp ${session.className} ngày ${session.date}`);
     return { success: true };
   };
@@ -1601,10 +1693,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (currentUser.role !== 'admin' && currentUser.role !== 'academic_manager') {
       return { success: false, error: 'Không có quyền xóa lớp học bù.' };
     }
-    setData(prev => ({
-      ...prev,
-      makeupSessions: (prev.makeupSessions || []).filter(m => m.id !== makeupId)
-    }));
+    setData(prev => {
+      const nextMakeup = (prev.makeupSessions || []).filter(m => m.id !== makeupId);
+      const nextData = {
+        ...prev,
+        makeupSessions: nextMakeup
+      };
+      saveStorage(nextData);
+      saveCenterDataToGoogleAppsScript({ makeupSessions: nextMakeup }, ['makeupSessions']).catch(e =>
+        console.warn('Background sync error on deleteMakeupClass:', e)
+      );
+      return nextData;
+    });
     return { success: true };
   };
 
@@ -1678,6 +1778,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resetAllData,
         addActivityLog,
         refreshData,
+        isSyncing,
+        lastSyncTime,
         getLessonReportsForDate,
         saveLessonReport,
         submitLessonReport,
