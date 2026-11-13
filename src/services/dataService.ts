@@ -1787,7 +1787,7 @@ export interface FullBackupPayload {
   data: AppDataStore;
 }
 
-const BASELINE_DATA_MAP: Record<string, any[]> = {
+export const BASELINE_DATA_MAP: Record<string, any[]> = {
   students: initialStudents,
   classes: initialClasses,
   teachers: initialTeachers,
@@ -1826,7 +1826,7 @@ const CATEGORY_DEFINITIONS: Array<{ key: keyof AppDataStore; name: string }> = [
   { key: 'settings', name: 'Cấu hình trung tâm (Settings)' }
 ];
 
-function isRecordModified(localItem: any, baselineItem: any): boolean {
+export function isRecordModified(localItem: any, baselineItem: any): boolean {
   if (!baselineItem) return true;
   try {
     return JSON.stringify(localItem) !== JSON.stringify(baselineItem);
