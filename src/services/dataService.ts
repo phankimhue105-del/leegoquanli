@@ -87,21 +87,21 @@ export function loadInitialStorage(): AppDataStore {
       const parsed = JSON.parse(raw);
       // Ensure all keys exist
       return {
-        students: parsed.students || initialStudents,
-        classes: parsed.classes || initialClasses,
-        teachers: parsed.teachers || initialTeachers,
-        teachingAssistants: parsed.teachingAssistants || initialTeachingAssistants,
-        academicManagers: parsed.academicManagers || initialAcademicManagers,
-        programs: parsed.programs || initialAcademicPrograms,
-        timetable: parsed.timetable || initialTimetableSessions,
-        attendance: parsed.attendance || initialAttendanceRecords,
-        assessments: parsed.assessments || initialAssessments,
-        lessonPlans: parsed.lessonPlans || initialLessonPlans,
-        users: parsed.users || initialUsers,
-        parents: parsed.parents || initialParents,
-        settings: parsed.settings || initialSettings,
-        activityLogs: parsed.activityLogs || initialActivityLogs,
-        teachingSchedules: parsed.teachingSchedules || initialTeachingSchedules,
+        students: Array.isArray(parsed.students) ? parsed.students : [],
+        classes: Array.isArray(parsed.classes) ? parsed.classes : [],
+        teachers: Array.isArray(parsed.teachers) ? parsed.teachers : [],
+        teachingAssistants: Array.isArray(parsed.teachingAssistants) ? parsed.teachingAssistants : [],
+        academicManagers: Array.isArray(parsed.academicManagers) ? parsed.academicManagers : [],
+        programs: Array.isArray(parsed.programs) ? parsed.programs : [],
+        timetable: Array.isArray(parsed.timetable) ? parsed.timetable : [],
+        attendance: Array.isArray(parsed.attendance) ? parsed.attendance : [],
+        assessments: Array.isArray(parsed.assessments) ? parsed.assessments : [],
+        lessonPlans: Array.isArray(parsed.lessonPlans) ? parsed.lessonPlans : [],
+        users: Array.isArray(parsed.users) ? parsed.users : [],
+        parents: Array.isArray(parsed.parents) ? parsed.parents : [],
+        settings: parsed.settings || { ...initialSettings, demoMode: false },
+        activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
+        teachingSchedules: Array.isArray(parsed.teachingSchedules) ? parsed.teachingSchedules : [],
         lessonReports: Array.isArray(parsed.lessonReports) ? parsed.lessonReports : [],
         incompleteReports: Array.isArray(parsed.incompleteReports) ? parsed.incompleteReports : [],
         makeupSessions: Array.isArray(parsed.makeupSessions) ? parsed.makeupSessions : [],
@@ -109,7 +109,34 @@ export function loadInitialStorage(): AppDataStore {
       };
     }
   } catch (err) {
-    console.error('Failed to parse localStorage data, falling back to initial data', err);
+    console.error('Failed to parse localStorage data', err);
+  }
+
+  // Check if session is authenticated
+  const isAuth = typeof localStorage !== 'undefined' && localStorage.getItem('leego_auth_status_v1') === 'true';
+  if (isAuth) {
+    // Authenticated user on a clean computer: do NOT initialize with fake demo data!
+    return {
+      students: [],
+      classes: [],
+      teachers: [],
+      teachingAssistants: [],
+      academicManagers: [],
+      programs: [],
+      timetable: [],
+      attendance: [],
+      assessments: [],
+      lessonPlans: [],
+      users: [],
+      parents: [],
+      settings: { ...initialSettings, demoMode: false },
+      activityLogs: [],
+      teachingSchedules: [],
+      lessonReports: [],
+      incompleteReports: [],
+      makeupSessions: [],
+      lessonReportLockAudits: [],
+    };
   }
 
   const defaultData: AppDataStore = {
@@ -474,7 +501,8 @@ function mergeSingleRecordFieldLevel(
  */
 export function mergeCenterData(
   local: AppDataStore,
-  remote: Partial<AppDataStore>
+  remote: Partial<AppDataStore>,
+  isAuthenticated: boolean = true
 ): MergeCenterDataResult {
   let needsUpload = false;
   const merged: AppDataStore = { ...local };
@@ -488,14 +516,142 @@ export function mergeCenterData(
     conflictsCount: 0
   };
 
+  // Step 0: Robust normalization of remote data from Apps Script
+  const normRemote: Partial<AppDataStore> = { ...remote };
+  const allArrayKeys: Array<keyof AppDataStore> = [
+    'students', 'classes', 'teachers', 'teachingAssistants', 'academicManagers', 'programs',
+    'timetable', 'attendance', 'assessments', 'lessonPlans', 'users', 'parents',
+    'teachingSchedules', 'activityLogs', 'lessonReports', 'incompleteReports', 'makeupSessions',
+    'lessonReportLockAudits'
+  ];
+  for (const k of allArrayKeys) {
+    if (!Array.isArray((normRemote as any)[k])) {
+      (normRemote as any)[k] = [];
+    }
+  }
+  if (typeof normRemote.settings !== 'object' || normRemote.settings === null) {
+    normRemote.settings = undefined;
+  }
+
+  // Step 0b: Extract and auto-hydrate real operational entities from Cloud if collections are currently empty in Cloud
+  const cloudReports = normRemote.lessonReports || [];
+  const cloudIncompletes = normRemote.incompleteReports || [];
+
+  // Auto-hydrate Classes from Cloud reports if cloud classes is empty
+  if (normRemote.classes!.length === 0 && (cloudReports.length > 0 || cloudIncompletes.length > 0)) {
+    const classMap = new Map<string, ClassItem>();
+    for (const r of cloudReports) {
+      if (r.classId && !classMap.has(r.classId)) {
+        classMap.set(r.classId, {
+          id: r.classId,
+          name: r.className || r.classId,
+          code: r.classId,
+          courseId: 'PROG-CAM',
+          curriculum: 'Cambridge Young Learners English',
+          teacherId: r.teacherId || 'TCH-001',
+          classroom: '1A',
+          level: 'Cambridge',
+          status: 'ongoing',
+          scheduleDays: 'Hàng tuần',
+          scheduleTime: 'Theo lịch',
+          startDate: '2026-09-01',
+          endDate: '2027-06-30',
+          maxCapacity: 14,
+          studentIds: (r.studentReports || []).map(s => String(s.studentId)).filter(Boolean)
+        } as any as ClassItem);
+      }
+    }
+    for (const inc of cloudIncompletes) {
+      if (inc.classId && !classMap.has(inc.classId)) {
+        classMap.set(inc.classId, {
+          id: inc.classId,
+          name: inc.className || inc.classId,
+          code: inc.classId,
+          courseId: 'PROG-CAM',
+          curriculum: 'Cambridge Young Learners English',
+          teacherId: 'TCH-001',
+          classroom: '1A',
+          level: 'Cambridge',
+          status: 'ongoing',
+          scheduleDays: 'Hàng tuần',
+          scheduleTime: 'Theo lịch',
+          startDate: '2026-09-01',
+          endDate: '2027-06-30',
+          maxCapacity: 14,
+          studentIds: []
+        } as any as ClassItem);
+      }
+    }
+    normRemote.classes = Array.from(classMap.values());
+  }
+
+  // Auto-hydrate Students from Cloud reports if cloud students is empty
+  if (normRemote.students!.length === 0 && cloudReports.length > 0) {
+    const stuMap = new Map<string, Student>();
+    for (const r of cloudReports) {
+      if (Array.isArray(r.studentReports)) {
+        for (const s of r.studentReports) {
+          const sid = String(s.studentId || '').trim();
+          if (sid && !stuMap.has(sid)) {
+            stuMap.set(sid, {
+              id: sid,
+              fullName: s.studentName || ('Học viên ' + sid),
+              vietnameseName: s.studentName || ('Học viên ' + sid),
+              dob: '2016-01-01',
+              gender: 'male',
+              school: 'LeeGo English Center',
+              grade: 'Tiểu học',
+              parentName: 'Phụ huynh ' + (s.studentName || sid),
+              parentPhone: '0900000000',
+              address: 'Hà Nội',
+              enrollmentDate: '2026-09-01',
+              currentLevel: 'Cambridge',
+              classIds: r.classId ? [r.classId] : [],
+              status: 'studying'
+            } as any as Student);
+          }
+        }
+      }
+    }
+    normRemote.students = Array.from(stuMap.values());
+  }
+
+  // Auto-hydrate Teachers from Cloud reports if cloud teachers is empty
+  if (normRemote.teachers!.length === 0 && cloudReports.length > 0) {
+    const tchMap = new Map<string, Teacher>();
+    for (const r of cloudReports) {
+      const tName = (r.teacherName || '').trim();
+      const tId = r.teacherId || ('TCH-' + tName.replace(/\s+/g, ''));
+      if (tName && !tchMap.has(tId)) {
+        tchMap.set(tId, {
+          id: tId,
+          fullName: tName,
+          vietnameseName: tName,
+          email: tId.toLowerCase() + '@leego.edu.vn',
+          phone: '0900000000',
+          nationality: tName.includes('Mr.') || tName.includes('David') || tName.includes('Sarah') || tName.includes('Angelica') ? 'Quốc tế' : 'Việt Nam',
+          isNative: tName.includes('Mr.') || tName.includes('David') || tName.includes('Sarah') || tName.includes('Angelica'),
+          qualifications: 'TESOL / CELTA',
+          experienceYears: 5,
+          teachingLevels: ['Pre A1 Starters', 'A1 Movers', 'A2 Flyers'],
+          status: 'active',
+          assignedClassIds: r.classId ? [r.classId] : [],
+          workloadHours: 12,
+          hourlyRate: 500000
+        } as any as Teacher);
+      }
+    }
+    normRemote.teachers = Array.from(tchMap.values());
+  }
+
   // 1. Merge Lesson Reports safely
-  if (Array.isArray(remote.lessonReports)) {
+  if (Array.isArray(normRemote.lessonReports)) {
     const localReports = Array.isArray(local.lessonReports) ? local.lessonReports : [];
-    const remoteReportMap = new Map(remote.lessonReports.map(r => [r.id, r]));
+    const remoteReportMap = new Map(normRemote.lessonReports.map(r => [r.id, r]));
     const localReportMap = new Map(localReports.map(r => [r.id, r]));
     const combinedReports: LessonReport[] = [];
 
-    for (const rem of remote.lessonReports) {
+    for (const rem of normRemote.lessonReports) {
       const loc = localReportMap.get(rem.id);
       if (!loc) {
         combinedReports.push(rem);
@@ -539,10 +695,10 @@ export function mergeCenterData(
   }
 
   // 2. Merge Incomplete Reports
-  if (Array.isArray(remote.incompleteReports)) {
-    const remoteIncMap = new Map(remote.incompleteReports.map(i => [i.id || i.reportId, i]));
+  if (Array.isArray(normRemote.incompleteReports)) {
+    const remoteIncMap = new Map(normRemote.incompleteReports.map(i => [i.id || i.reportId, i]));
     const localIncs = Array.isArray(local.incompleteReports) ? local.incompleteReports : [];
-    const combinedIncs = [...remote.incompleteReports];
+    const combinedIncs = [...normRemote.incompleteReports];
     for (const loc of localIncs) {
       if (!remoteIncMap.has(loc.id || loc.reportId)) {
         combinedIncs.push(loc);
@@ -556,10 +712,10 @@ export function mergeCenterData(
   }
 
   // 3. Merge Make-up Sessions
-  if (Array.isArray(remote.makeupSessions)) {
-    const remoteMakeupMap = new Map(remote.makeupSessions.map(m => [m.id, m]));
+  if (Array.isArray(normRemote.makeupSessions)) {
+    const remoteMakeupMap = new Map(normRemote.makeupSessions.map(m => [m.id, m]));
     const localMakeups = Array.isArray(local.makeupSessions) ? local.makeupSessions : [];
-    const combinedMakeups = [...remote.makeupSessions];
+    const combinedMakeups = [...normRemote.makeupSessions];
     for (const loc of localMakeups) {
       if (!remoteMakeupMap.has(loc.id)) {
         combinedMakeups.push(loc);
@@ -573,10 +729,10 @@ export function mergeCenterData(
   }
 
   // 4. Merge Lesson Report Lock Audits
-  if (Array.isArray(remote.lessonReportLockAudits)) {
-    const remoteAuditMap = new Map(remote.lessonReportLockAudits.map(a => [a.id, a]));
+  if (Array.isArray(normRemote.lessonReportLockAudits)) {
+    const remoteAuditMap = new Map(normRemote.lessonReportLockAudits.map(a => [a.id, a]));
     const localAudits = Array.isArray(local.lessonReportLockAudits) ? local.lessonReportLockAudits : [];
-    const combinedAudits = [...remote.lessonReportLockAudits];
+    const combinedAudits = [...normRemote.lessonReportLockAudits];
     for (const loc of localAudits) {
       if (!remoteAuditMap.has(loc.id)) {
         combinedAudits.push(loc);
@@ -609,25 +765,29 @@ export function mergeCenterData(
 
   for (const cat of entityCollections) {
     const locArr = Array.isArray(local[cat.key]) ? (local[cat.key] as any[]) : [];
-    const cldArr = Array.isArray(remote[cat.key]) ? (remote[cat.key] as any[]) : [];
+    const cldArr = Array.isArray(normRemote[cat.key]) ? (normRemote[cat.key] as any[]) : [];
     const baseArr = BASELINE_DATA_MAP[cat.key] || [];
     const baseMap = new Map(baseArr.map(b => [b.id, b]));
+    const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
 
     if (cldArr.length === 0) {
-      // Cloud has no records for this key yet
-      (merged as any)[cat.key] = locArr;
-      // If local has real records or modified demo, signal upload
-      const hasRealOrModified = locArr.some(item => {
-        const id = item?.id || item?.sessionId;
-        return !baseMap.has(id) || isRecordModified(item, baseMap.get(id));
-      });
-      if (hasRealOrModified) {
-        needsUpload = true;
+      // Cloud has no records for this key
+      if (isAuthenticated) {
+        // Strip untouched demo records for authenticated accounts
+        const realLocOnly = locArr.filter(item => {
+          const id = getId(item);
+          return !baseMap.has(id) || isRecordModified(item, baseMap.get(id));
+        });
+        (merged as any)[cat.key] = realLocOnly;
+        if (realLocOnly.length > 0) {
+          needsUpload = true;
+        }
+      } else {
+        (merged as any)[cat.key] = locArr;
       }
       continue;
     }
 
-    const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
     const cldMap = new Map(cldArr.map(item => [getId(item), item]));
     const locMap = new Map(locArr.map(item => [getId(item), item]));
     const mergedList: any[] = [];
@@ -646,11 +806,11 @@ export function mergeCenterData(
 
       if (locItem && !cldItem) {
         // Local has it, cloud does not
-        // Check if untouched demo
         const isUntouchedDemo = baseMap.has(id) && !isRecordModified(locItem, baseMap.get(id));
         if (isUntouchedDemo) {
-          // Untouched demo stays local, not pushed to cloud
-          mergedList.push(locItem);
+          if (!isAuthenticated) {
+            mergedList.push(locItem);
+          }
         } else {
           // Real new record created locally
           mergedList.push(locItem);
@@ -708,17 +868,23 @@ export function mergeCenterData(
     (merged as any)[cat.key] = mergedList;
   }
 
-  // 6. Merge Center Settings
-  if (remote.settings) {
+  // 6. Merge Center Settings (force demoMode: false for authenticated accounts)
+  if (normRemote.settings) {
     const locSettings = local.settings;
-    const cldSettings = remote.settings;
+    const cldSettings = normRemote.settings;
     const mergedClassrooms = Array.from(
       new Set([...(locSettings.classrooms || []), ...(cldSettings.classrooms || [])])
     );
     merged.settings = {
-      ...cldSettings,
       ...locSettings,
-      classrooms: mergedClassrooms
+      ...cldSettings,
+      classrooms: mergedClassrooms,
+      demoMode: !isAuthenticated ? (cldSettings.demoMode ?? locSettings.demoMode) : false
+    };
+  } else {
+    merged.settings = {
+      ...local.settings,
+      demoMode: !isAuthenticated ? local.settings.demoMode : false
     };
   }
 
