@@ -281,45 +281,239 @@ export async function saveCenterDataToGoogleAppsScript(
   }
 }
 
+// ============================================================================
+// MILESTONE 2: NON-DESTRUCTIVE FIELD-LEVEL MERGE ENGINE & CONFLICT RESOLUTION
+// ============================================================================
+
+export interface FieldConflict {
+  field: string;
+  fieldLabel: string;
+  localValue: any;
+  cloudValue: any;
+}
+
+export interface RecordConflict {
+  category: keyof AppDataStore;
+  categoryName: string;
+  recordId: string;
+  recordTitle: string;
+  conflicts: FieldConflict[];
+  localRecord: any;
+  cloudRecord: any;
+}
+
+export interface MergeStats {
+  addedFromCloud: number;
+  addedFromLocal: number;
+  mergedFieldLevel: number;
+  identicalRecords: number;
+  conflictsCount: number;
+}
+
+export interface MergeCenterDataResult {
+  merged: AppDataStore;
+  needsUpload: boolean;
+  hasConflicts: boolean;
+  conflicts: RecordConflict[];
+  stats: MergeStats;
+}
+
+export const FIELD_LABELS: Record<string, string> = {
+  fullName: 'Họ và tên',
+  vietnameseName: 'Tên tiếng Việt / Tiếng Anh',
+  dob: 'Ngày sinh',
+  gender: 'Giới tính',
+  school: 'Trường học',
+  grade: 'Khối lớp',
+  parentName: 'Họ tên phụ huynh',
+  parentPhone: 'Số điện thoại phụ huynh',
+  parentEmail: 'Email phụ huynh',
+  address: 'Địa chỉ',
+  currentLevel: 'Trình độ hiện tại',
+  status: 'Trạng thái',
+  notes: 'Ghi chú',
+  name: 'Tên lớp / Tên',
+  code: 'Mã lớp',
+  teacherId: 'Giáo viên phụ trách',
+  assistantTeacherId: 'Trợ giảng',
+  classroom: 'Phòng học',
+  scheduleDays: 'Ngày học trong tuần',
+  scheduleTime: 'Giờ học',
+  startDate: 'Ngày bắt đầu',
+  endDate: 'Ngày kết thúc',
+  maxCapacity: 'Sĩ số tối đa',
+  phone: 'Số điện thoại',
+  email: 'Email',
+  nationality: 'Quốc tịch',
+  isNative: 'Giáo viên bản ngữ',
+  qualifications: 'Bằng cấp / Chứng chỉ',
+  experienceYears: 'Số năm kinh nghiệm',
+  academicYear: 'Năm học',
+  currentTerm: 'Học kỳ',
+  centerName: 'Tên trung tâm',
+  subtitle: 'Tiêu đề phụ',
+  hotline: 'Hotline',
+  hourlyRate: 'Thù lao theo giờ'
+};
+
+function mergeObjectArrayByKey(localArr: any[], cloudArr: any[]): any[] {
+  const getKey = (item: any) =>
+    item?.studentId || item?.sessionId || item?.id || item?.date || item?.reportId || JSON.stringify(item);
+  const cloudMap = new Map(cloudArr.map(item => [getKey(item), item]));
+  const localMap = new Map(localArr.map(item => [getKey(item), item]));
+  const result: any[] = [];
+  const allKeys = Array.from(new Set([...cloudMap.keys(), ...localMap.keys()]));
+
+  for (const k of allKeys) {
+    const loc = localMap.get(k);
+    const cld = cloudMap.get(k);
+    if (!cld) result.push(loc);
+    else if (!loc) result.push(cld);
+    else {
+      result.push({ ...cld, ...loc });
+    }
+  }
+  return result;
+}
+
+function mergeSingleRecordFieldLevel(
+  category: keyof AppDataStore,
+  localItem: any,
+  cloudItem: any
+): { merged: any; conflicts: FieldConflict[] } {
+  const merged: any = { ...cloudItem, ...localItem };
+  const conflicts: FieldConflict[] = [];
+
+  const allKeys = Array.from(
+    new Set([...Object.keys(localItem || {}), ...Object.keys(cloudItem || {})])
+  );
+
+  for (const key of allKeys) {
+    if (key === 'id' || key === 'sessionId' || key === 'reportId') {
+      merged[key] = localItem?.[key] || cloudItem?.[key];
+      continue;
+    }
+
+    const locVal = localItem ? localItem[key] : undefined;
+    const cloudVal = cloudItem ? cloudItem[key] : undefined;
+
+    // 1. Array properties: non-destructive union
+    if (Array.isArray(locVal) || Array.isArray(cloudVal)) {
+      if (Array.isArray(locVal) && Array.isArray(cloudVal)) {
+        if (
+          locVal.every(x => typeof x !== 'object') &&
+          cloudVal.every(x => typeof x !== 'object')
+        ) {
+          merged[key] = Array.from(new Set([...locVal, ...cloudVal]));
+        } else {
+          merged[key] = mergeObjectArrayByKey(locVal, cloudVal);
+        }
+      } else {
+        merged[key] = Array.isArray(locVal) ? locVal : cloudVal;
+      }
+      continue;
+    }
+
+    // 2. Object properties
+    if (
+      locVal &&
+      typeof locVal === 'object' &&
+      !Array.isArray(locVal) &&
+      cloudVal &&
+      typeof cloudVal === 'object' &&
+      !Array.isArray(cloudVal)
+    ) {
+      const sub = mergeSingleRecordFieldLevel(category, locVal, cloudVal);
+      merged[key] = sub.merged;
+      conflicts.push(...sub.conflicts);
+      continue;
+    }
+
+    // 3. Primitive values
+    const isLocEmpty = locVal === undefined || locVal === null || locVal === '';
+    const isCloudEmpty = cloudVal === undefined || cloudVal === null || cloudVal === '';
+
+    if (!isLocEmpty && isCloudEmpty) {
+      merged[key] = locVal;
+    } else if (isLocEmpty && !isCloudEmpty) {
+      merged[key] = cloudVal;
+    } else if (locVal === cloudVal) {
+      merged[key] = locVal;
+    } else {
+      // Both are non-empty and differ
+      const locTime = localItem.updatedAt || localItem.lastEditedAt || localItem.submittedAt || '';
+      const cloudTime = cloudItem.updatedAt || cloudItem.lastEditedAt || cloudItem.submittedAt || '';
+
+      // Strict safety: Only pick timestamp if both exist, valid, and differ
+      if (locTime && cloudTime && locTime !== cloudTime) {
+        if (locTime > cloudTime) {
+          merged[key] = locVal;
+        } else {
+          merged[key] = cloudVal;
+        }
+      } else {
+        // Timestamp missing, equal, or untrusted -> Conflict!
+        conflicts.push({
+          field: key,
+          fieldLabel: FIELD_LABELS[key] || key,
+          localValue: locVal,
+          cloudValue: cloudVal
+        });
+        // Default to keeping local in memory while awaiting Admin resolution
+        merged[key] = locVal;
+      }
+    }
+  }
+
+  return { merged, conflicts };
+}
+
 /**
- * Safely merges remote center data into local store without losing local modifications
+ * Safely merges remote center data into local store using non-destructive
+ * field-level union, protecting local edits and detecting conflicts.
  */
 export function mergeCenterData(
   local: AppDataStore,
   remote: Partial<AppDataStore>
-): { merged: AppDataStore; needsUpload: boolean } {
+): MergeCenterDataResult {
   let needsUpload = false;
   const merged: AppDataStore = { ...local };
+  const allConflicts: RecordConflict[] = [];
+
+  const stats: MergeStats = {
+    addedFromCloud: 0,
+    addedFromLocal: 0,
+    mergedFieldLevel: 0,
+    identicalRecords: 0,
+    conflictsCount: 0
+  };
 
   // 1. Merge Lesson Reports safely
   if (Array.isArray(remote.lessonReports)) {
     const localReports = Array.isArray(local.lessonReports) ? local.lessonReports : [];
     const remoteReportMap = new Map(remote.lessonReports.map(r => [r.id, r]));
     const localReportMap = new Map(localReports.map(r => [r.id, r]));
-
     const combinedReports: LessonReport[] = [];
 
-    // All remote reports
     for (const rem of remote.lessonReports) {
       const loc = localReportMap.get(rem.id);
       if (!loc) {
         combinedReports.push(rem);
+        stats.addedFromCloud++;
       } else {
         const remTime = rem.lastEditedAt || rem.lockedAt || rem.submittedAt || '';
         const locTime = loc.lastEditedAt || loc.lockedAt || loc.submittedAt || '';
 
-        // If remote has authoritative lock/unlock state change from manager
         if (rem.locked && !loc.locked) {
-          // Manager locked on server -> client must be locked
           combinedReports.push(rem);
+          stats.mergedFieldLevel++;
         } else if (!rem.locked && loc.locked && rem.unlockedAfterExpiration) {
-          // Manager explicitly unlocked after expiration on server -> client must be unlocked
           combinedReports.push(rem);
+          stats.mergedFieldLevel++;
         } else if (remTime >= locTime) {
           combinedReports.push(rem);
+          stats.mergedFieldLevel++;
         } else {
-          // Local has newer edits offline
-          // Ensure remote lock is maintained if server is locked
           combinedReports.push({
             ...loc,
             locked: rem.locked ? true : loc.locked,
@@ -327,18 +521,18 @@ export function mergeCenterData(
             lockedBy: rem.locked ? rem.lockedBy : loc.lockedBy
           });
           needsUpload = true;
+          stats.mergedFieldLevel++;
         }
       }
     }
 
-    // Keep any local reports that remote doesn't have yet
     for (const loc of localReports) {
       if (!remoteReportMap.has(loc.id)) {
         combinedReports.push(loc);
         needsUpload = true;
+        stats.addedFromLocal++;
       }
     }
-
     merged.lessonReports = combinedReports;
   } else if (Array.isArray(local.lessonReports) && local.lessonReports.length > 0) {
     needsUpload = true;
@@ -353,6 +547,7 @@ export function mergeCenterData(
       if (!remoteIncMap.has(loc.id || loc.reportId)) {
         combinedIncs.push(loc);
         needsUpload = true;
+        stats.addedFromLocal++;
       }
     }
     merged.incompleteReports = combinedIncs;
@@ -369,6 +564,7 @@ export function mergeCenterData(
       if (!remoteMakeupMap.has(loc.id)) {
         combinedMakeups.push(loc);
         needsUpload = true;
+        stats.addedFromLocal++;
       }
     }
     merged.makeupSessions = combinedMakeups;
@@ -385,6 +581,7 @@ export function mergeCenterData(
       if (!remoteAuditMap.has(loc.id)) {
         combinedAudits.push(loc);
         needsUpload = true;
+        stats.addedFromLocal++;
       }
     }
     merged.lessonReportLockAudits = combinedAudits;
@@ -392,23 +589,188 @@ export function mergeCenterData(
     needsUpload = true;
   }
 
-  // 5. Merge other store keys if remote provides them and non-empty
-  const otherKeys: Array<keyof AppDataStore> = [
-    'students', 'classes', 'teachers', 'teachingAssistants', 'academicManagers', 'programs',
-    'timetable', 'attendance', 'assessments', 'lessonPlans', 'users', 'parents',
-    'settings', 'activityLogs', 'teachingSchedules'
+  // 5. Merge all entity collections with Non-Destructive Field-Level resolution
+  const entityCollections: Array<{ key: keyof AppDataStore; name: string }> = [
+    { key: 'students', name: 'Học viên (Students)' },
+    { key: 'classes', name: 'Lớp học (Classes)' },
+    { key: 'teachers', name: 'Giáo viên (Teachers)' },
+    { key: 'teachingAssistants', name: 'Trợ giảng (TAs)' },
+    { key: 'academicManagers', name: 'Quản lí học thuật (AMs)' },
+    { key: 'programs', name: 'Chương trình học (Programs)' },
+    { key: 'timetable', name: 'Thời khóa biểu (Timetable)' },
+    { key: 'attendance', name: 'Điểm danh (Attendance)' },
+    { key: 'assessments', name: 'Bảng điểm & Đánh giá (Assessments)' },
+    { key: 'lessonPlans', name: 'Giáo án & Đề cương (Lesson Plans)' },
+    { key: 'users', name: 'Tài khoản người dùng (Users)' },
+    { key: 'parents', name: 'Hồ sơ Phụ huynh (Parents)' },
+    { key: 'teachingSchedules', name: 'Lịch dạy tháng (Teaching Schedules)' },
+    { key: 'activityLogs', name: 'Nhật ký hoạt động (Activity Logs)' }
   ];
-  for (const k of otherKeys) {
-    const remoteVal = remote[k];
-    if (Array.isArray(remoteVal) && remoteVal.length > 0) {
-      (merged as any)[k] = remoteVal;
-    } else if (remoteVal && typeof remoteVal === 'object' && !Array.isArray(remoteVal) && Object.keys(remoteVal).length > 0) {
-      (merged as any)[k] = remoteVal;
+
+  for (const cat of entityCollections) {
+    const locArr = Array.isArray(local[cat.key]) ? (local[cat.key] as any[]) : [];
+    const cldArr = Array.isArray(remote[cat.key]) ? (remote[cat.key] as any[]) : [];
+    const baseArr = BASELINE_DATA_MAP[cat.key] || [];
+    const baseMap = new Map(baseArr.map(b => [b.id, b]));
+
+    if (cldArr.length === 0) {
+      // Cloud has no records for this key yet
+      (merged as any)[cat.key] = locArr;
+      // If local has real records or modified demo, signal upload
+      const hasRealOrModified = locArr.some(item => {
+        const id = item?.id || item?.sessionId;
+        return !baseMap.has(id) || isRecordModified(item, baseMap.get(id));
+      });
+      if (hasRealOrModified) {
+        needsUpload = true;
+      }
+      continue;
     }
+
+    const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
+    const cldMap = new Map(cldArr.map(item => [getId(item), item]));
+    const locMap = new Map(locArr.map(item => [getId(item), item]));
+    const mergedList: any[] = [];
+    const allIds = Array.from(new Set([...cldMap.keys(), ...locMap.keys()])).filter(Boolean);
+
+    for (const id of allIds) {
+      const cldItem = cldMap.get(id);
+      const locItem = locMap.get(id);
+
+      if (cldItem && !locItem) {
+        // Cloud has it, local does not
+        mergedList.push(cldItem);
+        stats.addedFromCloud++;
+        continue;
+      }
+
+      if (locItem && !cldItem) {
+        // Local has it, cloud does not
+        // Check if untouched demo
+        const isUntouchedDemo = baseMap.has(id) && !isRecordModified(locItem, baseMap.get(id));
+        if (isUntouchedDemo) {
+          // Untouched demo stays local, not pushed to cloud
+          mergedList.push(locItem);
+        } else {
+          // Real new record created locally
+          mergedList.push(locItem);
+          stats.addedFromLocal++;
+          needsUpload = true;
+        }
+        continue;
+      }
+
+      if (locItem && cldItem) {
+        // Both local and cloud have this ID
+        const isLocUntouchedDemo = baseMap.has(id) && !isRecordModified(locItem, baseMap.get(id));
+        if (isLocUntouchedDemo) {
+          // Local is just default demo; Cloud has actual center data
+          mergedList.push(cldItem);
+          stats.addedFromCloud++;
+          continue;
+        }
+
+        if (JSON.stringify(locItem) === JSON.stringify(cldItem)) {
+          mergedList.push(locItem);
+          stats.identicalRecords++;
+          continue;
+        }
+
+        // Perform field-level merge
+        const { merged: mergedRec, conflicts } = mergeSingleRecordFieldLevel(cat.key, locItem, cldItem);
+
+        if (conflicts.length > 0) {
+          const title =
+            locItem.fullName ||
+            locItem.name ||
+            locItem.title ||
+            locItem.className ||
+            `Bản ghi ${id}`;
+
+          allConflicts.push({
+            category: cat.key,
+            categoryName: cat.name,
+            recordId: id,
+            recordTitle: title,
+            conflicts,
+            localRecord: locItem,
+            cloudRecord: cldItem
+          });
+          stats.conflictsCount++;
+        } else {
+          stats.mergedFieldLevel++;
+        }
+
+        mergedList.push(mergedRec);
+      }
+    }
+
+    (merged as any)[cat.key] = mergedList;
   }
 
-  return { merged, needsUpload };
+  // 6. Merge Center Settings
+  if (remote.settings) {
+    const locSettings = local.settings;
+    const cldSettings = remote.settings;
+    const mergedClassrooms = Array.from(
+      new Set([...(locSettings.classrooms || []), ...(cldSettings.classrooms || [])])
+    );
+    merged.settings = {
+      ...cldSettings,
+      ...locSettings,
+      classrooms: mergedClassrooms
+    };
+  }
+
+  return {
+    merged,
+    needsUpload,
+    hasConflicts: allConflicts.length > 0,
+    conflicts: allConflicts,
+    stats
+  };
 }
+
+/**
+ * Resolves a specific record conflict by choosing local, cloud, or custom values.
+ */
+export function resolveConflict(
+  data: AppDataStore,
+  conflict: RecordConflict,
+  resolution: 'keep_local' | 'keep_cloud' | 'custom',
+  customRecord?: any
+): AppDataStore {
+  const category = conflict.category;
+  const targetId = conflict.recordId;
+  const list = Array.isArray(data[category]) ? [...(data[category] as any[])] : [];
+
+  let resolvedItem: any;
+  if (resolution === 'keep_local') {
+    resolvedItem = conflict.localRecord;
+  } else if (resolution === 'keep_cloud') {
+    resolvedItem = conflict.cloudRecord;
+  } else {
+    resolvedItem = customRecord || conflict.localRecord;
+  }
+
+  const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
+  const idx = list.findIndex(item => getId(item) === targetId);
+
+  if (idx >= 0) {
+    list[idx] = resolvedItem;
+  } else {
+    list.push(resolvedItem);
+  }
+
+  const updatedData: AppDataStore = {
+    ...data,
+    [category]: list
+  };
+
+  saveStorage(updatedData);
+  return updatedData;
+}
+
 
 // Excel Export Functions
 export function exportStudentsToExcel(students: Student[], classes: ClassItem[]): void {
