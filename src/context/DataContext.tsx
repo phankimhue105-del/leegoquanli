@@ -38,7 +38,9 @@ import {
   saveCenterDataToGoogleAppsScript,
   mergeCenterData,
   RecordConflict,
-  resolveConflict as resolveConflictUtil
+  resolveConflict as resolveConflictUtil,
+  BASELINE_DATA_MAP,
+  isRecordModified
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
 
@@ -250,6 +252,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Initial shared data sync warning:', err);
       } finally {
         if (isMounted) setIsSyncing(false);
+        initialUploadDoneRef.current = true;
       }
     };
     initSharedSync();
@@ -276,6 +279,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     syncTimeoutRef.current = setTimeout(async () => {
+      // Safety guard 1: Never write before initial cloud pull completes
+      if (!initialUploadDoneRef.current) {
+        queueKeysForCloudSync([]);
+        return;
+      }
+
       const keysToSave = Array.from(pendingKeysToSyncRef.current);
       if (keysToSave.length === 0) return;
       pendingKeysToSyncRef.current.clear();
@@ -284,7 +293,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const payload: Partial<AppDataStore> = {};
         for (const k of keysToSave) {
-          (payload as any)[k] = latestDataRef.current[k];
+          const val = latestDataRef.current[k];
+          if (Array.isArray(val) && (BASELINE_DATA_MAP as any)[k]) {
+            // Strip any untouched demo records before sending to Google Sheets
+            const baseArr = (BASELINE_DATA_MAP as any)[k] || [];
+            const baseMap = new Map(baseArr.map((b: any) => [b.id || b.sessionId || b.reportId, b]));
+            const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
+            (payload as any)[k] = val.filter((item: any) => {
+              const b = baseMap.get(getId(item));
+              return !b || isRecordModified(item, b);
+            });
+          } else {
+            (payload as any)[k] = val;
+          }
         }
         const res = await saveCenterDataToGoogleAppsScript(payload, keysToSave);
         if (res.success) {
