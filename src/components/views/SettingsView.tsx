@@ -19,7 +19,8 @@ import {
   Eye,
   Cloud,
   X,
-  Info
+  Info,
+  UploadCloud
 } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
@@ -28,7 +29,11 @@ import {
   downloadFullBackup,
   validateBackupFile,
   SurveyScanReport,
-  fetchCenterDataFromGoogleAppsScript
+  fetchCenterDataFromGoogleAppsScript,
+  buildMigrationPlan,
+  executeMigration,
+  MigrationPlan,
+  MigrationExecutionResult
 } from '../../services/dataService';
 
 export const SettingsView: React.FC = () => {
@@ -59,6 +64,14 @@ export const SettingsView: React.FC = () => {
   const [restoreConfirmText, setRestoreConfirmText] = useState('');
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [isRestoreSectionOpen, setIsRestoreSectionOpen] = useState(false);
+
+  // Milestone 3: Migration state
+  const [migrationPlan, setMigrationPlan] = useState<MigrationPlan | null>(null);
+  const [isBuildingMigration, setIsBuildingMigration] = useState(false);
+  const [isExecutingMigration, setIsExecutingMigration] = useState(false);
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
+  const [migrationConfirmed, setMigrationConfirmed] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<MigrationExecutionResult | null>(null);
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,7 +120,6 @@ export const SettingsView: React.FC = () => {
   const handleRunSurveyScan = async () => {
     setIsScanning(true);
     try {
-      // 1. Fetch remote cloud data in read-only mode
       const cloudRes = await fetchCenterDataFromGoogleAppsScript();
       let remoteData: any = null;
       let cloudFetchStatus: 'success' | 'failed' | 'skipped' = 'skipped';
@@ -122,7 +134,6 @@ export const SettingsView: React.FC = () => {
         cloudMessage = cloudRes.error || 'Không đọc được dữ liệu Google Sheets leegodata.';
       }
 
-      // 2. Run survey scanner against current local data and remote data
       const report = runDataSurveyScanner(data, remoteData, cloudFetchStatus, cloudMessage);
       setSurveyReport(report);
       showToast('Đã hoàn thành khảo sát và kiểm kê dữ liệu hiện tại!', 'success');
@@ -186,6 +197,48 @@ export const SettingsView: React.FC = () => {
       } else {
         showToast(result.message || 'Lỗi khi phục hồi dữ liệu', 'error');
       }
+    }
+  };
+
+  const handleOpenMigrationPreview = async () => {
+    setIsBuildingMigration(true);
+    setMigrationResult(null);
+    setMigrationConfirmed(false);
+    try {
+      const cloudRes = await fetchCenterDataFromGoogleAppsScript();
+      const remoteData = cloudRes.success && cloudRes.data ? cloudRes.data : null;
+      const plan = buildMigrationPlan(data, remoteData);
+      setMigrationPlan(plan);
+      setShowMigrationModal(true);
+    } catch (err: any) {
+      showToast('Không thể khởi tạo kế hoạch Migration: ' + (err.message || 'Lỗi mạng'), 'error');
+    } finally {
+      setIsBuildingMigration(false);
+    }
+  };
+
+  const handleExecuteMigration = async () => {
+    if (!migrationPlan || !migrationConfirmed) return;
+    setIsExecutingMigration(true);
+    try {
+      const res = await executeMigration(migrationPlan);
+      setMigrationResult(res);
+      if (res.success) {
+        showToast(res.message || 'Đã Migration lên Google Sheets thành công!', 'success');
+        const cloudRes = await fetchCenterDataFromGoogleAppsScript();
+        const report = runDataSurveyScanner(
+          data,
+          cloudRes.success && cloudRes.data ? cloudRes.data : null,
+          cloudRes.success ? 'success' : 'failed'
+        );
+        setSurveyReport(report);
+      } else {
+        showToast(res.error || 'Migration thất bại!', 'error');
+      }
+    } catch (err: any) {
+      showToast('Lỗi Migration: ' + (err.message || 'Lỗi kết nối'), 'error');
+    } finally {
+      setIsExecutingMigration(false);
     }
   };
 
@@ -253,7 +306,7 @@ export const SettingsView: React.FC = () => {
       </div>
 
       {/* ========================================================================= */}
-      {/* MILESTONE 1: READ-ONLY SURVEY & COMPREHENSIVE BACKUP CARD */}
+      {/* MILESTONE 1, 2 & 3: SURVEY, MERGE & SAFE MIGRATION CARD */}
       {/* ========================================================================= */}
       <div className="bg-white rounded-2xl border border-sky-200/90 p-6 shadow-xs space-y-5">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
@@ -264,14 +317,14 @@ export const SettingsView: React.FC = () => {
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-extrabold text-slate-900">
-                  Kiểm Kê Dữ Liệu & Sao Lưu Toàn Diện (Milestone 1)
+                  Kiểm Kê, Ghép Dữ Liệu & Migration Lên Cloud (Milestone 1, 2 & 3)
                 </h3>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-100 text-sky-800 border border-sky-300">
-                  Chế độ Chỉ Đọc (Read-Only)
+                  Bảo Vệ Dữ Liệu Thực Tế
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Kiểm kê phân loại Demo vs Dữ liệu thật, đối chiếu Cloud và xuất file sao lưu an toàn.
+                Kiểm kê phân loại Demo vs Dữ liệu thật, xử lý xung đột và đồng bộ an toàn lên Google Sheets leegodata.
               </p>
             </div>
           </div>
@@ -296,6 +349,18 @@ export const SettingsView: React.FC = () => {
             >
               <RefreshCw className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} />
               <span>{isScanning ? 'Đang khảo sát...' : 'Khảo sát & Đối chiếu Cloud'}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isBuildingMigration}
+              onClick={handleOpenMigrationPreview}
+              className={`px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all ${
+                isBuildingMigration ? 'opacity-70 cursor-not-allowed' : ''
+              }`}
+            >
+              <UploadCloud className={`w-4 h-4 ${isBuildingMigration ? 'animate-pulse' : ''}`} />
+              <span>{isBuildingMigration ? 'Đang chuẩn bị...' : 'Migration Lên Cloud (Milestone 3)'}</span>
             </button>
 
             {surveyReport && (
@@ -948,6 +1013,215 @@ export const SettingsView: React.FC = () => {
               >
                 Xác nhận phục hồi
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Safe Migration Preview & Confirmation (Milestone 3) */}
+      {showMigrationModal && migrationPlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-fadeIn">
+          <div className="bg-white rounded-2xl border border-purple-200 shadow-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                  <UploadCloud className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900">
+                    Xem Trước & Xác Nhận Migration Lên Cloud Google Sheets
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Milestone 3: Đồng bộ dữ liệu thực tế máy này lên leegodata
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isExecutingMigration) {
+                    setShowMigrationModal(false);
+                    setMigrationResult(null);
+                  }
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+              {/* Migration Result Banner if completed */}
+              {migrationResult && (
+                <div
+                  className={`p-4 rounded-xl border text-xs space-y-1.5 ${
+                    migrationResult.success
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                      : 'bg-red-50 border-red-300 text-red-950'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 font-bold text-sm">
+                    {migrationResult.success ? (
+                      <>
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                        <span>Migration Thành Công & Đã Đối Chiếu Xác Nhận!</span>
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle className="w-5 h-5 text-red-600" />
+                        <span>Migration Thất Bại: {migrationResult.error}</span>
+                      </>
+                    )}
+                  </div>
+                  {migrationResult.message && (
+                    <p className="text-[11px] leading-relaxed">{migrationResult.message}</p>
+                  )}
+                  {migrationResult.verifiedCounts && (
+                    <div className="pt-1 text-[10px] text-emerald-800">
+                      Số lượng bản ghi xác nhận trên Cloud:{' '}
+                      {Object.entries(migrationResult.verifiedCounts)
+                        .map(([k, c]) => `${k}: ${c}`)
+                        .join(', ')}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Explanatory banner */}
+              <div className="p-3.5 bg-purple-50/80 border border-purple-200 rounded-xl text-purple-950 space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-purple-700" />
+                  <span>Cơ chế bảo vệ dữ liệu trung tâm:</span>
+                </p>
+                <p className="text-[11px] text-purple-900 leading-relaxed">
+                  Hệ thống đã tự động quét và phân loại: <strong>Loại bỏ hoàn toàn {migrationPlan.totalExcludedDemo} bản ghi Demo nguyên bản</strong> để không làm bẩn dữ liệu trung tâm. Chỉ <strong>{migrationPlan.totalUploadRecords} bản ghi thực tế</strong> mới được chuyển lên Google Sheets <code className="font-mono font-bold">leegodata</code>.
+                </p>
+              </div>
+
+              {/* 3 Summary Cards */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="p-3 rounded-xl bg-purple-50 border border-purple-200">
+                  <span className="text-[11px] text-purple-700 font-semibold block">Sẽ đưa lên Cloud</span>
+                  <span className="text-xl font-extrabold text-purple-900 mt-0.5 block">
+                    {migrationPlan.totalUploadRecords} bản ghi
+                  </span>
+                  <span className="text-[10px] text-purple-600">Dữ liệu thực tế</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[11px] text-slate-500 font-semibold block">Demo được loại bỏ</span>
+                  <span className="text-xl font-extrabold text-slate-600 mt-0.5 block">
+                    {migrationPlan.totalExcludedDemo} bản ghi
+                  </span>
+                  <span className="text-[10px] text-slate-500">Giữ ở máy Local</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200">
+                  <span className="text-[11px] text-indigo-700 font-semibold block">Danh mục đồng bộ</span>
+                  <span className="text-xl font-extrabold text-indigo-900 mt-0.5 block">
+                    {migrationPlan.keysToUpload.length} danh mục
+                  </span>
+                  <span className="text-[10px] text-indigo-600">Google Sheets keys</span>
+                </div>
+              </div>
+
+              {/* Detailed Categories Table */}
+              <div className="space-y-1.5">
+                <h4 className="font-bold text-slate-800 text-xs">
+                  Chi tiết từng danh mục sẽ được chuyển lên Cloud:
+                </h4>
+                <div className="border border-slate-200 rounded-xl overflow-hidden overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 text-[11px]">
+                        <th className="py-2 px-3">Danh mục</th>
+                        <th className="py-2 px-3 text-center">Tổng Local</th>
+                        <th className="py-2 px-3 text-center text-slate-500">Loại bỏ Demo</th>
+                        <th className="py-2 px-3 text-center text-purple-700">Sẽ Upload Cloud</th>
+                        <th className="py-2 px-3">Ví dụ bản ghi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {migrationPlan.categories.map((c) => (
+                        <tr key={c.key} className="hover:bg-slate-50/60 transition-colors">
+                          <td className="py-2 px-3 font-semibold text-slate-900">{c.name}</td>
+                          <td className="py-2 px-3 text-center text-slate-600">{c.totalLocal}</td>
+                          <td className="py-2 px-3 text-center text-slate-400">{c.excludedDemoCount}</td>
+                          <td className="py-2 px-3 text-center font-bold text-purple-800">
+                            {c.uploadRecordCount > 0 ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-300">
+                                +{c.uploadRecordCount}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">0</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-[11px] text-slate-500">
+                            {c.sampleTitles.length > 0 ? c.sampleTitles.join(', ') : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Safety Confirmation Checkbox */}
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={migrationConfirmed}
+                    disabled={isExecutingMigration}
+                    onChange={(e) => setMigrationConfirmed(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                  />
+                  <span className="text-xs font-semibold text-slate-800 leading-relaxed">
+                    Tôi xác nhận đây là máy tính có dữ liệu thực tế của trung tâm. Tôi đã kiểm tra xem trước và đồng ý đưa {migrationPlan.totalUploadRecords} bản ghi thực tế lên Google Sheets leegodata để chia sẻ cho các máy khác.
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">
+                Lên lịch lúc: {migrationPlan.generatedAt}
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isExecutingMigration}
+                  onClick={() => {
+                    setShowMigrationModal(false);
+                    setMigrationResult(null);
+                  }}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition-colors"
+                >
+                  Đóng
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!migrationConfirmed || isExecutingMigration || migrationPlan.totalUploadRecords === 0}
+                  onClick={handleExecuteMigration}
+                  className={`px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md transition-all ${
+                    !migrationConfirmed || isExecutingMigration || migrationPlan.totalUploadRecords === 0
+                      ? 'opacity-40 cursor-not-allowed'
+                      : ''
+                  }`}
+                >
+                  <UploadCloud className={`w-4 h-4 ${isExecutingMigration ? 'animate-bounce' : ''}`} />
+                  <span>
+                    {isExecutingMigration
+                      ? 'Đang đồng bộ & Đối chiếu...'
+                      : `Đồng Bộ ${migrationPlan.totalUploadRecords} Bản Ghi Lên Cloud`}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
