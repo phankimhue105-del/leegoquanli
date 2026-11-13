@@ -25,10 +25,11 @@ export interface GasAuthResult {
  * Maps a raw user object returned by Google Apps Script / leegologin to the application's User model
  */
 export function mapGasUserToAppUser(gasUser: GasUserResponse): User {
+  const rawRole = String(gasUser.role || '').toLowerCase().trim();
   const role: UserRole =
-    gasUser.role === 'admin'
+    rawRole === 'admin' || rawRole.includes('admin') || rawRole.includes('quản trị') || rawRole.includes('quantri')
       ? 'admin'
-      : gasUser.role === 'academic_manager'
+      : rawRole === 'academic_manager' || rawRole.includes('academic') || rawRole.includes('học thuật') || rawRole.includes('hocthuat') || rawRole.includes('manager')
       ? 'academic_manager'
       : 'teacher';
 
@@ -52,7 +53,7 @@ export function mapGasUserToAppUser(gasUser: GasUserResponse): User {
 
 /**
  * Authenticates credentials against Google Apps Script backend (leegologin)
- * with strict 10-second timeout handling
+ * with robust 20-second timeout handling for cold starts
  */
 export async function authenticateWithGoogleAppsScript(
   usernameOrEmail: string,
@@ -69,7 +70,7 @@ export async function authenticateWithGoogleAppsScript(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+  const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout for cold start
 
   try {
     const payload = {
@@ -113,12 +114,16 @@ export async function authenticateWithGoogleAppsScript(
       };
     }
 
-    const message = data.message || 'Tên đăng nhập hoặc mật khẩu không chính xác.';
-    let vietnameseError = 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại.';
+    const message = data.message || data.error || 'Tên đăng nhập hoặc mật khẩu không chính xác.';
+    let vietnameseError = message;
     if (message.includes('enter username')) {
       vietnameseError = 'Vui lòng nhập đầy đủ Tên đăng nhập và Mật khẩu.';
-    } else if (message.includes('locked') || message.includes('inactive')) {
+    } else if (message.includes('locked') || message.includes('inactive') || message.includes('khóa')) {
       vietnameseError = 'Tài khoản đã bị tạm khóa.';
+    } else if (message.includes('chưa có tài khoản') || message.includes('không tồn tại')) {
+      vietnameseError = 'Tài khoản không tồn tại trong hệ thống. Vui lòng kiểm tra lại Tên đăng nhập.';
+    } else if (message.includes('Mật khẩu không chính xác')) {
+      vietnameseError = 'Mật khẩu không chính xác. Vui lòng kiểm tra lại.';
     }
 
     return {
@@ -130,7 +135,7 @@ export async function authenticateWithGoogleAppsScript(
     if (err.name === 'AbortError') {
       return {
         success: false,
-        error: 'Không thể kết nối hệ thống xác thực. Yêu cầu quá thời gian chờ (10s). Vui lòng thử lại.'
+        error: 'Không thể kết nối hệ thống xác thực. Yêu cầu quá thời gian chờ (20s). Vui lòng thử lại.'
       };
     }
     return {
@@ -145,7 +150,7 @@ export async function authenticateWithGoogleAppsScript(
  */
 export async function fetchUsersFromGoogleAppsScript(): Promise<User[]> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
     const response = await fetch(APPS_SCRIPT_URL, {
