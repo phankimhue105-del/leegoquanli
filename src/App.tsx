@@ -33,9 +33,12 @@ const LoginView: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const isSubmittingRef = React.useRef(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current || loading) return;
+    isSubmittingRef.current = true;
     setErrorMessage('');
     setLoading(true);
 
@@ -49,6 +52,7 @@ const LoginView: React.FC = () => {
       setErrorMessage(err?.message || 'Không thể kết nối hệ thống xác thực. Vui lòng thử lại.');
     } finally {
       setLoading(false);
+      isSubmittingRef.current = false;
     }
   };
 
