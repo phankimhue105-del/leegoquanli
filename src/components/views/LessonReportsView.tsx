@@ -77,7 +77,7 @@ export const LessonReportsView: React.FC = () => {
   // Default to current date in Vietnam timezone (Asia/Ho_Chi_Minh)
   const [selectedDate, setSelectedDate] = useState<string>(() => getVietnamTodayISO());
 
-  // Auto-synchronize shared reports on mount and when window regains focus
+  // Auto-synchronize shared reports on mount and when window regains focus (throttled by DataContext)
   useEffect(() => {
     if (typeof refreshData === 'function') {
       refreshData();
@@ -89,7 +89,7 @@ export const LessonReportsView: React.FC = () => {
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [refreshData, selectedDate]);
+  }, [refreshData]);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState<string>('');
