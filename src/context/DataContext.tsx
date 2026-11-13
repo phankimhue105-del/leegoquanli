@@ -126,7 +126,7 @@ interface DataContextType {
   updateSettings: (settings: Partial<CenterSettings>) => void;
   resetAllData: () => void;
   addActivityLog: (action: string, details: string) => void;
-  refreshData: () => Promise<void> | void;
+  refreshData: (force?: boolean) => Promise<void> | void;
   isSyncing?: boolean;
   lastSyncTime?: string | null;
 
@@ -164,9 +164,27 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [data, setData] = useState<AppDataStore>(() => loadInitialStorage());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
-  const { currentUser, hasPermission } = useAuth();
+  const { currentUser, hasPermission, isAuthenticated } = useAuth();
 
-  const refreshData = async () => {
+  const lastRefreshCallRef = React.useRef<number>(0);
+  const isRefreshingRef = React.useRef<boolean>(false);
+  const initialUploadDoneRef = React.useRef<boolean>(false);
+
+  const refreshData = async (force: boolean = false) => {
+    if (!isAuthenticated) return;
+
+    const now = Date.now();
+    // Throttle automatic refreshes to at most once every 20 seconds unless forced
+    if (!force && now - lastRefreshCallRef.current < 20000) {
+      return;
+    }
+    if (isRefreshingRef.current) {
+      return;
+    }
+
+    isRefreshingRef.current = true;
+    lastRefreshCallRef.current = now;
+
     try {
       const latest = loadInitialStorage();
       setData(latest);
@@ -176,7 +194,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setData(prev => {
           const { merged, needsUpload } = mergeCenterData(prev, remoteResult.data!);
           saveStorage(merged);
-          if (needsUpload) {
+          if (needsUpload && !initialUploadDoneRef.current) {
+            initialUploadDoneRef.current = true;
             saveCenterDataToGoogleAppsScript(
               {
                 lessonReports: merged.lessonReports,
@@ -195,11 +214,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Failed to reload storage data:', e);
     } finally {
       setIsSyncing(false);
+      isRefreshingRef.current = false;
     }
   };
 
-  // Initial mount: pull shared data from Google Apps Script (leegodata) and safely merge
+  // Pull shared data from Google Apps Script (leegodata) only when user is authenticated
   useEffect(() => {
+    if (!isAuthenticated) {
+      setIsSyncing(false);
+      return;
+    }
+
     let isMounted = true;
     const initSharedSync = async () => {
       setIsSyncing(true);
@@ -209,7 +234,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setData(prev => {
             const { merged, needsUpload } = mergeCenterData(prev, remoteResult.data!);
             saveStorage(merged);
-            if (needsUpload) {
+            if (needsUpload && !initialUploadDoneRef.current) {
+              initialUploadDoneRef.current = true;
               saveCenterDataToGoogleAppsScript(
                 {
                   lessonReports: merged.lessonReports,
@@ -234,7 +260,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     saveStorage(data);
