@@ -12,7 +12,8 @@ import {
   ExternalLink,
   Menu,
   Clock,
-  LogOut
+  LogOut,
+  Cloud
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
@@ -35,7 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
   setSearchQuery
 }) => {
   const { currentUser, logout } = useAuth();
-  const { data } = useData();
+  const { data, isSyncing, lastSyncTime, refreshData } = useData();
   const { showToast } = useToast();
 
   const [showRoleMenu, setShowRoleMenu] = useState(false);
@@ -102,14 +103,39 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
 
-          {/* Database Mode Indicator */}
+          {/* Cloud Sync Status & Manual Sync Button */}
           <button
-            onClick={() => setShowFirebaseModal(true)}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium hover:bg-emerald-100 transition-colors"
-            title="Xem trạng thái lưu trữ & kết nối Firestore"
+            onClick={async () => {
+              if (isSyncing) return;
+              if (refreshData) {
+                showToast('Đang kiểm tra và tải dữ liệu mới nhất từ Google Sheets...', 'info');
+                try {
+                  await refreshData(true);
+                  showToast('Đã đồng bộ dữ liệu thành công với Cloud!', 'success');
+                } catch (e: any) {
+                  showToast('Không thể kết nối Cloud Google Sheets: ' + (e.message || 'Lỗi mạng'), 'error');
+                }
+              }
+            }}
+            disabled={isSyncing}
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              isSyncing
+                ? 'bg-amber-50 text-amber-800 border-amber-200 cursor-wait'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 cursor-pointer'
+            }`}
+            title={lastSyncTime ? `Lần đồng bộ gần nhất: ${lastSyncTime}. Bấm để đồng bộ ngay.` : 'Bấm để đồng bộ với Cloud Google Sheets'}
           >
-            <Database className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Local Sync</span>
+            {isSyncing ? (
+              <>
+                <RotateCcw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                <span>Đang đồng bộ...</span>
+              </>
+            ) : (
+              <>
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Cloud Sync {lastSyncTime ? `(${lastSyncTime.slice(-8)})` : ''}</span>
+              </>
+            )}
           </button>
 
           {/* Activity Logs Notification Bell */}
