@@ -10,6 +10,8 @@ export interface User {
   avatar?: string;
   phone?: string;
   teacherId?: string; // Links to teacher record if role is teacher
+  academicManagerId?: string; // Links to academic manager record if role is academic_manager
+  assignedClasses?: string[]; // Optional assigned classes IDs for teacher
   status: 'active' | 'inactive';
   lastLogin?: string;
   createdAt: string;
@@ -108,6 +110,21 @@ export interface TeachingAssistant {
   englishCertificate: string; // IELTS 7.5, TOEIC 900
   assignedClassIds: string[];
   status: 'active' | 'leave';
+  notes?: string;
+}
+
+export interface AcademicManager {
+  id: string; // e.g. AM-001
+  fullName: string;
+  vietnameseName?: string;
+  email: string;
+  phone: string;
+  title?: string; // e.g. Quản lý học thuật / Giám đốc học thuật
+  qualifications?: string; // e.g. Thạc sĩ Quản lý Giáo dục, TESOL, IELTS 8.5
+  experienceYears?: number;
+  department?: string; // e.g. Ban Học Thuật & Đào Tạo
+  status: 'active' | 'leave';
+  avatar?: string;
   notes?: string;
 }
 
