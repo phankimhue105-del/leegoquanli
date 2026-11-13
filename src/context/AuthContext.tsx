@@ -104,6 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 1. Try real authentication against Google Apps Script backend (leegologin)
+    let gasAuthError: string | null = null;
     try {
       const gasResult = await authenticateWithGoogleAppsScript(trimmedInput, trimmedPass);
       if (gasResult.success && gasResult.user) {
@@ -116,8 +117,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error(e);
         }
         return { success: true, user: gasResult.user };
-      } else if (gasResult.error && gasResult.error.includes('khóa')) {
-        return { success: false, error: gasResult.error };
+      }
+
+      if (gasResult.error) {
+        if (
+          gasResult.error.includes('khóa') ||
+          gasResult.error.includes('Mật khẩu không chính xác') ||
+          gasResult.error.includes('quá thời gian chờ') ||
+          gasResult.error.includes('đường truyền mạng') ||
+          gasResult.error.includes('mã lỗi')
+        ) {
+          return { success: false, error: gasResult.error };
+        }
+        gasAuthError = gasResult.error;
       }
     } catch (gasErr) {
       console.warn('Apps Script authentication request error:', gasErr);
@@ -176,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return {
       success: false,
-      error: 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại.'
+      error: gasAuthError || 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại.'
     };
   };
 
