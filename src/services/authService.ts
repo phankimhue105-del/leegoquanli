@@ -53,11 +53,12 @@ export function mapGasUserToAppUser(gasUser: GasUserResponse): User {
 
 /**
  * Authenticates credentials against Google Apps Script backend (leegologin)
- * with robust 20-second timeout handling for cold starts
+ * with robust 20-second timeout and automatic 1-time retry for transient concurrency spikes
  */
 export async function authenticateWithGoogleAppsScript(
   usernameOrEmail: string,
-  pass: string
+  pass: string,
+  retryCount: number = 0
 ): Promise<{ success: boolean; user?: User; error?: string }> {
   const trimmedInput = (usernameOrEmail || '').trim();
   const trimmedPass = (pass || '').trim();
@@ -92,6 +93,10 @@ export async function authenticateWithGoogleAppsScript(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
+      if (retryCount < 1 && response.status >= 500) {
+        await new Promise(res => setTimeout(res, 800));
+        return authenticateWithGoogleAppsScript(usernameOrEmail, pass, retryCount + 1);
+      }
       return {
         success: false,
         error: `Máy chủ xác thực phản hồi mã lỗi (${response.status}). Vui lòng thử lại.`
@@ -114,6 +119,19 @@ export async function authenticateWithGoogleAppsScript(
       };
     }
 
+    // Check if error is transient concurrency limit
+    const rawError = String(data.error || data.message || '');
+    if (
+      retryCount < 1 &&
+      (rawError.includes('đồng thời') ||
+        rawError.includes('simultaneous') ||
+        rawError.includes('Server exception') ||
+        rawError.includes('bận xử lý'))
+    ) {
+      await new Promise(res => setTimeout(res, 800));
+      return authenticateWithGoogleAppsScript(usernameOrEmail, pass, retryCount + 1);
+    }
+
     const message = data.message || data.error || 'Tên đăng nhập hoặc mật khẩu không chính xác.';
     let vietnameseError = message;
     if (message.includes('enter username')) {
@@ -132,6 +150,10 @@ export async function authenticateWithGoogleAppsScript(
     };
   } catch (err: any) {
     clearTimeout(timeoutId);
+    if (retryCount < 1 && err.name !== 'AbortError') {
+      await new Promise(res => setTimeout(res, 800));
+      return authenticateWithGoogleAppsScript(usernameOrEmail, pass, retryCount + 1);
+    }
     if (err.name === 'AbortError') {
       return {
         success: false,
