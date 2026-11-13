@@ -22,7 +22,7 @@ import { LessonReportsView } from './components/views/LessonReportsView';
 import { AcademicReportsView } from './components/views/AcademicReportsView';
 import { UserManagementView } from './components/views/UserManagementView';
 import { SettingsView } from './components/views/SettingsView';
-import { ShieldAlert, Lock, Mail, LogIn } from 'lucide-react';
+import { ShieldAlert, Lock, Mail, LogIn, Eye, EyeOff } from 'lucide-react';
 import { useData } from './context/DataContext';
 
 const LoginView: React.FC = () => {
@@ -30,6 +30,7 @@ const LoginView: React.FC = () => {
   const { data } = useData();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -100,13 +101,26 @@ const LoginView: React.FC = () => {
             <div className="relative">
               <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="Nhập mật khẩu"
-                className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all"
+                className="w-full pl-9 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(prev => !prev)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none p-1 cursor-pointer transition-colors"
+                title={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+              >
+                {showPassword ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+              </button>
             </div>
           </div>
 
