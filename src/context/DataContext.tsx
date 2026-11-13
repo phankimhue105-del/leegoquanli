@@ -202,28 +202,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     lastRefreshCallRef.current = now;
 
     try {
-      const latest = loadInitialStorage();
-      setData(latest);
       setIsSyncing(true);
       const remoteResult = await fetchCenterDataFromGoogleAppsScript();
       if (remoteResult.success && remoteResult.data) {
         setData(prev => {
-          const { merged, needsUpload, hasConflicts, conflicts: detectedConflicts } = mergeCenterData(prev, remoteResult.data!);
+          const { merged, needsUpload, hasConflicts, conflicts: detectedConflicts } = mergeCenterData(prev, remoteResult.data!, isAuthenticated);
           saveStorage(merged);
           if (hasConflicts && detectedConflicts.length > 0) {
             setConflicts(detectedConflicts);
-          }
-          if (needsUpload && !initialUploadDoneRef.current) {
-            initialUploadDoneRef.current = true;
-            saveCenterDataToGoogleAppsScript(
-              {
-                lessonReports: merged.lessonReports,
-                incompleteReports: merged.incompleteReports,
-                makeupSessions: merged.makeupSessions,
-                lessonReportLockAudits: merged.lessonReportLockAudits
-              },
-              ['lessonReports', 'incompleteReports', 'makeupSessions', 'lessonReportLockAudits']
-            ).catch(e => console.warn('Background sync error on refresh:', e));
           }
           return merged;
         });
@@ -251,22 +237,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const remoteResult = await fetchCenterDataFromGoogleAppsScript();
         if (remoteResult.success && remoteResult.data && isMounted) {
           setData(prev => {
-            const { merged, needsUpload, hasConflicts, conflicts: detectedConflicts } = mergeCenterData(prev, remoteResult.data!);
+            const { merged, needsUpload, hasConflicts, conflicts: detectedConflicts } = mergeCenterData(prev, remoteResult.data!, isAuthenticated);
             saveStorage(merged);
             if (hasConflicts && detectedConflicts.length > 0) {
               setConflicts(detectedConflicts);
-            }
-            if (needsUpload && !initialUploadDoneRef.current) {
-              initialUploadDoneRef.current = true;
-              saveCenterDataToGoogleAppsScript(
-                {
-                  lessonReports: merged.lessonReports,
-                  incompleteReports: merged.incompleteReports,
-                  makeupSessions: merged.makeupSessions,
-                  lessonReportLockAudits: merged.lessonReportLockAudits
-                },
-                ['lessonReports', 'incompleteReports', 'makeupSessions', 'lessonReportLockAudits']
-              ).catch(e => console.warn('Initial migration upload error:', e));
             }
             return merged;
           });
