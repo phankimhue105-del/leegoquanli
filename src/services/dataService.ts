@@ -19,6 +19,7 @@ import {
   ClassItem,
   Teacher,
   TeachingAssistant,
+  AcademicManager,
   AcademicProgram,
   TimetableSession,
   AttendanceRecord,
@@ -41,6 +42,7 @@ import {
   initialClasses,
   initialTeachers,
   initialTeachingAssistants,
+  initialAcademicManagers,
   initialAcademicPrograms,
   initialTimetableSessions,
   initialAttendanceRecords,
@@ -61,6 +63,7 @@ export interface AppDataStore {
   classes: ClassItem[];
   teachers: Teacher[];
   teachingAssistants: TeachingAssistant[];
+  academicManagers?: AcademicManager[];
   programs: AcademicProgram[];
   timetable: TimetableSession[];
   attendance: AttendanceRecord[];
@@ -88,6 +91,7 @@ export function loadInitialStorage(): AppDataStore {
         classes: parsed.classes || initialClasses,
         teachers: parsed.teachers || initialTeachers,
         teachingAssistants: parsed.teachingAssistants || initialTeachingAssistants,
+        academicManagers: parsed.academicManagers || initialAcademicManagers,
         programs: parsed.programs || initialAcademicPrograms,
         timetable: parsed.timetable || initialTimetableSessions,
         attendance: parsed.attendance || initialAttendanceRecords,
@@ -113,6 +117,7 @@ export function loadInitialStorage(): AppDataStore {
     classes: initialClasses,
     teachers: initialTeachers,
     teachingAssistants: initialTeachingAssistants,
+    academicManagers: initialAcademicManagers,
     programs: initialAcademicPrograms,
     timetable: initialTimetableSessions,
     attendance: initialAttendanceRecords,
@@ -389,8 +394,8 @@ export function mergeCenterData(
 
   // 5. Merge other store keys if remote provides them and non-empty
   const otherKeys: Array<keyof AppDataStore> = [
-    'students', 'classes', 'teachers', 'teachingAssistants', 'programs',
-    'timetable', 'attendance', 'assessments', 'lessonPlans', 'parents',
+    'students', 'classes', 'teachers', 'teachingAssistants', 'academicManagers', 'programs',
+    'timetable', 'attendance', 'assessments', 'lessonPlans', 'users', 'parents',
     'settings', 'activityLogs', 'teachingSchedules'
   ];
   for (const k of otherKeys) {
@@ -1211,4 +1216,331 @@ export function exportLessonReportToExcel(report: LessonReport) {
   const cleanClassName = (report.className || 'Class').replace(/[^a-zA-Z0-9_-]/g, '_');
   XLSX.writeFile(workbook, `Lesson_Report_${cleanClassName}_${report.teachingDate}.xlsx`);
 }
+
+// ============================================================================
+// MILESTONE 1: READ-ONLY SURVEY SCANNER & COMPREHENSIVE BACKUP UTILITIES
+// ============================================================================
+
+export interface CategoryInventory {
+  key: keyof AppDataStore;
+  name: string;
+  totalLocal: number;
+  demoUntouched: number;
+  demoModified: number;
+  realNew: number;
+  totalCloud: number | null;
+  modifiedIds: string[];
+  newIds: string[];
+}
+
+export interface SurveyScanReport {
+  scannedAt: string;
+  totalLocalRecords: number;
+  totalDemoUntouched: number;
+  totalDemoModified: number;
+  totalRealNew: number;
+  totalCloudRecords: number | null;
+  categories: CategoryInventory[];
+  cloudFetchStatus: 'success' | 'failed' | 'skipped';
+  cloudMessage?: string;
+  isDataSafe: boolean;
+}
+
+export interface BackupMetadata {
+  app: string;
+  version: string;
+  exportedAt: string;
+  totalRecords: number;
+  recordSummary: Record<string, number>;
+}
+
+export interface FullBackupPayload {
+  _metadata: BackupMetadata;
+  data: AppDataStore;
+}
+
+const BASELINE_DATA_MAP: Record<string, any[]> = {
+  students: initialStudents,
+  classes: initialClasses,
+  teachers: initialTeachers,
+  teachingAssistants: initialTeachingAssistants,
+  academicManagers: initialAcademicManagers,
+  programs: initialAcademicPrograms,
+  timetable: initialTimetableSessions,
+  attendance: initialAttendanceRecords,
+  assessments: initialAssessments,
+  lessonPlans: initialLessonPlans,
+  users: initialUsers,
+  parents: initialParents,
+  teachingSchedules: initialTeachingSchedules,
+  activityLogs: initialActivityLogs,
+};
+
+const CATEGORY_DEFINITIONS: Array<{ key: keyof AppDataStore; name: string }> = [
+  { key: 'students', name: 'Học viên (Students)' },
+  { key: 'classes', name: 'Lớp học (Classes)' },
+  { key: 'teachers', name: 'Giáo viên (Teachers)' },
+  { key: 'teachingAssistants', name: 'Trợ giảng (TAs)' },
+  { key: 'academicManagers', name: 'Quản lí học thuật (AMs)' },
+  { key: 'programs', name: 'Chương trình học (Programs)' },
+  { key: 'timetable', name: 'Thời khóa biểu (Timetable)' },
+  { key: 'attendance', name: 'Dữ liệu điểm danh (Attendance)' },
+  { key: 'assessments', name: 'Bảng điểm & Đánh giá (Assessments)' },
+  { key: 'lessonPlans', name: 'Giáo án & Đề cương (Lesson Plans)' },
+  { key: 'users', name: 'Tài khoản người dùng (Users)' },
+  { key: 'parents', name: 'Hồ sơ Phụ huynh (Parents)' },
+  { key: 'teachingSchedules', name: 'Lịch dạy tháng (Teaching Schedules)' },
+  { key: 'lessonReports', name: 'Báo cáo buổi học (Lesson Reports)' },
+  { key: 'incompleteReports', name: 'Báo cáo chưa hoàn tất (Incomplete Reports)' },
+  { key: 'makeupSessions', name: 'Lớp học bù (Makeup Sessions)' },
+  { key: 'lessonReportLockAudits', name: 'Nhật ký khóa báo cáo (Lock Audits)' },
+  { key: 'activityLogs', name: 'Nhật ký hoạt động (Activity Logs)' },
+  { key: 'settings', name: 'Cấu hình trung tâm (Settings)' }
+];
+
+function isRecordModified(localItem: any, baselineItem: any): boolean {
+  if (!baselineItem) return true;
+  try {
+    return JSON.stringify(localItem) !== JSON.stringify(baselineItem);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Executes a strictly READ-ONLY survey scan across all local data collections
+ * and categorizes records into Demo Nguyên Bản, Demo Đã Sửa, and Dữ Liệu Mới.
+ * Optionally correlates with Cloud (leegodata) record counts if provided.
+ */
+export function runDataSurveyScanner(
+  localData: AppDataStore,
+  remoteData?: Partial<AppDataStore> | null,
+  cloudFetchStatus: 'success' | 'failed' | 'skipped' = 'skipped',
+  cloudMessage?: string
+): SurveyScanReport {
+  let totalLocalRecords = 0;
+  let totalDemoUntouched = 0;
+  let totalDemoModified = 0;
+  let totalRealNew = 0;
+  let totalCloudRecords: number | null = null;
+
+  if (remoteData) {
+    totalCloudRecords = 0;
+  }
+
+  const categories: CategoryInventory[] = [];
+
+  for (const cat of CATEGORY_DEFINITIONS) {
+    if (cat.key === 'settings') {
+      const locSetting = localData.settings;
+      const isModified = isRecordModified(locSetting, initialSettings);
+      const demoUntouched = isModified ? 0 : 1;
+      const demoModified = isModified ? 1 : 0;
+      const totalCloud = remoteData ? (remoteData.settings ? 1 : 0) : null;
+
+      totalLocalRecords += 1;
+      totalDemoUntouched += demoUntouched;
+      totalDemoModified += demoModified;
+      if (totalCloudRecords !== null && totalCloud !== null) {
+        totalCloudRecords += totalCloud;
+      }
+
+      categories.push({
+        key: cat.key,
+        name: cat.name,
+        totalLocal: 1,
+        demoUntouched,
+        demoModified,
+        realNew: 0,
+        totalCloud,
+        modifiedIds: isModified ? ['settings'] : [],
+        newIds: []
+      });
+      continue;
+    }
+
+    const locArr = Array.isArray(localData[cat.key]) ? (localData[cat.key] as any[]) : [];
+    const baseArr = BASELINE_DATA_MAP[cat.key] || [];
+    const baseMap = new Map(baseArr.map(b => [b.id, b]));
+
+    let demoUntouched = 0;
+    let demoModified = 0;
+    let realNew = 0;
+    const modifiedIds: string[] = [];
+    const newIds: string[] = [];
+
+    for (const item of locArr) {
+      if (!item) continue;
+      const id = item.id || item.sessionId || item.reportId;
+      if (!id || !baseMap.has(id)) {
+        realNew++;
+        if (id) newIds.push(String(id));
+      } else {
+        const baseItem = baseMap.get(id);
+        if (isRecordModified(item, baseItem)) {
+          demoModified++;
+          modifiedIds.push(String(id));
+        } else {
+          demoUntouched++;
+        }
+      }
+    }
+
+    let totalCloud: number | null = null;
+    if (remoteData) {
+      const remArr = remoteData[cat.key];
+      totalCloud = Array.isArray(remArr) ? remArr.length : 0;
+      if (totalCloudRecords !== null) {
+        totalCloudRecords += totalCloud;
+      }
+    }
+
+    totalLocalRecords += locArr.length;
+    totalDemoUntouched += demoUntouched;
+    totalDemoModified += demoModified;
+    totalRealNew += realNew;
+
+    categories.push({
+      key: cat.key,
+      name: cat.name,
+      totalLocal: locArr.length,
+      demoUntouched,
+      demoModified,
+      realNew,
+      totalCloud,
+      modifiedIds,
+      newIds
+    });
+  }
+
+  return {
+    scannedAt: getVietnamNowFormatted(),
+    totalLocalRecords,
+    totalDemoUntouched,
+    totalDemoModified,
+    totalRealNew,
+    totalCloudRecords,
+    categories,
+    cloudFetchStatus,
+    cloudMessage,
+    isDataSafe: true
+  };
+}
+
+/**
+ * Creates a complete JSON backup payload containing all collections and metadata.
+ */
+export function generateFullBackup(data: AppDataStore): FullBackupPayload {
+  const recordSummary: Record<string, number> = {};
+  let totalRecords = 0;
+
+  for (const cat of CATEGORY_DEFINITIONS) {
+    if (cat.key === 'settings') {
+      recordSummary[cat.key] = data.settings ? 1 : 0;
+      totalRecords += 1;
+    } else {
+      const arr = data[cat.key];
+      const count = Array.isArray(arr) ? arr.length : 0;
+      recordSummary[cat.key] = count;
+      totalRecords += count;
+    }
+  }
+
+  return {
+    _metadata: {
+      app: 'LeeGo Center Management',
+      version: '1.0',
+      exportedAt: getVietnamNowFormatted(),
+      totalRecords,
+      recordSummary
+    },
+    data: JSON.parse(JSON.stringify(data))
+  };
+}
+
+/**
+ * Triggers a browser download of the complete backup JSON file.
+ */
+export function downloadFullBackup(data: AppDataStore): void {
+  const payload = generateFullBackup(data);
+  const jsonStr = JSON.stringify(payload, null, 2);
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const dateStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+  const filename = `LeeGo_Full_Backup_${dateStr}.json`;
+
+  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Validates an uploaded JSON backup file and extracts record summary without writing to storage.
+ */
+export function validateBackupFile(jsonString: string): {
+  valid: boolean;
+  data?: AppDataStore;
+  summary?: Record<string, number>;
+  totalRecords?: number;
+  exportedAt?: string;
+  error?: string;
+} {
+  try {
+    const parsed = JSON.parse(jsonString);
+    let store: AppDataStore | null = null;
+    let exportedAt = 'Chưa xác định';
+
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.data && typeof parsed.data === 'object' && parsed._metadata) {
+        store = parsed.data;
+        exportedAt = parsed._metadata.exportedAt || exportedAt;
+      } else if (Array.isArray(parsed.students) || Array.isArray(parsed.classes)) {
+        store = parsed;
+      }
+    }
+
+    if (!store) {
+      return {
+        valid: false,
+        error: 'File không đúng định dạng sao lưu của LeeGo (thiếu danh mục dữ liệu hợp lệ).'
+      };
+    }
+
+    const summary: Record<string, number> = {};
+    let totalRecords = 0;
+
+    for (const cat of CATEGORY_DEFINITIONS) {
+      if (cat.key === 'settings') {
+        const hasSetting = Boolean(store.settings);
+        summary[cat.key] = hasSetting ? 1 : 0;
+        if (hasSetting) totalRecords += 1;
+      } else {
+        const arr = (store as any)[cat.key];
+        const count = Array.isArray(arr) ? arr.length : 0;
+        summary[cat.key] = count;
+        totalRecords += count;
+      }
+    }
+
+    return {
+      valid: true,
+      data: store,
+      summary,
+      totalRecords,
+      exportedAt
+    };
+  } catch (err: any) {
+    return {
+      valid: false,
+      error: `Lỗi đọc file JSON: ${err.message || 'Cấu trúc file bị hỏng'}`
+    };
+  }
+}
+
 
