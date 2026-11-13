@@ -108,15 +108,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const gasResult = await authenticateWithGoogleAppsScript(trimmedInput, trimmedPass);
       if (gasResult.success && gasResult.user) {
-        setCurrentUser(gasResult.user);
+        let authUser: User = { ...gasResult.user };
+        // Enrich with stored profile links (academicManagerId / teacherId) if set in users store
+        if (usersList && usersList.length > 0) {
+          const matched = usersList.find(
+            u => (u.email && u.email.toLowerCase() === authUser.email.toLowerCase()) ||
+                 (Boolean(authUser.username) && Boolean(u.username) && u.username!.toLowerCase() === authUser.username!.toLowerCase()) ||
+                 u.id === authUser.id
+          );
+          if (matched) {
+            if (!authUser.teacherId && matched.teacherId) {
+              authUser.teacherId = matched.teacherId;
+            }
+            if (!authUser.academicManagerId && matched.academicManagerId) {
+              authUser.academicManagerId = matched.academicManagerId;
+            }
+          }
+        }
+        setCurrentUser(authUser);
         setIsAuthenticated(true);
         try {
-          localStorage.setItem(AUTH_USER_KEY, JSON.stringify(gasResult.user));
+          localStorage.setItem(AUTH_USER_KEY, JSON.stringify(authUser));
           localStorage.setItem(AUTH_STATUS_KEY, 'true');
         } catch (e) {
           console.error(e);
         }
-        return { success: true, user: gasResult.user };
+        return { success: true, user: authUser };
       }
 
       if (gasResult.error) {
@@ -273,8 +290,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return true;
     }
     if (currentUser.role === 'teacher') {
-      if (!assignedClassIds) return false;
-      return assignedClassIds.includes(classId);
+      if (assignedClassIds && assignedClassIds.includes(classId)) return true;
+      if (currentUser.assignedClasses && currentUser.assignedClasses.includes(classId)) return true;
+      return false;
     }
     return false;
   };
