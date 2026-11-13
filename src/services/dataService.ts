@@ -2320,5 +2320,290 @@ export async function executeMigration(plan: MigrationPlan): Promise<MigrationEx
   }
 }
 
+// ============================================================================
+// MILESTONE 1: READ-ONLY DATA NORMALIZATION & RECONCILIATION PREVIEW ENGINE
+// ============================================================================
+
+export interface NormalizationMergeItem {
+  shellId: string;
+  targetId: string;
+  studentName: string;
+  className: string;
+  shellPhone: string;
+  authenticPhone: string;
+  authenticParent: string;
+  authenticDob: string;
+}
+
+export interface NormalizationClassAudit {
+  classId: string;
+  className: string;
+  code: string;
+  totalBefore: number;
+  totalAfter: number;
+  deduplicatedIds: string[];
+}
+
+export interface NormalizationReferenceAudit {
+  module: 'attendance' | 'lessonReports' | 'assessments';
+  recordId: string;
+  title: string;
+  totalItems: number;
+  validMatchCount: number;
+  details: string[];
+}
+
+export interface NormalizationPreviewReport {
+  generatedAt: string;
+  summary: {
+    totalStudentsBefore: number;
+    totalStudentsAfter: number;
+    excelAuthenticCount: number;
+    flyersSeedCount: number;
+    shellDuplicatesMergedCount: number;
+    unresolvedCount: number;
+    totalClasses: number;
+    totalTeachers: number;
+    totalTeachingAssistants: number;
+    totalTimetableSessions: number;
+    totalAttendance: number;
+    totalLessonReports: number;
+  };
+  mergedDetails: NormalizationMergeItem[];
+  keptStudents: Array<{
+    id: string;
+    fullName: string;
+    vietnameseName: string;
+    parentName: string;
+    parentPhone: string;
+    dob: string;
+    origin: 'excel_imported' | 'flyers_seed';
+    classNames: string[];
+  }>;
+  classAudits: NormalizationClassAudit[];
+  referenceAudits: NormalizationReferenceAudit[];
+  unresolvedRecords: any[];
+  isSafe: boolean;
+}
+
+const FLYERS_SEED_IDS = new Set(['LG-STU-017', 'LG-STU-018', 'LG-STU-019', 'LG-STU-020', 'LG-STU-021']);
+
+export function buildNormalizationPreview(data: AppDataStore): NormalizationPreviewReport {
+  const students = Array.isArray(data.students) ? data.students : [];
+  const classes = Array.isArray(data.classes) ? data.classes : [];
+  const attendance = Array.isArray(data.attendance) ? data.attendance : [];
+  const lessonReports = Array.isArray(data.lessonReports) ? data.lessonReports : [];
+  const assessments = Array.isArray(data.assessments) ? data.assessments : [];
+  const teachers = Array.isArray(data.teachers) ? data.teachers : [];
+  const teachingAssistants = Array.isArray(data.teachingAssistants) ? data.teachingAssistants : [];
+  const timetable = Array.isArray(data.timetable) ? data.timetable : [];
+
+  const classMap = new Map(classes.map(c => [c.id, c.name]));
+
+  // 1. Separate authentic Excel vs Non-Excel records
+  const excelStudents: Student[] = [];
+  const nonExcelStudents: Student[] = [];
+
+  for (const s of students) {
+    if (typeof s.id === 'number' || (s.notes && s.notes.includes('import từ file Excel'))) {
+      excelStudents.push(s);
+    } else {
+      nonExcelStudents.push(s);
+    }
+  }
+
+  // Map excel students by string of their id
+  const excelIdMap = new Map<string, Student>();
+  const excelNameMap = new Map<string, Student>();
+  for (const es of excelStudents) {
+    excelIdMap.set(String(es.id), es);
+    const cleanName = (es.vietnameseName || es.fullName || '').toLowerCase().trim();
+    if (cleanName) {
+      excelNameMap.set(cleanName, es);
+    }
+  }
+
+  // 2. Identify shell duplicates vs kept flyers seeds vs unresolved
+  const mergedDetails: NormalizationMergeItem[] = [];
+  const keptFlyers: Student[] = [];
+  const unresolvedRecords: any[] = [];
+
+  for (const nes of nonExcelStudents) {
+    const sidStr = String(nes.id);
+
+    // Flyers seed students
+    if (FLYERS_SEED_IDS.has(sidStr)) {
+      keptFlyers.push(nes);
+      continue;
+    }
+
+    // Check match with excel student
+    let matchedExcel: Student | undefined = excelIdMap.get(sidStr);
+
+    // Special alias: LG-STU-099 is Ngô Hùng Cường (Excel id 25)
+    if (!matchedExcel && (sidStr === 'LG-STU-099' || nes.fullName.includes('Ngô Hùng Cường'))) {
+      matchedExcel = excelIdMap.get('25');
+    }
+
+    // Try name match if still not found
+    if (!matchedExcel) {
+      const cleanName = (nes.vietnameseName || nes.fullName || '').toLowerCase().trim();
+      matchedExcel = excelNameMap.get(cleanName);
+    }
+
+    if (matchedExcel) {
+      const clsName = nes.classIds && nes.classIds[0] ? (classMap.get(nes.classIds[0]) || nes.classIds[0]) : 'Chưa xếp lớp';
+      mergedDetails.push({
+        shellId: sidStr,
+        targetId: String(matchedExcel.id),
+        studentName: matchedExcel.fullName || nes.fullName,
+        className: clsName,
+        shellPhone: nes.parentPhone || '0900000000',
+        authenticPhone: matchedExcel.parentPhone || 'Chưa có',
+        authenticParent: matchedExcel.parentName || 'Chưa có',
+        authenticDob: String(matchedExcel.dob || '')
+      });
+    } else {
+      unresolvedRecords.push(nes);
+    }
+  }
+
+  // 3. Assemble Kept Students (103)
+  const keptStudents: NormalizationPreviewReport['keptStudents'] = [];
+
+  for (const es of excelStudents) {
+    keptStudents.push({
+      id: String(es.id),
+      fullName: es.fullName,
+      vietnameseName: es.vietnameseName || es.fullName,
+      parentName: es.parentName,
+      parentPhone: es.parentPhone,
+      dob: String(es.dob || ''),
+      origin: 'excel_imported',
+      classNames: (es.classIds || []).map(cid => classMap.get(cid) || cid)
+    });
+  }
+
+  for (const fs of keptFlyers) {
+    keptStudents.push({
+      id: String(fs.id),
+      fullName: fs.fullName,
+      vietnameseName: fs.vietnameseName || fs.fullName,
+      parentName: fs.parentName,
+      parentPhone: fs.parentPhone,
+      dob: String(fs.dob || ''),
+      origin: 'flyers_seed',
+      classNames: (fs.classIds || []).map(cid => classMap.get(cid) || cid)
+    });
+  }
+
+  // 4. Audit Class studentIds
+  const classAudits: NormalizationClassAudit[] = classes.map(c => {
+    const rawIds = c.studentIds || [];
+    // Deduplicate and normalize
+    const dedupSet = new Set<string>();
+    for (const rawId of rawIds) {
+      const str = String(rawId);
+      if (str === 'LG-STU-099') {
+        dedupSet.add('25');
+      } else {
+        dedupSet.add(str);
+      }
+    }
+    const dedupList = Array.from(dedupSet);
+    return {
+      classId: c.id,
+      className: c.name,
+      code: c.code || c.id,
+      totalBefore: rawIds.length,
+      totalAfter: dedupList.length,
+      deduplicatedIds: dedupList
+    };
+  });
+
+  // 5. Audit References across Attendance, Lesson Reports, Assessments
+  const referenceAudits: NormalizationReferenceAudit[] = [];
+
+  // Attendance
+  for (const att of attendance) {
+    const recs = att.records || [];
+    const matched = recs.filter(r => keptStudents.some(ks => ks.id === String(r.studentId)));
+    referenceAudits.push({
+      module: 'attendance',
+      recordId: att.id,
+      title: `Điểm danh lớp ${att.className} (${att.date})`,
+      totalItems: recs.length,
+      validMatchCount: matched.length,
+      details: recs.map(r => `${r.studentName} (ID: ${r.studentId}) -> ${matched.some(m => String(m.studentId) === String(r.studentId)) ? 'Khớp hợp lệ' : 'Cần đối chiếu'}`)
+    });
+  }
+
+  // Lesson Reports
+  for (const lr of lessonReports) {
+    const sReports = lr.studentReports || [];
+    const matched = sReports.filter(sr => {
+      const sid = String(sr.studentId) === 'LG-STU-099' ? '25' : String(sr.studentId);
+      return keptStudents.some(ks => ks.id === sid);
+    });
+    referenceAudits.push({
+      module: 'lessonReports',
+      recordId: lr.id,
+      title: `Báo cáo lớp ${lr.className} (${lr.teachingDate})`,
+      totalItems: sReports.length,
+      validMatchCount: matched.length,
+      details: sReports.map(sr => `${sr.studentName} (ID: ${sr.studentId}) -> ${matched.some(m => String(m.studentId) === String(sr.studentId)) ? 'Khớp hợp lệ' : 'Cần đối chiếu'}`)
+    });
+  }
+
+  // Assessments
+  for (const asm of assessments) {
+    const sc = asm.scores || [];
+    referenceAudits.push({
+      module: 'assessments',
+      recordId: asm.id,
+      title: `Đánh giá ${asm.title} (${asm.className})`,
+      totalItems: sc.length,
+      validMatchCount: sc.length,
+      details: sc.map(s => `${s.studentName} (ID: ${s.studentId})`)
+    });
+  }
+
+  return {
+    generatedAt: getVietnamNowFormatted(),
+    summary: {
+      totalStudentsBefore: students.length,
+      totalStudentsAfter: keptStudents.length,
+      excelAuthenticCount: excelStudents.length,
+      flyersSeedCount: keptFlyers.length,
+      shellDuplicatesMergedCount: mergedDetails.length,
+      unresolvedCount: unresolvedRecords.length,
+      totalClasses: classes.length,
+      totalTeachers: teachers.length,
+      totalTeachingAssistants: teachingAssistants.length,
+      totalTimetableSessions: timetable.length,
+      totalAttendance: attendance.length,
+      totalLessonReports: lessonReports.length
+    },
+    mergedDetails,
+    keptStudents,
+    classAudits,
+    referenceAudits,
+    unresolvedRecords,
+    isSafe: unresolvedRecords.length === 0
+  };
+}
+
+export function downloadNormalizationPreviewReport(report: NormalizationPreviewReport): void {
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `LeeGo_Normalization_Preview_Report_${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 
 
