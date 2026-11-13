@@ -56,6 +56,8 @@ export const LessonReportsView: React.FC = () => {
 
   const data = context?.data;
   const refreshData = context?.refreshData;
+  const isSyncing = context?.isSyncing;
+  const lastSyncTime = context?.lastSyncTime;
   const getLessonReportsForDate = context?.getLessonReportsForDate;
   const saveLessonReport = context?.saveLessonReport;
   const submitLessonReport = context?.submitLessonReport;
@@ -524,17 +526,22 @@ export const LessonReportsView: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => {
+                disabled={isSyncing}
+                onClick={async () => {
                   if (typeof refreshData === 'function') {
-                    refreshData();
-                    showToast('Đã đồng bộ báo cáo mới nhất!', 'info');
+                    await refreshData();
+                    showToast('Đã đồng bộ báo cáo mới nhất từ Google Sheets!', 'info');
                   }
                 }}
-                className="px-3 py-2 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-                title="Đồng bộ dữ liệu báo cáo giữa các tài khoản"
+                className={`px-3 py-2 text-xs font-semibold rounded-xl border transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                  isSyncing
+                    ? 'bg-blue-100 text-blue-500 border-blue-200 cursor-not-allowed'
+                    : 'text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200'
+                }`}
+                title="Đồng bộ dữ liệu báo cáo giữa các tài khoản qua Google Sheets"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Đồng bộ</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ'}</span>
               </button>
 
               <span className="text-xs font-semibold text-slate-600 ml-1">
