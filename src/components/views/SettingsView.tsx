@@ -32,7 +32,7 @@ import {
 } from '../../services/dataService';
 
 export const SettingsView: React.FC = () => {
-  const { data, updateSettings, resetAllData, restoreFromBackup } = useData();
+  const { data, updateSettings, resetAllData, restoreFromBackup, conflicts, resolveConflict } = useData();
   const { showToast } = useToast();
 
   const [formData, setFormData] = useState({ ...data.settings });
@@ -317,13 +317,112 @@ export const SettingsView: React.FC = () => {
           <Info className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-semibold">
-              Cam kết an toàn tuyệt đối: Không thực hiện bất kỳ thao tác ghi, sửa, xóa hoặc Migration nào.
+              Cam kết an toàn tuyệt đối: Không thực hiện bất kỳ thao tác ghi, sửa, xóa hoặc Migration nào khi chưa xác nhận.
             </p>
             <p className="text-sky-800 text-[11px] leading-relaxed">
               Mọi dữ liệu trên máy tính này và trên Google Sheets đều được giữ nguyên 100%. Quá trình khảo sát chỉ đọc bộ nhớ để phân loại dữ liệu và xuất file sao lưu dự phòng.
             </p>
           </div>
         </div>
+
+        {/* Milestone 2: Conflict Resolution Box */}
+        {conflicts && conflicts.length > 0 && (
+          <div className="p-4 bg-amber-50/90 border border-amber-300 rounded-2xl text-xs space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-amber-200">
+              <div className="flex items-center gap-2 text-amber-900 font-extrabold text-sm">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+                <span>Phát hiện {conflicts.length} xung đột dữ liệu cần giải quyết (Milestone 2)</span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-900 border border-amber-400">
+                Chờ Admin lựa chọn
+              </span>
+            </div>
+
+            <p className="text-amber-800 text-[11px] leading-relaxed">
+              Các bản ghi dưới đây có thông tin khác nhau giữa máy này và Cloud mà không có căn cứ timestamp xác định bản ghi mới hơn. Vui lòng bấm chọn bản ghi bạn muốn giữ lại:
+            </p>
+
+            <div className="space-y-2.5">
+              {conflicts.map((conf, cIdx) => (
+                <div
+                  key={`${conf.category}-${conf.recordId}-${cIdx}`}
+                  className="bg-white p-3.5 rounded-xl border border-amber-200 shadow-2xs space-y-2.5"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <span className="text-[11px] font-bold text-amber-800 px-2 py-0.5 rounded-md bg-amber-100 mr-2">
+                        {conf.categoryName}
+                      </span>
+                      <strong className="text-slate-900">{conf.recordTitle}</strong>
+                      <span className="text-slate-500 font-mono text-[11px] ml-1.5">
+                        (Mã: {conf.recordId})
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (resolveConflict) {
+                            resolveConflict(conf, 'keep_local');
+                            showToast(`Đã giữ bản Local cho ${conf.recordTitle}`, 'success');
+                          }
+                        }}
+                        className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-all shadow-2xs"
+                      >
+                        Giữ bản Local (máy này)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (resolveConflict) {
+                            resolveConflict(conf, 'keep_cloud');
+                            showToast(`Đã giữ bản Cloud cho ${conf.recordTitle}`, 'success');
+                          }
+                        }}
+                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-all shadow-2xs"
+                      >
+                        Giữ bản Cloud (máy chủ)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="border border-slate-200 rounded-lg overflow-hidden text-[11px]">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                          <th className="py-1.5 px-2.5">Trường thông tin</th>
+                          <th className="py-1.5 px-2.5 text-amber-800">Giá trị Local (máy này)</th>
+                          <th className="py-1.5 px-2.5 text-indigo-800">Giá trị Cloud (máy chủ)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {conf.conflicts.map((f, fIdx) => (
+                          <tr key={fIdx}>
+                            <td className="py-1.5 px-2.5 font-medium text-slate-700">
+                              {f.fieldLabel} ({f.field})
+                            </td>
+                            <td className="py-1.5 px-2.5 font-mono text-amber-700">
+                              {typeof f.localValue === 'object'
+                                ? JSON.stringify(f.localValue)
+                                : String(f.localValue)}
+                            </td>
+                            <td className="py-1.5 px-2.5 font-mono text-indigo-700">
+                              {typeof f.cloudValue === 'object'
+                                ? JSON.stringify(f.cloudValue)
+                                : String(f.cloudValue)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 5 Summary KPI Cards */}
         {surveyReport && (
