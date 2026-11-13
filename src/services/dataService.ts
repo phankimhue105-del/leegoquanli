@@ -2047,9 +2047,15 @@ export function buildMigrationPlan(
       }
     }
 
-    // Also preserve existing real Cloud records if local didn't have them
+    // Also preserve existing real Cloud records if local didn't have them (exclude untouched demo)
     for (const cldItem of cldArr) {
+      if (!cldItem) continue;
       const cldId = getId(cldItem);
+      const isBase = baseMap.has(cldId);
+      const isUntouchedCld = isBase && !isRecordModified(cldItem, baseMap.get(cldId));
+      if (isUntouchedCld) {
+        continue;
+      }
       if (!recordsToUpload.some(r => getId(r) === cldId)) {
         recordsToUpload.push(cldItem);
       }
