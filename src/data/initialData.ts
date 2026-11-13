@@ -3,6 +3,7 @@ import {
   ClassItem,
   Teacher,
   TeachingAssistant,
+  AcademicManager,
   AcademicProgram,
   TimetableSession,
   AttendanceRecord,
@@ -36,6 +37,7 @@ export const initialUsers: User[] = [
     username: 'academic',
     password: 'academic@leego2025',
     role: 'academic_manager',
+    academicManagerId: 'AM-001',
     phone: '0908765432',
     status: 'active',
     createdAt: '2025-01-10',
@@ -200,6 +202,22 @@ export const initialTeachingAssistants: TeachingAssistant[] = [
     assignedClassIds: ['CLS-STA-01'],
     status: 'active',
     notes: 'Trợ giảng Thiên nhiệt tình hỗ trợ lớp Starters'
+  }
+];
+
+export const initialAcademicManagers: AcademicManager[] = [
+  {
+    id: 'AM-001',
+    fullName: 'Trần Học Thuật',
+    vietnameseName: 'Thầy Thuật',
+    email: 'academic@leego.edu.vn',
+    phone: '0908765432',
+    title: 'Quản lý học thuật (Academic Manager)',
+    qualifications: 'Thạc sĩ Quản lý Giáo dục, TESOL International, IELTS 8.5',
+    experienceYears: 8,
+    department: 'Ban Học Thuật & Đào Tạo',
+    status: 'active',
+    notes: 'Phụ trách chuyên môn đào tạo, kiểm duyệt giáo án, thẩm định đề thi và giám sát chất lượng giảng dạy'
   }
 ];
 
