@@ -288,6 +288,79 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     saveStorage(data);
   }, [data]);
 
+  const pendingKeysToSyncRef = React.useRef<Set<keyof AppDataStore>>(new Set());
+  const syncTimeoutRef = React.useRef<any>(null);
+  const latestDataRef = React.useRef<AppDataStore>(data);
+  latestDataRef.current = data;
+
+  const queueKeysForCloudSync = (keys: Array<keyof AppDataStore>) => {
+    if (!isAuthenticated) return;
+    keys.forEach(k => pendingKeysToSyncRef.current.add(k));
+
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+
+    syncTimeoutRef.current = setTimeout(async () => {
+      const keysToSave = Array.from(pendingKeysToSyncRef.current);
+      if (keysToSave.length === 0) return;
+      pendingKeysToSyncRef.current.clear();
+
+      setIsSyncing(true);
+      try {
+        const payload: Partial<AppDataStore> = {};
+        for (const k of keysToSave) {
+          (payload as any)[k] = latestDataRef.current[k];
+        }
+        const res = await saveCenterDataToGoogleAppsScript(payload, keysToSave);
+        if (res.success) {
+          setLastSyncTime(new Date().toLocaleTimeString('vi-VN'));
+        } else {
+          keysToSave.forEach(k => pendingKeysToSyncRef.current.add(k));
+          console.warn('Background sync warning on save:', res.error);
+        }
+      } catch (err) {
+        keysToSave.forEach(k => pendingKeysToSyncRef.current.add(k));
+        console.warn('Background sync network error:', err);
+      } finally {
+        setIsSyncing(false);
+      }
+    }, 2500);
+  };
+
+  // Periodic polling & window focus sync (Cross-device data freshness)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        const timeSinceLastSync = Date.now() - lastRefreshCallRef.current;
+        if (timeSinceLastSync > 30000 && pendingKeysToSyncRef.current.size === 0) {
+          refreshData();
+        }
+      }
+    };
+
+    const intervalId = setInterval(() => {
+      if (
+        document.visibilityState === 'visible' &&
+        !isSyncing &&
+        pendingKeysToSyncRef.current.size === 0
+      ) {
+        refreshData();
+      }
+    }, 60000);
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, [isAuthenticated, isSyncing]);
+
   // Synchronize data in real-time across tabs/windows when storage changes
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
@@ -349,6 +422,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     });
     addActivityLog('Thêm học sinh', `Đã thêm học sinh ${newStudent.fullName} (${newId})`);
+    queueKeysForCloudSync(['students', 'classes']);
     return newStudent;
   };
 
@@ -377,6 +451,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     });
     addActivityLog('Cập nhật học sinh', `Đã chỉnh sửa thông tin học sinh mã ${id}`);
+    queueKeysForCloudSync(['students', 'classes']);
   };
 
   const deleteStudent = (id: string) => {
@@ -390,6 +465,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }))
     }));
     addActivityLog('Xóa học sinh', `Đã xóa học sinh ${student?.fullName || id}`);
+    queueKeysForCloudSync(['students', 'classes']);
   };
 
   const transferStudentClass = (studentId: string, fromClassId: string, toClassId: string) => {
@@ -432,6 +508,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       'Chuyển lớp học sinh',
       `Đã chuyển học sinh ${student?.fullName || studentId} từ lớp ${fromClass?.name || fromClassId} sang ${toClass?.name || toClassId}`
     );
+    queueKeysForCloudSync(['students', 'classes']);
   };
 
   const importStudents = (importedList: Partial<Student>[]): number => {
@@ -468,6 +545,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
 
     addActivityLog('Import học sinh', `Đã nhập thành công ${count} học sinh từ file Excel`);
+    queueKeysForCloudSync(['students']);
     return count;
   };
 
@@ -479,6 +557,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       parents: [newParent, ...prev.parents]
     }));
+    queueKeysForCloudSync(['parents']);
     return newParent;
   };
 
@@ -487,6 +566,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       parents: prev.parents.map(p => (p.id === id ? { ...p, ...updates } : p))
     }));
+    queueKeysForCloudSync(['parents']);
   };
 
   // 3. Classes
@@ -520,6 +600,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     addActivityLog('Tạo lớp học mới', `Đã mở lớp ${newClass.name} (${newClass.code})`);
+    queueKeysForCloudSync(['classes', 'teachers']);
     return newClass;
   };
 
@@ -548,6 +629,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     });
     addActivityLog('Cập nhật lớp học', `Đã cập nhật thông tin lớp học mã ${id}`);
+    queueKeysForCloudSync(['classes', 'teachers']);
   };
 
   const deleteClass = (id: string) => {
@@ -566,6 +648,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }))
     }));
     addActivityLog('Xóa lớp học', `Đã xóa lớp học ${cls?.name || id}`);
+    queueKeysForCloudSync(['classes', 'timetable', 'teachers', 'students']);
   };
 
   const assignStudentsToClass = (classId: string, studentIds: string[]) => {
@@ -596,6 +679,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     });
     addActivityLog('Cập nhật danh sách lớp', `Đã cập nhật danh sách ${studentIds.length} học sinh cho lớp mã ${classId}`);
+    queueKeysForCloudSync(['classes', 'students']);
   };
 
   // 4. Teachers & Assistants
@@ -607,6 +691,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       teachers: [...prev.teachers, newTeacher]
     }));
     addActivityLog('Thêm giáo viên', `Đã thêm giáo viên ${newTeacher.fullName} (${newId})`);
+    queueKeysForCloudSync(['teachers']);
     return newTeacher;
   };
 
@@ -616,6 +701,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       teachers: prev.teachers.map(t => (t.id === id ? { ...t, ...updates } : t))
     }));
     addActivityLog('Cập nhật giáo viên', `Đã cập nhật hồ sơ giáo viên ${id}`);
+    queueKeysForCloudSync(['teachers']);
   };
 
   const deleteTeacher = (id: string) => {
@@ -626,6 +712,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       classes: prev.classes.map(cls => (cls.teacherId === id ? { ...cls, teacherId: '' } : cls))
     }));
     addActivityLog('Xóa giáo viên', `Đã xóa giáo viên ${t?.fullName || id}`);
+    queueKeysForCloudSync(['teachers', 'classes']);
   };
 
   const addAssistant = (taData: Omit<TeachingAssistant, 'id'>): TeachingAssistant => {
@@ -636,6 +723,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       teachingAssistants: [...prev.teachingAssistants, newAssistant]
     }));
     addActivityLog('Thêm trợ giảng', `Đã thêm trợ giảng ${newAssistant.fullName}`);
+    queueKeysForCloudSync(['teachingAssistants']);
     return newAssistant;
   };
 
@@ -644,6 +732,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       teachingAssistants: prev.teachingAssistants.map(a => (a.id === id ? { ...a, ...updates } : a))
     }));
+    queueKeysForCloudSync(['teachingAssistants']);
   };
 
   const deleteAssistant = (id: string) => {
@@ -651,6 +740,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       teachingAssistants: prev.teachingAssistants.filter(a => a.id !== id)
     }));
+    queueKeysForCloudSync(['teachingAssistants']);
   };
 
   const addAcademicManager = (managerData: Omit<AcademicManager, 'id'>): AcademicManager => {
@@ -662,6 +752,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       academicManagers: [...(prev.academicManagers || []), newManager]
     }));
     addActivityLog('Thêm hồ sơ QLHT', `Đã thêm hồ sơ Quản lý học thuật: ${newManager.fullName} (${newId})`);
+    queueKeysForCloudSync(['academicManagers']);
     return newManager;
   };
 
@@ -671,6 +762,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       academicManagers: (prev.academicManagers || []).map(m => (m.id === id ? { ...m, ...updates } : m))
     }));
     addActivityLog('Cập nhật hồ sơ QLHT', `Đã cập nhật hồ sơ Quản lý học thuật: ${id}`);
+    queueKeysForCloudSync(['academicManagers']);
   };
 
   const deleteAcademicManager = (id: string) => {
@@ -680,6 +772,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       academicManagers: (prev.academicManagers || []).filter(mgr => mgr.id !== id)
     }));
     addActivityLog('Xóa hồ sơ QLHT', `Đã xóa hồ sơ Quản lý học thuật: ${m?.fullName || id}`);
+    queueKeysForCloudSync(['academicManagers']);
   };
 
   // 5. Academic Programs
@@ -691,6 +784,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       programs: [...prev.programs, newProgram]
     }));
     addActivityLog('Thêm chương trình học', `Đã thêm chương trình ${newProgram.name}`);
+    queueKeysForCloudSync(['programs']);
     return newProgram;
   };
 
@@ -699,6 +793,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       programs: prev.programs.map(p => (p.id === id ? { ...p, ...updates } : p))
     }));
+    queueKeysForCloudSync(['programs']);
   };
 
   const deleteProgram = (id: string) => {
@@ -706,6 +801,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       programs: prev.programs.filter(p => p.id !== id)
     }));
+    queueKeysForCloudSync(['programs']);
   };
 
   // 6. Timetable & Conflict Detection
@@ -781,6 +877,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
 
     addActivityLog('Thêm ca học TKB', `Đã thêm ca học cho lớp ${newSession.className} vào ${newSession.dayName} (${newSession.startTime} - ${newSession.endTime})`);
+    queueKeysForCloudSync(['timetable']);
     return { success: true, session: newSession };
   };
 
@@ -818,6 +915,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
 
     addActivityLog('Cập nhật ca học TKB', `Đã cập nhật ca học ${id}`);
+    queueKeysForCloudSync(['timetable']);
     return { success: true };
   };
 
@@ -827,6 +925,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       timetable: prev.timetable.filter(s => s.id !== id)
     }));
     addActivityLog('Xóa ca học TKB', `Đã hủy ca học mã ${id}`);
+    queueKeysForCloudSync(['timetable']);
   };
 
   // 7. Attendance
@@ -880,6 +979,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     addActivityLog('Điểm danh', `Đã lưu điểm danh lớp ${cls?.name} ngày ${date} (${presentCount}/${records.length} có mặt)`);
+    queueKeysForCloudSync(['attendance']);
     return newRecord;
   };
 
@@ -905,6 +1005,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     addActivityLog('Lưu bảng điểm', `Đã lưu kết quả đánh giá "${newRecord.title}" cho lớp ${newRecord.className}`);
+    queueKeysForCloudSync(['assessments']);
     return newRecord;
   };
 
@@ -915,6 +1016,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         a.id === assessmentId ? { ...a, scores: studentScores } : a
       )
     }));
+    queueKeysForCloudSync(['assessments']);
   };
 
   // 9. Lesson Plans
@@ -932,6 +1034,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
 
     addActivityLog('Nộp báo cáo buổi dạy', `Giáo viên ${newPlan.teacherName} nộp báo cáo bài số ${newPlan.lessonNumber} cho lớp ${newPlan.className}`);
+    queueKeysForCloudSync(['lessonPlans']);
     return newPlan;
   };
 
@@ -943,6 +1046,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       )
     }));
     addActivityLog('Duyệt giáo án / báo cáo', `Quản lý học thuật đã duyệt báo cáo mã ${id}`);
+    queueKeysForCloudSync(['lessonPlans']);
   };
 
   // 10. Users
@@ -958,6 +1062,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       users: [...prev.users, newUser]
     }));
     addActivityLog('Tạo tài khoản', `Đã tạo tài khoản cho ${newUser.name} (${newUser.email})`);
+    queueKeysForCloudSync(['users']);
     return newUser;
   };
 
@@ -967,6 +1072,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       users: prev.users.map(u => (u.id === id ? { ...u, ...updates } : u))
     }));
     addActivityLog('Cập nhật tài khoản', `Đã cập nhật tài khoản ${id}`);
+    queueKeysForCloudSync(['users']);
   };
 
   const toggleUserStatus = (id: string) => {
@@ -976,6 +1082,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         u.id === id ? { ...u, status: u.status === 'active' ? 'inactive' : 'active' } : u
       )
     }));
+    queueKeysForCloudSync(['users']);
   };
 
   // 11. Teaching Schedule Management
@@ -1186,6 +1293,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     addActivityLog('Lưu Lịch giảng dạy', `Đã lưu lịch giảng dạy tháng ${schedule.month}/${schedule.year} của lớp ${schedule.className}`);
+    queueKeysForCloudSync(['teachingSchedules']);
     return { success: true, schedule: updatedSchedule };
   };
 
@@ -1208,6 +1316,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
 
     addActivityLog('Xóa Lịch giảng dạy', `Đã xóa lịch giảng dạy tháng ${target.month}/${target.year} của lớp ${target.className}`);
+    queueKeysForCloudSync(['teachingSchedules']);
     return { success: true };
   };
 
@@ -1792,6 +1901,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         inc.id === incompleteId ? { ...inc, status: 'resolved' } : inc
       )
     }));
+    queueKeysForCloudSync(['incompleteReports']);
   };
 
   // 13. Settings & Reset
@@ -1801,6 +1911,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       settings: { ...prev.settings, ...updates }
     }));
     addActivityLog('Cài đặt hệ thống', 'Đã cập nhật thông tin cấu hình trung tâm');
+    queueKeysForCloudSync(['settings']);
   };
 
   const resetAllData = () => {
@@ -1836,6 +1947,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       'Giải quyết xung đột',
       `Đã giải quyết xung đột bản ghi ${conflict.recordTitle} (${resolution})`
     );
+    if (conflict.category && (conflict.category in data)) {
+      queueKeysForCloudSync([conflict.category as keyof AppDataStore]);
+    }
   };
 
   return (
