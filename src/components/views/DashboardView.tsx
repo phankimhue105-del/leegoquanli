@@ -57,16 +57,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
     ? recentAttendance.records.filter(r => r.status === 'absent' || r.status === 'excused')
     : [];
 
-  // Teacher-specific data if logged in as teacher
-  const teacherObj = data.teachers.find(t => t.id === currentUser.teacherId || t.email === currentUser.email);
+  // Teacher-specific data if logged in as teacher (teacherId only, excluding TA-only assignments)
+  const teacherObj = data.teachers.find(
+    t =>
+      String(t.id).trim() === String(currentUser.teacherId).trim() ||
+      (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
+  );
+  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
   const teacherClasses = data.classes.filter(c =>
-    teacherObj ? c.teacherId === teacherObj.id : false
+    Boolean(currentTeacherId) && String(c.teacherId).trim() === currentTeacherId
   );
   const teacherSessions = data.timetable.filter(s =>
-    teacherObj ? s.teacherId === teacherObj.id : false
+    Boolean(currentTeacherId) && String(s.teacherId).trim() === currentTeacherId
   );
   const teacherPendingReports = data.lessonPlans.filter(lp =>
-    teacherObj ? lp.teacherId === teacherObj.id && lp.status === 'submitted' : false
+    Boolean(currentTeacherId) && String(lp.teacherId).trim() === currentTeacherId && lp.status === 'submitted'
   );
 
   return (
@@ -233,8 +238,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
         </div>
       )}
 
-      {/* Admin Daily Attendance Overview */}
-      {role === 'admin' && (
+      {/* Daily Attendance Overview for Admin & Academic Manager */}
+      {(role === 'admin' || role === 'academic_manager') && (
         <div className="space-y-3">
           <div className="flex items-center justify-end gap-2">
             <label className="text-xs font-semibold text-slate-600">Chọn ngày kiểm tra điểm danh:</label>
