@@ -76,9 +76,15 @@ export const TimetableView: React.FC = () => {
     const cls = session.classId
       ? data.classes.find(c => String(c.id).trim() === String(session.classId).trim())
       : null;
-    if (cls && cls.status === 'cancelled') return false;
 
-    const effTeacherId = String(session.teacherId || cls?.teacherId || '').trim();
+    // A timetable item must not be displayed if its classId is set but no longer exists in Classes (or is cancelled)
+    if (session.classId && (!cls || cls.status === 'cancelled')) {
+      return false;
+    }
+
+    // Authoritative teacher assignment MUST come from current class record (or slot)
+    const slot = cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
+    const effTeacherId = String(slot?.teacherId || cls?.teacherId || session.teacherId || '').trim();
 
     // If logged in as teacher, show only their sessions by default (teacherId only)
     if (isTeacher) {
@@ -90,7 +96,7 @@ export const TimetableView: React.FC = () => {
     }
 
     if (filterMode === 'classroom' && selectedFilterValue !== 'all') {
-      const effClassroom = session.classroom || cls?.classroom || '';
+      const effClassroom = cls?.classroom || session.classroom || '';
       if (effClassroom !== selectedFilterValue) return false;
     }
 
@@ -390,11 +396,12 @@ export const TimetableView: React.FC = () => {
                       const cls = session.classId
                         ? data.classes.find(c => String(c.id).trim() === String(session.classId).trim())
                         : null;
+                      const slot = cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
                       const effClassName = cls?.name || session.className;
-                      const effTeacherId = String(session.teacherId || cls?.teacherId || '').trim();
+                      const effTeacherId = String(slot?.teacherId || cls?.teacherId || session.teacherId || '').trim();
                       const teacherObj = data.teachers.find(t => String(t.id).trim() === effTeacherId);
                       const effTeacherName = teacherObj?.fullName || session.teacherName;
-                      const effClassroom = session.classroom || cls?.classroom || 'Phòng học';
+                      const effClassroom = cls?.classroom || session.classroom || 'Phòng học';
 
                       return (
                         <div
@@ -467,11 +474,12 @@ export const TimetableView: React.FC = () => {
                 const cls = session.classId
                   ? data.classes.find(c => String(c.id).trim() === String(session.classId).trim())
                   : null;
+                const slot = cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
                 const effClassName = cls?.name || session.className;
-                const effTeacherId = String(session.teacherId || cls?.teacherId || '').trim();
+                const effTeacherId = String(slot?.teacherId || cls?.teacherId || session.teacherId || '').trim();
                 const teacherObj = data.teachers.find(t => String(t.id).trim() === effTeacherId);
                 const effTeacherName = teacherObj?.fullName || session.teacherName;
-                const effClassroom = session.classroom || cls?.classroom || 'Phòng học';
+                const effClassroom = cls?.classroom || session.classroom || 'Phòng học';
 
                 return (
                   <div
