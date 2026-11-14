@@ -1952,6 +1952,39 @@ export interface StaffProfileResolution {
   diagnosticMessage?: string;
 }
 
+function normalizeVietnameseStr(str: string): string {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/^(thay|co|mr\.|ms\.|mrs\.)\s+/i, '')
+    .trim();
+}
+
+function areStaffNamesConflicting(accountName: string, profileName: string): boolean {
+  const aNorm = normalizeVietnameseStr(accountName);
+  const pNorm = normalizeVietnameseStr(profileName);
+  if (!aNorm || !pNorm) return false;
+  // Conflict if one refers to Hue and the other to Hoa
+  const aHasHue = aNorm.includes('hue');
+  const aHasHoa = aNorm.includes('hoa');
+  const pHasHue = pNorm.includes('hue');
+  const pHasHoa = pNorm.includes('hoa');
+  if ((aHasHue && pHasHoa) || (aHasHoa && pHasHue)) return true;
+
+  // General given-name conflict check
+  const aWords = aNorm.split(/\s+/).filter(Boolean);
+  const pWords = pNorm.split(/\s+/).filter(Boolean);
+  const aGiven = aWords[aWords.length - 1];
+  const pGiven = pWords[pWords.length - 1];
+  if (aGiven && pGiven && aGiven !== pGiven && !aNorm.includes(pGiven) && !pNorm.includes(aGiven)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Resolves the logged-in user to their authoritative staff profile (Teacher or Teaching Assistant).
  * Avoids fragile matching, prioritizes stable IDs, and provides clear diagnostics if a profile link is missing.
@@ -2009,27 +2042,58 @@ export function resolveStaffProfile(
     currentUser.teacherId && String(currentUser.teacherId).trim().toUpperCase().startsWith('TA-')
   );
 
-  const matchedAssistant = (assistants || []).find(ta => {
-    const tid = String(ta.id).trim().toUpperCase();
-    if (taIdFromUser && tid === String(taIdFromUser).trim().toUpperCase()) return true;
-    if (hasTaPrefixInTeacherId && tid === String(currentUser.teacherId).trim().toUpperCase()) return true;
-    if (isTaRole && tid === String(currentUser.id).trim().toUpperCase()) return true;
-    if (isTaRole && tid === String(currentUser.id).trim().replace(/^USR-/, '').toUpperCase()) return true;
-    if (currentUser.email && ta.email && ta.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase()) return true;
-    return false;
-  });
+  let matchedAssistant: TeachingAssistant | null = null;
+  const safeAssistants = assistants || [];
+
+  // Match TA by ID first
+  if (taIdFromUser) {
+    const tid = String(taIdFromUser).trim().toUpperCase();
+    matchedAssistant = safeAssistants.find(ta => String(ta.id).trim().toUpperCase() === tid) || null;
+  }
+  if (!matchedAssistant && hasTaPrefixInTeacherId) {
+    const tid = String(currentUser.teacherId).trim().toUpperCase();
+    matchedAssistant = safeAssistants.find(ta => String(ta.id).trim().toUpperCase() === tid) || null;
+  }
+  if (!matchedAssistant && isTaRole && currentUser.name) {
+    const aNorm = normalizeVietnameseStr(currentUser.name);
+    matchedAssistant = safeAssistants.find(
+      ta => normalizeVietnameseStr(ta.fullName) === aNorm
+    ) || null;
+  }
+  if (!matchedAssistant && currentUser.email) {
+    const uEmail = currentUser.email.trim().toLowerCase();
+    if (!uEmail.startsWith('ta@') && !uEmail.startsWith('teacher@')) {
+      matchedAssistant = safeAssistants.find(
+        ta => ta.email && ta.email.trim().toLowerCase() === uEmail &&
+              (!currentUser.name || !areStaffNamesConflicting(currentUser.name, ta.fullName))
+      ) || null;
+    }
+  }
+  if (!matchedAssistant && isTaRole && currentUser.id) {
+    const uid = String(currentUser.id).trim().toUpperCase();
+    const uidStripped = uid.replace(/^USR-/, '');
+    matchedAssistant = safeAssistants.find(
+      ta => {
+        const tid = String(ta.id).trim().toUpperCase();
+        return tid === uid || tid === uidStripped;
+      }
+    ) || null;
+  }
 
   const isTA =
     isTaRole ||
     Boolean(taIdFromUser) ||
     hasTaPrefixInTeacherId ||
-    Boolean(matchedAssistant && !teachers.some(t => t.id === currentUser.teacherId));
+    Boolean(matchedAssistant && !(teachers || []).some(t => t.id === currentUser.teacherId));
 
   if (isTA) {
     const staffId = matchedAssistant
       ? String(matchedAssistant.id).trim()
       : (taIdFromUser || (hasTaPrefixInTeacherId ? String(currentUser.teacherId).trim() : ''));
     const hasValidLink = Boolean(matchedAssistant);
+    const staffName = (matchedAssistant?.fullName && !areStaffNamesConflicting(currentUser.name, matchedAssistant.fullName))
+      ? matchedAssistant.fullName
+      : (currentUser.name || matchedAssistant?.fullName || 'Trợ giảng');
 
     return {
       isTeacher: false,
@@ -2037,8 +2101,8 @@ export function resolveStaffProfile(
       isAdmin: false,
       isAcademicManager: false,
       assistant: matchedAssistant || null,
-      staffId: matchedAssistant ? String(matchedAssistant.id).trim() : '',
-      staffName: matchedAssistant?.fullName || currentUser.name,
+      staffId,
+      staffName,
       hasValidProfileLink: hasValidLink,
       diagnosticMessage: hasValidLink
         ? undefined
@@ -2047,17 +2111,82 @@ export function resolveStaffProfile(
   }
 
   // Otherwise, account is Teacher
-  const matchedTeacher = (teachers || []).find(t => {
-    const tid = String(t.id).trim().toUpperCase();
-    if (currentUser.teacherId && !hasTaPrefixInTeacherId && tid === String(currentUser.teacherId).trim().toUpperCase()) return true;
-    if (currentUser.email && t.email && t.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase()) return true;
-    if (tid === String(currentUser.id).trim().toUpperCase()) return true;
-    if (tid === String(currentUser.id).trim().replace(/^USR-/, '').toUpperCase()) return true;
-    return false;
-  });
+  let matchedTeacher: Teacher | null = null;
+  const safeTeachers = teachers || [];
 
-  const staffId = matchedTeacher ? String(matchedTeacher.id).trim() : '';
-  const hasValidLink = Boolean(matchedTeacher);
+  // Priority 1: Match by authoritative teacherId
+  if (currentUser.teacherId && !hasTaPrefixInTeacherId) {
+    const targetTid = String(currentUser.teacherId).trim().toUpperCase();
+    const foundById = safeTeachers.find(
+      t => String(t.id).trim().toUpperCase() === targetTid
+    );
+    if (foundById) {
+      if (currentUser.name && areStaffNamesConflicting(currentUser.name, foundById.fullName)) {
+        // Teacher record has mismatched name (e.g. TCH-009 stored with Lê Thị Hoa while user is Tiêu Thị Huệ)
+        // Check if there is an exact name match in teachers
+        const foundByName = safeTeachers.find(
+          t => normalizeVietnameseStr(t.fullName) === normalizeVietnameseStr(currentUser.name) ||
+               (t.vietnameseName && normalizeVietnameseStr(t.vietnameseName) === normalizeVietnameseStr(currentUser.name))
+        );
+        if (foundByName) {
+          matchedTeacher = foundByName;
+        } else {
+          matchedTeacher = {
+            ...foundById,
+            fullName: currentUser.name,
+            vietnameseName: currentUser.name
+          };
+        }
+      } else {
+        matchedTeacher = foundById;
+      }
+    }
+  }
+
+  // Priority 2: Match by exact name if unlinked or not yet matched
+  if (!matchedTeacher && currentUser.name) {
+    const aNorm = normalizeVietnameseStr(currentUser.name);
+    matchedTeacher = safeTeachers.find(
+      t => normalizeVietnameseStr(t.fullName) === aNorm ||
+           (t.vietnameseName && normalizeVietnameseStr(t.vietnameseName) === aNorm)
+    ) || null;
+  }
+
+  // Priority 3: Match by specific non-generic email (guarding against conflicting names)
+  if (!matchedTeacher && currentUser.email) {
+    const uEmail = currentUser.email.trim().toLowerCase();
+    if (!uEmail.startsWith('teacher@') && !uEmail.startsWith('ta@') && !uEmail.startsWith('admin@')) {
+      const foundByEmail = safeTeachers.find(
+        t => t.email && t.email.trim().toLowerCase() === uEmail
+      );
+      if (foundByEmail && (!currentUser.name || !areStaffNamesConflicting(currentUser.name, foundByEmail.fullName))) {
+        matchedTeacher = foundByEmail;
+      }
+    }
+  }
+
+  // Priority 4: Match by user ID
+  if (!matchedTeacher && currentUser.id) {
+    const uid = String(currentUser.id).trim().toUpperCase();
+    const uidStripped = uid.replace(/^USR-/, '');
+    const foundByUid = safeTeachers.find(
+      t => {
+        const tid = String(t.id).trim().toUpperCase();
+        return tid === uid || tid === uidStripped;
+      }
+    );
+    if (foundByUid && (!currentUser.name || !areStaffNamesConflicting(currentUser.name, foundByUid.fullName))) {
+      matchedTeacher = foundByUid;
+    }
+  }
+
+  const staffId = matchedTeacher
+    ? String(matchedTeacher.id).trim()
+    : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
+  const hasValidLink = Boolean(matchedTeacher || currentUser.teacherId);
+  const staffName = (matchedTeacher?.fullName && !areStaffNamesConflicting(currentUser.name, matchedTeacher.fullName))
+    ? matchedTeacher.fullName
+    : (currentUser.name || matchedTeacher?.fullName || 'Giáo viên');
 
   return {
     isTeacher: true,
@@ -2066,7 +2195,7 @@ export function resolveStaffProfile(
     isAcademicManager: false,
     teacher: matchedTeacher || null,
     staffId,
-    staffName: matchedTeacher?.fullName || currentUser.name,
+    staffName,
     hasValidProfileLink: hasValidLink,
     diagnosticMessage: hasValidLink
       ? undefined
@@ -2195,7 +2324,8 @@ export function reconcileTimetableWithClasses(
           startTime: s.startTime || '17:30',
           endTime: s.endTime || '19:00',
           teacherId: s.teacherId || cls.teacherId,
-          assistantTeacherId: s.assistantTeacherId || cls.assistantTeacherId
+          // Only assign TA if explicitly set for this specific session slot; do NOT infer entire class TA
+          assistantTeacherId: s.assistantTeacherId ? String(s.assistantTeacherId).trim() : undefined
         }));
     } else {
       const parsed = getClassWeeklySchedule(cls);
@@ -2218,7 +2348,8 @@ export function reconcileTimetableWithClasses(
 
     for (const slot of slots) {
       const effTeacherId = String(slot.teacherId || cls.teacherId || '').trim();
-      const effTaId = String(slot.assistantTeacherId || cls.assistantTeacherId || '').trim();
+      const hasSlotBreakdown = Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0;
+      const effTaId = String(slot.assistantTeacherId || (hasSlotBreakdown ? '' : cls.assistantTeacherId) || '').trim();
 
       const teacherObj = safeTeachers.find(t => String(t.id).trim() === effTeacherId);
       const taObj = safeAssistants.find(ta => String(ta.id).trim() === effTaId);
@@ -2301,7 +2432,8 @@ export function syncSingleClassToTimetable(
         startTime: s.startTime || '17:30',
         endTime: s.endTime || '19:00',
         teacherId: s.teacherId || cls.teacherId,
-        assistantTeacherId: s.assistantTeacherId || cls.assistantTeacherId
+        // Only assign TA if explicitly set for this specific session slot; do NOT infer entire class TA
+        assistantTeacherId: s.assistantTeacherId ? String(s.assistantTeacherId).trim() : undefined
       }));
   } else {
     const parsed = getClassWeeklySchedule(cls);
@@ -2323,7 +2455,8 @@ export function syncSingleClassToTimetable(
 
   const updatedClassSessions: TimetableSession[] = slots.map(slot => {
     const effTeacherId = String(slot.teacherId || cls.teacherId || '').trim();
-    const effTaId = String(slot.assistantTeacherId || cls.assistantTeacherId || '').trim();
+    const hasSlotBreakdown = Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0;
+    const effTaId = String(slot.assistantTeacherId || (hasSlotBreakdown ? '' : cls.assistantTeacherId) || '').trim();
 
     const teacherObj = teachers.find(t => String(t.id).trim() === effTeacherId);
     const taObj = assistants.find(ta => String(ta.id).trim() === effTaId);
