@@ -20,7 +20,7 @@ import { ClassItem, ClassStatus, WeeklyScheduleSlot } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import { getClassWeeklySchedule, formatScheduleTimeSummary } from '../../services/dataService';
+import { getClassWeeklySchedule, formatScheduleTimeSummary, resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
 
 const WEEKDAY_OPTIONS: { dayOfWeek: number; dayName: string }[] = [
   { dayOfWeek: 1, dayName: 'Thứ 2' },
@@ -56,15 +56,9 @@ export const ClassesView: React.FC = () => {
   const { data, addClass, updateClass, deleteClass, assignStudentsToClass } = useData();
   const { showToast } = useToast();
 
-  const isTeacher = currentUser.role === 'teacher';
-  const teacherObj = isTeacher
-    ? data.teachers.find(
-        t =>
-          String(t.id).trim() === String(currentUser.teacherId).trim() ||
-          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
-      )
-    : null;
-  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
+  const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
+  const isTeacher = staff.isTeacher;
+  const isTA = staff.isTA;
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassItem | null>(null);
@@ -95,13 +89,8 @@ export const ClassesView: React.FC = () => {
   // Schedule conflict warning inside modal
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
 
-  // Filter classes accessible to user: teacherId ONLY, excluding TA-only assignments
-  const displayedClasses = data.classes.filter(cls => {
-    if (isTeacher) {
-      return Boolean(currentTeacherId) && String(cls.teacherId).trim() === currentTeacherId;
-    }
-    return true;
-  });
+  // Filter classes accessible to user (strictly separating Teacher vs TA)
+  const displayedClasses = getAssignedClassesForStaff(data.classes, staff);
 
   const openAddModal = () => {
     setFormData({
@@ -338,11 +327,13 @@ export const ClassesView: React.FC = () => {
           <p className="text-xs text-slate-500 mt-0.5">
             {isTeacher
               ? 'Các lớp học do Thầy/Cô trực tiếp đứng lớp và giảng dạy.'
+              : isTA
+              ? 'Các lớp học do bạn trực tiếp làm trợ giảng và phụ trách lớp.'
               : 'Theo dõi chỉ số sĩ số, phân công giáo viên - trợ giảng, phòng học và thời khóa biểu.'}
           </p>
         </div>
 
-        {!isTeacher && (
+        {!isTeacher && !isTA && (
           <button
             onClick={openAddModal}
             className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm shadow-red-950/20"
@@ -352,6 +343,32 @@ export const ClassesView: React.FC = () => {
           </button>
         )}
       </div>
+
+      {/* Account Diagnostic Warning if Link is Missing */}
+      {staff.diagnosticMessage && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <h4 className="text-xs font-bold text-amber-900">Thông báo liên kết tài khoản</h4>
+            <p className="text-xs text-amber-700 mt-0.5">{staff.diagnosticMessage}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Meaningful empty state if no classes are assigned */}
+      {displayedClasses.length === 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
+          <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+          <h4 className="text-sm font-bold text-slate-700">Chưa có lớp học được phân công</h4>
+          <p className="text-xs text-slate-500 mt-1">
+            {isTA
+              ? 'Bạn hiện chưa được phân công làm trợ giảng cho lớp học nào. Quản trị viên hoặc Quản lý học thuật sẽ cập nhật phân công cho bạn sớm nhất.'
+              : isTeacher
+              ? 'Bạn hiện chưa có lớp học nào được phân công giảng dạy.'
+              : 'Hiện chưa có lớp học nào trong hệ thống.'}
+          </p>
+        </div>
+      )}
 
       {/* Class Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -462,7 +479,7 @@ export const ClassesView: React.FC = () => {
                   <Eye className="w-3.5 h-3.5" /> Chi tiết
                 </button>
 
-                {!isTeacher ? (
+                {!isTeacher && !isTA ? (
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => openRosterManager(cls)}
@@ -490,6 +507,8 @@ export const ClassesView: React.FC = () => {
                       </button>
                     )}
                   </div>
+                ) : isTA ? (
+                  <span className="text-[11px] text-blue-600 font-medium italic">Trợ giảng phụ trách</span>
                 ) : (
                   <span className="text-[11px] text-slate-400 italic">Đang phụ trách</span>
                 )}
