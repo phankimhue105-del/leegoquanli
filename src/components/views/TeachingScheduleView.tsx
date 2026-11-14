@@ -38,7 +38,9 @@ import {
   exportTeachingScheduleToWord,
   exportTeachingScheduleToExcel,
   getClassWeeklySchedule,
-  formatScheduleTimeSummary
+  formatScheduleTimeSummary,
+  resolveStaffProfile,
+  getAssignedClassesForStaff
 } from '../../services/dataService';
 
 const MONTH_NAMES = [
@@ -69,23 +71,19 @@ export const TeachingScheduleView: React.FC = () => {
   } = useData();
   const { showToast } = useToast();
 
-  const isTeacher = currentUser.role === 'teacher';
+  const staff = resolveStaffProfile(currentUser, data?.teachers || [], data?.teachingAssistants || []);
+  const isTeacher = staff.isTeacher;
+  const isTA = staff.isTA;
+  const isStaff = isTeacher || isTA;
   const isAdmin = currentUser.role === 'admin';
   const canEdit = hasPermission('teaching_schedule.edit') || hasPermission('teaching_schedule.create');
   const canDelete = hasPermission('teaching_schedule.delete') || isAdmin;
   const canExport = hasPermission('teaching_schedule.export') || isAdmin;
 
-  // Filter classes accessible to current user (teacherId only, excluding TA-only assignments)
+  // Filter classes accessible to current user (strictly separating Teacher vs TA)
   const availableClasses = useMemo(() => {
-    const classesList = Array.isArray(data?.classes) ? data.classes : [];
-    if (currentUser.role === 'teacher') {
-      const teacherId = currentUser.teacherId ? String(currentUser.teacherId).trim() : '';
-      return classesList.filter(
-        c => Boolean(teacherId) && String(c.teacherId).trim() === teacherId
-      );
-    }
-    return classesList;
-  }, [data?.classes, currentUser]);
+    return getAssignedClassesForStaff(data?.classes || [], staff);
+  }, [data?.classes, staff]);
 
   const now = new Date();
   const [selectedClassId, setSelectedClassId] = useState<string>(() => {
