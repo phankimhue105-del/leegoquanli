@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
+import { resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
 import { NavigationTab } from '../layout/Sidebar';
 import { AdminDailyClassOverview } from './AdminDailyClassOverview';
 
@@ -57,30 +58,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
     ? recentAttendance.records.filter(r => r.status === 'absent' || r.status === 'excused')
     : [];
 
-  // Teacher-specific data if logged in as teacher (teacherId only, excluding TA-only assignments)
-  const teacherObj = data.teachers.find(
-    t =>
-      String(t.id).trim() === String(currentUser.teacherId).trim() ||
-      (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
-  );
-  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
-  const teacherClasses = data.classes.filter(c =>
-    Boolean(currentTeacherId) && String(c.teacherId).trim() === currentTeacherId
-  );
-  const teacherSessions = data.timetable.filter(s => {
-    if (!currentTeacherId) return false;
+  // Staff profile resolution (supports Teachers and Teaching Assistants with stable linking)
+  const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
+  const isTeacher = staff.isTeacher;
+  const isTA = staff.isTA;
+  const isStaff = isTeacher || isTA;
+
+  const staffClasses = getAssignedClassesForStaff(data.classes, staff);
+  const staffSessions = data.timetable.filter(s => {
+    if (!staff.staffId) return false;
     if (s.classId) {
       const cls = data.classes.find(c => String(c.id).trim() === String(s.classId).trim());
       if (!cls || cls.status === 'cancelled') return false;
       const slot = cls.weeklySchedule?.find(slotItem => slotItem.dayOfWeek === s.dayOfWeek);
+      if (isTA) {
+        const effAssistantId = String(slot?.assistantTeacherId || cls.assistantTeacherId || s.assistantId || '').trim();
+        return effAssistantId === staff.staffId;
+      }
       const effTeacherId = String(slot?.teacherId || cls.teacherId || s.teacherId || '').trim();
-      return effTeacherId === currentTeacherId;
+      return effTeacherId === staff.staffId;
     }
-    return String(s.teacherId).trim() === currentTeacherId;
+    if (isTA) {
+      return String(s.assistantId || '').trim() === staff.staffId;
+    }
+    return String(s.teacherId).trim() === staff.staffId;
   });
-  const teacherPendingReports = data.lessonPlans.filter(lp =>
-    Boolean(currentTeacherId) && String(lp.teacherId).trim() === currentTeacherId && lp.status === 'submitted'
-  );
+
+  const staffPendingReports = data.lessonPlans.filter(lp => {
+    if (!staff.staffId) return false;
+    if (isTA) {
+      const cls = data.classes.find(c => c.id === lp.classId);
+      return (
+        cls && (
+          String(cls.assistantTeacherId || '').trim() === staff.staffId ||
+          (cls.weeklySchedule || []).some(slot => String(slot.assistantTeacherId || '').trim() === staff.staffId)
+        )
+      );
+    }
+    return String(lp.teacherId).trim() === staff.staffId && lp.status === 'submitted';
+  });
 
   return (
     <div className="space-y-6">
@@ -99,12 +115,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             <p className="text-red-100 text-xs md:text-sm mt-1 max-w-xl">
               {role === 'admin' && 'Chào mừng Quản trị viên. Bạn đang có toàn quyền quản lý học sinh, giáo viên, lớp học và hệ thống LeeGo.'}
               {role === 'academic_manager' && 'Chào mừng Quản lý học thuật. Hãy theo dõi tiến độ giáo án, đánh giá chất lượng và lịch học hôm nay.'}
-              {role === 'teacher' && `Chào mừng Thầy/Cô ${teacherObj?.fullName || currentUser.name}. Chúc một ngày giảng dạy đầy năng lượng!`}
+              {isTeacher && `Chào mừng Thầy/Cô ${staff.staffName}. Chúc một ngày giảng dạy đầy năng lượng!`}
+              {isTA && `Chào mừng Trợ Giảng ${staff.staffName}. Chúc một ngày hỗ trợ học tập hiệu quả!`}
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            {role === 'teacher' ? (
+            {isStaff ? (
               <button
                 onClick={() => onNavigate('attendance')}
                 className="px-4 py-2.5 bg-white text-red-700 hover:bg-red-50 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
@@ -125,17 +142,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
         </div>
       </div>
 
+      {/* Account Diagnostic Warning if Link is Missing */}
+      {staff.diagnosticMessage && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <h4 className="text-xs font-bold text-amber-900">Thông báo liên kết tài khoản</h4>
+            <p className="text-xs text-amber-700 mt-0.5">{staff.diagnosticMessage}</p>
+          </div>
+        </div>
+      )}
+
       {/* KPI Statistic Cards */}
-      {role === 'teacher' ? (
-        // TEACHER DASHBOARD STATS
+      {isStaff ? (
+        // STAFF (TEACHER & TA) DASHBOARD STATS
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 flex items-center justify-center shrink-0">
               <BookOpen className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-2xl font-black text-slate-800">{teacherClasses.length}</div>
-              <div className="text-xs font-medium text-slate-500">Lớp đang phụ trách</div>
+              <div className="text-2xl font-black text-slate-800">{staffClasses.length}</div>
+              <div className="text-xs font-medium text-slate-500">
+                {isTA ? 'Lớp trợ giảng phụ trách' : 'Lớp đang phụ trách'}
+              </div>
             </div>
           </div>
 
@@ -144,8 +174,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               <Calendar className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-2xl font-black text-slate-800">{teacherSessions.length}</div>
-              <div className="text-xs font-medium text-slate-500">Ca dạy trong tuần</div>
+              <div className="text-2xl font-black text-slate-800">{staffSessions.length}</div>
+              <div className="text-xs font-medium text-slate-500">
+                {isTA ? 'Ca trợ giảng trong tuần' : 'Ca dạy trong tuần'}
+              </div>
             </div>
           </div>
 
@@ -154,8 +186,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               <Clock className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-2xl font-black text-slate-800">{teacherObj?.workloadHours || 12}h</div>
-              <div className="text-xs font-medium text-slate-500">Tổng giờ dạy / tuần</div>
+              <div className="text-2xl font-black text-slate-800">
+                {isTeacher ? `${staff.teacher?.workloadHours || 12}h` : `${Math.round(staffSessions.length * 1.5)}h`}
+              </div>
+              <div className="text-xs font-medium text-slate-500">
+                {isTA ? 'Tổng giờ trợ giảng / tuần' : 'Tổng giờ dạy / tuần'}
+              </div>
             </div>
           </div>
 
@@ -164,8 +200,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               <FileCheck className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-2xl font-black text-slate-800">{teacherPendingReports.length}</div>
-              <div className="text-xs font-medium text-slate-500">Báo cáo chờ duyệt</div>
+              <div className="text-2xl font-black text-slate-800">
+                {isTA
+                  ? (data.lessonReports || []).filter(r => staffClasses.some(c => c.id === r.classId)).length
+                  : staffPendingReports.length}
+              </div>
+              <div className="text-xs font-medium text-slate-500">
+                {isTA ? 'Báo cáo buổi học (Reports)' : 'Báo cáo chờ duyệt'}
+              </div>
             </div>
           </div>
         </div>
@@ -324,7 +366,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               <div className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-red-600" />
                 <h3 className="font-bold text-slate-800 text-sm md:text-base">
-                  {role === 'teacher' ? 'Lịch dạy của tôi' : 'Lịch học các lớp hôm nay'}
+                  {isTA ? 'Lịch trợ giảng của tôi' : isTeacher ? 'Lịch dạy của tôi' : 'Lịch học các lớp hôm nay'}
                 </h3>
               </div>
               <button
@@ -336,12 +378,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             </div>
 
             <div className="space-y-3">
-              {(role === 'teacher' ? teacherSessions : todaySessions).length === 0 ? (
+              {(isStaff ? staffSessions : todaySessions).length === 0 ? (
                 <div className="text-center py-8 text-slate-400 text-xs">
-                  Không có ca học nào được xếp lịch vào hôm nay.
+                  {isStaff
+                    ? 'Bạn chưa có ca học nào được xếp lịch hoặc ca học hôm nay không diễn ra.'
+                    : 'Không có ca học nào được xếp lịch vào hôm nay.'}
                 </div>
               ) : (
-                (role === 'teacher' ? teacherSessions : todaySessions).map(s => (
+                (isStaff ? staffSessions : todaySessions).map(s => (
                   <div
                     key={s.id}
                     className="p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-white hover:border-slate-300 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3"
@@ -388,7 +432,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               <div className="flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-red-600" />
                 <h3 className="font-bold text-slate-800 text-sm md:text-base">
-                  {role === 'teacher' ? 'Lớp tôi giảng dạy' : 'Danh sách lớp đang hoạt động'}
+                  {isTA ? 'Lớp tôi phụ trách trợ giảng' : isTeacher ? 'Lớp tôi giảng dạy' : 'Danh sách lớp đang hoạt động'}
                 </h3>
               </div>
               <button
@@ -411,32 +455,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(role === 'teacher' ? teacherClasses : data.classes).map(cls => {
-                    const teacher = data.teachers.find(t => t.id === cls.teacherId);
-                    return (
-                      <tr key={cls.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-2.5 px-3 font-semibold text-slate-800">
-                          {cls.name}
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded-full bg-slate-100 font-medium text-slate-700 text-[11px]">
-                            {cls.level}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-600">
-                          {teacher?.fullName || 'Chưa phân công'}
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-500">
-                          {cls.scheduleDays} ({cls.scheduleTime})
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <span className="font-bold text-slate-800">
-                            {cls.studentIds.length}/{cls.maxCapacity}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {(isStaff ? staffClasses : data.classes).length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-6 text-center text-slate-400">
+                        {isTA ? 'Chưa có lớp nào được phân công trợ giảng.' : 'Chưa có lớp nào được phân công giảng dạy.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    (isStaff ? staffClasses : data.classes).map(cls => {
+                      const teacher = data.teachers.find(t => t.id === cls.teacherId);
+                      return (
+                        <tr key={cls.id} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="py-2.5 px-3 font-semibold text-slate-800">
+                            {cls.name}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 font-medium text-slate-700 text-[11px]">
+                              {cls.level}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-600">
+                            {teacher?.fullName || 'Chưa phân công'}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-500">
+                            {cls.scheduleDays} ({cls.scheduleTime})
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="font-bold text-slate-800">
+                              {cls.studentIds.length}/{cls.maxCapacity}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
