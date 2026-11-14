@@ -80,13 +80,110 @@ export interface AppDataStore {
   lessonReportLockAudits?: LessonReportLockAuditEntry[];
 }
 
+export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
+  if (!store || typeof store !== 'object') return store;
+
+  const normStudents = (Array.isArray(store.students) ? store.students : []).map(s => ({
+    ...s,
+    id: String(s.id ?? '').trim(),
+    fullName: String(s.fullName ?? '').trim(),
+    vietnameseName: s.vietnameseName ? String(s.vietnameseName).trim() : '',
+    parentPhone: s.parentPhone !== undefined && s.parentPhone !== null ? String(s.parentPhone).trim() : '',
+    classIds: Array.from(new Set((s.classIds || []).map(cid => String(cid).trim()).filter(Boolean)))
+  }));
+
+  const normClasses = (Array.isArray(store.classes) ? store.classes : []).map(c => ({
+    ...c,
+    id: String(c.id ?? '').trim(),
+    teacherId: c.teacherId ? String(c.teacherId).trim() : '',
+    assistantTeacherId: c.assistantTeacherId ? String(c.assistantTeacherId).trim() : undefined,
+    studentIds: Array.from(new Set((c.studentIds || []).map(sid => String(sid).trim()).filter(Boolean)))
+  }));
+
+  const normTeachers = (Array.isArray(store.teachers) ? store.teachers : []).map(t => ({
+    ...t,
+    id: String(t.id ?? '').trim(),
+    assignedClassIds: Array.from(new Set((t.assignedClassIds || []).map(cid => String(cid).trim()).filter(Boolean)))
+  }));
+
+  const normTeachingAssistants = (Array.isArray(store.teachingAssistants) ? store.teachingAssistants : []).map(ta => ({
+    ...ta,
+    id: String(ta.id ?? '').trim(),
+    assignedClassIds: Array.from(new Set((ta.assignedClassIds || []).map(cid => String(cid).trim()).filter(Boolean)))
+  }));
+
+  const normAcademicManagers = (Array.isArray(store.academicManagers) ? store.academicManagers : []).map(am => ({
+    ...am,
+    id: String(am.id ?? '').trim()
+  }));
+
+  const normAttendance = (Array.isArray(store.attendance) ? store.attendance : []).map(att => ({
+    ...att,
+    id: String(att.id ?? '').trim(),
+    classId: String(att.classId ?? '').trim(),
+    records: (att.records || []).map(r => ({
+      ...r,
+      studentId: String(r.studentId ?? '').trim()
+    }))
+  }));
+
+  const normAssessments = (Array.isArray(store.assessments) ? store.assessments : []).map(as => ({
+    ...as,
+    id: String(as.id ?? '').trim(),
+    classId: String(as.classId ?? '').trim(),
+    scores: (as.scores || []).map(sc => ({
+      ...sc,
+      studentId: String(sc.studentId ?? '').trim()
+    }))
+  }));
+
+  const normLessonReports = (Array.isArray(store.lessonReports) ? store.lessonReports : []).map(lr => ({
+    ...lr,
+    id: String(lr.id ?? '').trim(),
+    classId: String(lr.classId ?? '').trim(),
+    studentReports: (lr.studentReports || []).map(sr => ({
+      ...sr,
+      studentId: String(sr.studentId ?? '').trim()
+    }))
+  }));
+
+  const normTimetable = (Array.isArray(store.timetable) ? store.timetable : []).map(tt => ({
+    ...tt,
+    id: String(tt.id ?? '').trim(),
+    classId: String(tt.classId ?? '').trim(),
+    teacherId: String(tt.teacherId ?? '').trim(),
+    assistantId: tt.assistantId ? String(tt.assistantId).trim() : undefined
+  }));
+
+  const normUsers = (Array.isArray(store.users) ? store.users : []).map(u => ({
+    ...u,
+    id: String(u.id ?? '').trim(),
+    teacherId: u.teacherId ? String(u.teacherId).trim() : undefined,
+    academicManagerId: u.academicManagerId ? String(u.academicManagerId).trim() : undefined
+  }));
+
+  return {
+    ...store,
+    students: normStudents,
+    classes: normClasses,
+    teachers: normTeachers,
+    teachingAssistants: normTeachingAssistants,
+    academicManagers: normAcademicManagers,
+    attendance: normAttendance,
+    assessments: normAssessments,
+    lessonReports: normLessonReports,
+    timetable: normTimetable,
+    users: normUsers
+  };
+}
+
 export function loadInitialStorage(): AppDataStore {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       // Ensure all keys exist
-      return {
+      return normalizeAppDataStore({
         students: Array.isArray(parsed.students) ? parsed.students : [],
         classes: Array.isArray(parsed.classes) ? parsed.classes : [],
         teachers: Array.isArray(parsed.teachers) ? parsed.teachers : [],
@@ -106,7 +203,7 @@ export function loadInitialStorage(): AppDataStore {
         incompleteReports: Array.isArray(parsed.incompleteReports) ? parsed.incompleteReports : [],
         makeupSessions: Array.isArray(parsed.makeupSessions) ? parsed.makeupSessions : [],
         lessonReportLockAudits: Array.isArray(parsed.lessonReportLockAudits) ? parsed.lessonReportLockAudits : [],
-      };
+      });
     }
   } catch (err) {
     console.error('Failed to parse localStorage data', err);
@@ -116,7 +213,7 @@ export function loadInitialStorage(): AppDataStore {
   const isAuth = typeof localStorage !== 'undefined' && localStorage.getItem('leego_auth_status_v1') === 'true';
   if (isAuth) {
     // Authenticated user on a clean computer: do NOT initialize with fake demo data!
-    return {
+    return normalizeAppDataStore({
       students: [],
       classes: [],
       teachers: [],
@@ -136,10 +233,10 @@ export function loadInitialStorage(): AppDataStore {
       incompleteReports: [],
       makeupSessions: [],
       lessonReportLockAudits: [],
-    };
+    });
   }
 
-  const defaultData: AppDataStore = {
+  const defaultData: AppDataStore = normalizeAppDataStore({
     students: initialStudents,
     classes: initialClasses,
     teachers: initialTeachers,
@@ -159,7 +256,7 @@ export function loadInitialStorage(): AppDataStore {
     incompleteReports: [],
     makeupSessions: [],
     lessonReportLockAudits: [],
-  };
+  });
 
   saveStorage(defaultData);
   return defaultData;
@@ -384,8 +481,10 @@ export const FIELD_LABELS: Record<string, string> = {
 };
 
 function mergeObjectArrayByKey(localArr: any[], cloudArr: any[]): any[] {
-  const getKey = (item: any) =>
-    item?.studentId || item?.sessionId || item?.id || item?.date || item?.reportId || JSON.stringify(item);
+  const getKey = (item: any): string => {
+    const raw = item?.studentId ?? item?.sessionId ?? item?.id ?? item?.date ?? item?.reportId;
+    return raw !== undefined && raw !== null ? String(raw).trim() : JSON.stringify(item);
+  };
   const cloudMap = new Map(cloudArr.map(item => [getKey(item), item]));
   const localMap = new Map(localArr.map(item => [getKey(item), item]));
   const result: any[] = [];
@@ -417,15 +516,24 @@ function mergeSingleRecordFieldLevel(
 
   for (const key of allKeys) {
     if (key === 'id' || key === 'sessionId' || key === 'reportId') {
-      merged[key] = localItem?.[key] || cloudItem?.[key];
+      const idVal = localItem?.[key] !== undefined && localItem?.[key] !== null ? localItem[key] : cloudItem?.[key];
+      merged[key] = idVal !== undefined && idVal !== null ? String(idVal).trim() : idVal;
       continue;
     }
 
     const locVal = localItem ? localItem[key] : undefined;
     const cloudVal = cloudItem ? cloudItem[key] : undefined;
 
-    // 1. Array properties: non-destructive union
+    // 1. Array properties: non-destructive union with ID normalization and roster deduplication
     if (Array.isArray(locVal) || Array.isArray(cloudVal)) {
+      if (key === 'studentIds' || key === 'classIds' || key === 'assignedClassIds') {
+        const locList = Array.isArray(locVal) ? locVal : [];
+        const cldList = Array.isArray(cloudVal) ? cloudVal : [];
+        merged[key] = Array.from(
+          new Set([...cldList, ...locList].map(x => String(x ?? '').trim()).filter(Boolean))
+        );
+        continue;
+      }
       if (Array.isArray(locVal) && Array.isArray(cloudVal)) {
         if (
           locVal.every(x => typeof x !== 'object') &&
@@ -767,8 +875,11 @@ export function mergeCenterData(
     const locArr = Array.isArray(local[cat.key]) ? (local[cat.key] as any[]) : [];
     const cldArr = Array.isArray(normRemote[cat.key]) ? (normRemote[cat.key] as any[]) : [];
     const baseArr = BASELINE_DATA_MAP[cat.key] || [];
-    const baseMap = new Map(baseArr.map(b => [b.id, b]));
-    const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
+    const getId = (item: any): string => {
+      const raw = item?.id ?? item?.sessionId ?? item?.reportId;
+      return raw !== undefined && raw !== null ? String(raw).trim() : '';
+    };
+    const baseMap = new Map(baseArr.map(b => [getId(b), b]));
 
     if (cldArr.length === 0) {
       // Cloud has no records for this key
@@ -889,7 +1000,7 @@ export function mergeCenterData(
   }
 
   return {
-    merged,
+    merged: normalizeAppDataStore(merged),
     needsUpload,
     hasConflicts: allConflicts.length > 0,
     conflicts: allConflicts,
@@ -907,7 +1018,7 @@ export function resolveConflict(
   customRecord?: any
 ): AppDataStore {
   const category = conflict.category;
-  const targetId = conflict.recordId;
+  const targetId = String(conflict.recordId).trim();
   const list = Array.isArray(data[category]) ? [...(data[category] as any[])] : [];
 
   let resolvedItem: any;
@@ -919,7 +1030,10 @@ export function resolveConflict(
     resolvedItem = customRecord || conflict.localRecord;
   }
 
-  const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
+  const getId = (item: any): string => {
+    const raw = item?.id ?? item?.sessionId ?? item?.reportId;
+    return raw !== undefined && raw !== null ? String(raw).trim() : '';
+  };
   const idx = list.findIndex(item => getId(item) === targetId);
 
   if (idx >= 0) {
@@ -928,10 +1042,10 @@ export function resolveConflict(
     list.push(resolvedItem);
   }
 
-  const updatedData: AppDataStore = {
+  const updatedData: AppDataStore = normalizeAppDataStore({
     ...data,
     [category]: list
-  };
+  });
 
   saveStorage(updatedData);
   return updatedData;
@@ -1829,7 +1943,9 @@ const CATEGORY_DEFINITIONS: Array<{ key: keyof AppDataStore; name: string }> = [
 export function isRecordModified(localItem: any, baselineItem: any): boolean {
   if (!baselineItem) return true;
   try {
-    return JSON.stringify(localItem) !== JSON.stringify(baselineItem);
+    const normLoc = { ...localItem, id: String(localItem.id ?? '').trim() };
+    const normBase = { ...baselineItem, id: String(baselineItem.id ?? '').trim() };
+    return JSON.stringify(normLoc) !== JSON.stringify(normBase);
   } catch {
     return true;
   }
@@ -1857,6 +1973,10 @@ export function runDataSurveyScanner(
   }
 
   const categories: CategoryInventory[] = [];
+  const getId = (item: any): string => {
+    const raw = item?.id ?? item?.sessionId ?? item?.reportId;
+    return raw !== undefined && raw !== null ? String(raw).trim() : '';
+  };
 
   for (const cat of CATEGORY_DEFINITIONS) {
     if (cat.key === 'settings') {
@@ -1889,7 +2009,7 @@ export function runDataSurveyScanner(
 
     const locArr = Array.isArray(localData[cat.key]) ? (localData[cat.key] as any[]) : [];
     const baseArr = BASELINE_DATA_MAP[cat.key] || [];
-    const baseMap = new Map(baseArr.map(b => [b.id, b]));
+    const baseMap = new Map(baseArr.map(b => [getId(b), b]));
 
     let demoUntouched = 0;
     let demoModified = 0;
@@ -1899,7 +2019,7 @@ export function runDataSurveyScanner(
 
     for (const item of locArr) {
       if (!item) continue;
-      const id = item.id || item.sessionId || item.reportId;
+      const id = getId(item);
       if (!id || !baseMap.has(id)) {
         realNew++;
         if (id) newIds.push(String(id));
@@ -2161,12 +2281,15 @@ export function buildMigrationPlan(
 
     const locArr = Array.isArray(localData[cat.key]) ? (localData[cat.key] as any[]) : [];
     const baseArr = BASELINE_DATA_MAP[cat.key] || [];
-    const baseMap = new Map(baseArr.map(b => [b.id, b]));
+    const getId = (item: any): string => {
+      const raw = item?.id ?? item?.sessionId ?? item?.reportId;
+      return raw !== undefined && raw !== null ? String(raw).trim() : '';
+    };
+    const baseMap = new Map(baseArr.map(b => [getId(b), b]));
     const cldArr =
       remoteData && Array.isArray(remoteData[cat.key])
         ? (remoteData[cat.key] as any[])
         : [];
-    const getId = (item: any) => item?.id || item?.sessionId || item?.reportId;
     const cldMap = new Map(cldArr.map(item => [getId(item), item]));
 
     const recordsToUpload: any[] = [];
