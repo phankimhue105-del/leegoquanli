@@ -170,6 +170,8 @@ export const Header: React.FC<HeaderProps> = ({
                     ? 'Quản trị viên'
                     : currentUser?.role === 'academic_manager'
                     ? 'Quản lý học thuật'
+                    : currentUser?.role === 'teaching_assistant'
+                    ? 'Trợ giảng'
                     : 'Giáo viên'}
                 </div>
               </div>
@@ -200,6 +202,8 @@ export const Header: React.FC<HeaderProps> = ({
                         ? 'Quản trị viên'
                         : currentUser?.role === 'academic_manager'
                         ? 'Quản lý học thuật'
+                        : currentUser?.role === 'teaching_assistant'
+                        ? 'Trợ giảng'
                         : 'Giáo viên'}
                     </span>
                   </div>
