@@ -25,19 +25,31 @@ export const AttendanceView: React.FC = () => {
   const { showToast } = useToast();
 
   const isTeacher = currentUser.role === 'teacher';
-  const teacherObj = isTeacher ? data.teachers.find(t => t.id === currentUser.teacherId || t.email === currentUser.email) : null;
-  const teacherClassIds = teacherObj ? teacherObj.assignedClassIds : [];
+  const teacherObj = isTeacher
+    ? data.teachers.find(
+        t =>
+          String(t.id).trim() === String(currentUser.teacherId).trim() ||
+          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
+      )
+    : null;
+  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
 
   const availableClasses = useMemo(() => {
     if (isTeacher) {
-      return data.classes.filter(c => teacherClassIds.includes(c.id));
+      return data.classes.filter(c => Boolean(currentTeacherId) && String(c.teacherId).trim() === currentTeacherId);
     }
     return data.classes;
-  }, [data.classes, isTeacher, teacherClassIds]);
+  }, [data.classes, isTeacher, currentTeacherId]);
 
   // Selected Class & Date for taking attendance
   const [selectedClassId, setSelectedClassId] = useState<string>(availableClasses[0]?.id || '');
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
+
+  React.useEffect(() => {
+    if ((!selectedClassId || !availableClasses.some(c => c.id === selectedClassId)) && availableClasses.length > 0) {
+      setSelectedClassId(availableClasses[0].id);
+    }
+  }, [availableClasses, selectedClassId]);
 
   const selectedClass = data.classes.find(c => c.id === selectedClassId);
 
@@ -50,8 +62,9 @@ export const AttendanceView: React.FC = () => {
   const [attendanceEntries, setAttendanceEntries] = useState<StudentAttendanceEntry[]>(() => {
     if (existingRecord) return existingRecord.records;
     if (selectedClass) {
-      return selectedClass.studentIds.map(sid => {
-        const student = data.students.find(s => s.id === sid);
+      const dedupIds = Array.from(new Set((selectedClass.studentIds || []).map(sid => String(sid).trim()).filter(Boolean)));
+      return dedupIds.map(sid => {
+        const student = data.students.find(s => String(s.id).trim() === sid);
         return {
           studentId: sid,
           studentName: student?.fullName || sid,
@@ -68,9 +81,10 @@ export const AttendanceView: React.FC = () => {
     if (existingRecord) {
       setAttendanceEntries(existingRecord.records);
     } else if (selectedClass) {
+      const dedupIds = Array.from(new Set((selectedClass.studentIds || []).map(sid => String(sid).trim()).filter(Boolean)));
       setAttendanceEntries(
-        selectedClass.studentIds.map(sid => {
-          const student = data.students.find(s => s.id === sid);
+        dedupIds.map(sid => {
+          const student = data.students.find(s => String(s.id).trim() === sid);
           return {
             studentId: sid,
             studentName: student?.fullName || sid,
