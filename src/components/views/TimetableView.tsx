@@ -16,21 +16,17 @@ import { TimetableSession } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
+import { resolveStaffProfile } from '../../services/dataService';
 
 export const TimetableView: React.FC = () => {
   const { currentUser } = useAuth();
   const { data, addTimetableSession, updateTimetableSession, deleteTimetableSession, checkScheduleConflict } = useData();
   const { showToast } = useToast();
 
-  const isTeacher = currentUser.role === 'teacher';
-  const teacherObj = isTeacher
-    ? data.teachers.find(
-        t =>
-          String(t.id).trim() === String(currentUser.teacherId).trim() ||
-          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
-      )
-    : null;
-  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
+  const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
+  const isTeacher = staff.isTeacher;
+  const isTA = staff.isTA;
+  const isStaff = isTeacher || isTA;
 
   // Filters
   const [filterMode, setFilterMode] = useState<'all' | 'teacher' | 'classroom' | 'class'>('all');
@@ -85,10 +81,16 @@ export const TimetableView: React.FC = () => {
     // Authoritative teacher assignment MUST come from current class record (or slot)
     const slot = cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
     const effTeacherId = String(slot?.teacherId || cls?.teacherId || session.teacherId || '').trim();
+    const effAssistantId = String(slot?.assistantTeacherId || cls?.assistantTeacherId || session.assistantId || '').trim();
 
     // If logged in as teacher, show only their sessions by default (teacherId only)
     if (isTeacher) {
-      if (currentTeacherId && effTeacherId !== currentTeacherId) return false;
+      if (staff.staffId && effTeacherId !== staff.staffId) return false;
+    }
+
+    // If logged in as TA, show only their sessions by default (assistantTeacherId only)
+    if (isTA) {
+      if (staff.staffId && effAssistantId !== staff.staffId) return false;
     }
 
     if (filterMode === 'teacher' && selectedFilterValue !== 'all') {
@@ -271,7 +273,7 @@ export const TimetableView: React.FC = () => {
             </button>
           </div>
 
-          {!isTeacher && (
+          {!isStaff && (
             <button
               onClick={openAddSessionModal}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-red-950/20"
