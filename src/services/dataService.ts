@@ -162,17 +162,26 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
     academicManagerId: u.academicManagerId ? String(u.academicManagerId).trim() : undefined
   }));
 
+  // Synchronize timetable and teacher assignments with authoritative classes
+  const syncedTimetable = syncAllClassesToTimetable(
+    normClasses,
+    normTimetable,
+    normTeachers,
+    normTeachingAssistants
+  );
+  const syncedTeachers = recalculateTeacherAssignedClasses(normClasses, normTeachers);
+
   return {
     ...store,
     students: normStudents,
     classes: normClasses,
-    teachers: normTeachers,
+    teachers: syncedTeachers,
     teachingAssistants: normTeachingAssistants,
     academicManagers: normAcademicManagers,
     attendance: normAttendance,
     assessments: normAssessments,
     lessonReports: normLessonReports,
-    timetable: normTimetable,
+    timetable: syncedTimetable,
     users: normUsers
   };
 }
@@ -1839,6 +1848,182 @@ export function formatScheduleTimeSummary(slots: ClassWeeklyScheduleSlot[]): str
     })
     .filter(Boolean)
     .join(' | ');
+}
+
+/**
+ * Default Vietnamese day name for day of week (1=Mon ... 7=Sun)
+ */
+export function getDayNameFromNumber(dayOfWeek: number): string {
+  switch (dayOfWeek) {
+    case 1: return 'Thứ 2';
+    case 2: return 'Thứ 3';
+    case 3: return 'Thứ 4';
+    case 4: return 'Thứ 5';
+    case 5: return 'Thứ 6';
+    case 6: return 'Thứ 7';
+    case 7: return 'Chủ Nhật';
+    default: return `Thứ ${dayOfWeek}`;
+  }
+}
+
+/**
+ * Recompute teacher assignedClassIds accurately from active classes.
+ * Ensures a teacher who was unassigned from a class does not retain stale class IDs,
+ * and newly assigned teachers receive the class ID.
+ */
+export function recalculateTeacherAssignedClasses(
+  classes: ClassItem[],
+  teachers: Teacher[]
+): Teacher[] {
+  if (!Array.isArray(teachers)) return [];
+  const activeClasses = (Array.isArray(classes) ? classes : []).filter(
+    c => c.status !== 'cancelled'
+  );
+
+  return teachers.map(t => {
+    const tid = String(t.id).trim();
+    const assignedIds = new Set<string>();
+
+    activeClasses.forEach(c => {
+      const classId = String(c.id).trim();
+      const primaryTeacherMatch = String(c.teacherId ?? '').trim() === tid;
+      const slotTeacherMatch = (c.weeklySchedule || []).some(
+        s => String(s.teacherId ?? '').trim() === tid
+      );
+      if (primaryTeacherMatch || slotTeacherMatch) {
+        assignedIds.add(classId);
+      }
+    });
+
+    return {
+      ...t,
+      assignedClassIds: Array.from(assignedIds)
+    };
+  });
+}
+
+/**
+ * Synchronize a single class's recurring schedule into the timetable.
+ * Updates existing sessions in place (preserving session IDs where possible)
+ * and removes obsolete sessions for this class.
+ */
+export function syncSingleClassToTimetable(
+  cls: ClassItem,
+  timetable: TimetableSession[],
+  teachers: Teacher[] = [],
+  assistants: TeachingAssistant[] = []
+): TimetableSession[] {
+  const normClassId = String(cls.id ?? '').trim();
+  if (!normClassId) return timetable || [];
+
+  const safeTimetable = Array.isArray(timetable) ? timetable : [];
+  const otherSessions = safeTimetable.filter(
+    s => String(s.classId ?? '').trim() !== normClassId
+  );
+  const existingClassSessions = safeTimetable.filter(
+    s => String(s.classId ?? '').trim() === normClassId
+  );
+
+  // If class is cancelled or inactive without schedule, remove all its timetable sessions
+  if (cls.status === 'cancelled') {
+    return otherSessions;
+  }
+
+  // Extract weekly schedule slots
+  let slots: Array<{
+    dayOfWeek: number;
+    dayName?: string;
+    startTime: string;
+    endTime: string;
+    teacherId?: string;
+    assistantTeacherId?: string;
+  }> = [];
+
+  if (Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0) {
+    slots = cls.weeklySchedule
+      .filter(s => typeof s.dayOfWeek === 'number' && s.dayOfWeek >= 1 && s.dayOfWeek <= 7)
+      .map(s => ({
+        dayOfWeek: s.dayOfWeek,
+        dayName: s.dayName || getDayNameFromNumber(s.dayOfWeek),
+        startTime: s.startTime || '17:30',
+        endTime: s.endTime || '19:00',
+        teacherId: s.teacherId || cls.teacherId,
+        assistantTeacherId: s.assistantTeacherId || cls.assistantTeacherId
+      }));
+  } else {
+    const parsed = getClassWeeklySchedule(cls);
+    slots = parsed.map(p => ({
+      dayOfWeek: p.dayOfWeek,
+      dayName: p.dayName || getDayNameFromNumber(p.dayOfWeek),
+      startTime: p.startTime || '17:30',
+      endTime: p.endTime || '19:00',
+      teacherId: cls.teacherId,
+      assistantTeacherId: cls.assistantTeacherId
+    }));
+  }
+
+  if (slots.length === 0) {
+    return otherSessions;
+  }
+
+  const usedSessionIds = new Set<string>();
+
+  const updatedClassSessions: TimetableSession[] = slots.map(slot => {
+    const effTeacherId = String(slot.teacherId || cls.teacherId || '').trim();
+    const effTaId = String(slot.assistantTeacherId || cls.assistantTeacherId || '').trim();
+
+    const teacherObj = teachers.find(t => String(t.id).trim() === effTeacherId);
+    const taObj = assistants.find(ta => String(ta.id).trim() === effTaId);
+
+    // Reuse existing session matching dayOfWeek and not yet used
+    const existing = existingClassSessions.find(
+      s => s.dayOfWeek === slot.dayOfWeek && !usedSessionIds.has(s.id)
+    );
+    if (existing) {
+      usedSessionIds.add(existing.id);
+    }
+    const cleanTimeSuffix = (slot.startTime || '1730').replace(/[^0-9]/g, '');
+    const sessionId = existing?.id || `SES-${normClassId}-D${slot.dayOfWeek}-${cleanTimeSuffix}`;
+
+    return {
+      id: sessionId,
+      classId: normClassId,
+      className: cls.name || existing?.className || '',
+      teacherId: effTeacherId,
+      teacherName: teacherObj?.fullName || existing?.teacherName || 'Chưa phân công GV',
+      assistantId: effTaId || undefined,
+      assistantName: taObj?.fullName || existing?.assistantName || undefined,
+      classroom: cls.classroom || existing?.classroom || 'Phòng học',
+      dayOfWeek: slot.dayOfWeek,
+      dayName: slot.dayName || getDayNameFromNumber(slot.dayOfWeek),
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      status: 'scheduled'
+    };
+  });
+
+  return [...otherSessions, ...updatedClassSessions];
+}
+
+/**
+ * Synchronize all classes' recurring schedules into the timetable.
+ * Preserves independent/manual non-class sessions while ensuring all active
+ * class schedules are accurately reflected without duplicates or obsolete teachers.
+ */
+export function syncAllClassesToTimetable(
+  classes: ClassItem[],
+  timetable: TimetableSession[],
+  teachers: Teacher[] = [],
+  assistants: TeachingAssistant[] = []
+): TimetableSession[] {
+  if (!Array.isArray(classes)) return timetable || [];
+  let current = Array.isArray(timetable) ? [...timetable] : [];
+
+  for (const cls of classes) {
+    current = syncSingleClassToTimetable(cls, current, teachers, assistants);
+  }
+
+  return current;
 }
 
 export function exportLessonReportToExcel(report: LessonReport) {
