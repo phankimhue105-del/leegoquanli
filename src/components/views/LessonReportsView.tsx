@@ -68,6 +68,12 @@ export const LessonReportsView: React.FC = () => {
   const { showToast } = useToast();
 
   const isTeacher = currentUser?.role === 'teacher';
+  const isTA =
+    currentUser?.role === 'teaching_assistant' ||
+    Boolean(currentUser?.teachingAssistantId) ||
+    Boolean(currentUser?.assistantId) ||
+    (Boolean(currentUser?.teacherId) && String(currentUser?.teacherId).trim().toUpperCase().startsWith('TA-'));
+  const isStaff = isTeacher || isTA;
   const isAdmin = currentUser?.role === 'admin';
   const isManager = currentUser?.role === 'academic_manager' || isAdmin;
 
@@ -396,7 +402,7 @@ export const LessonReportsView: React.FC = () => {
 
   const activeReportExpired = activeReport ? isReportExpired(activeReport) : false;
   const activeReportReadOnly = activeReport
-    ? isTeacher && isReportEffectivelyLockedForTeacher(activeReport)
+    ? isStaff && isReportEffectivelyLockedForTeacher(activeReport)
     : false;
 
   const reportedCount = filteredReports.filter(isReportCompleted).length;
