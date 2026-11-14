@@ -43,7 +43,8 @@ import {
   BASELINE_DATA_MAP,
   isRecordModified,
   syncSingleClassToTimetable,
-  recalculateTeacherAssignedClasses
+  recalculateTeacherAssignedClasses,
+  reconcileTimetableWithClasses
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
 
@@ -596,8 +597,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setData(prev => {
       const updatedClasses = [newClass, ...prev.classes];
       const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
-      const updatedTimetable = syncSingleClassToTimetable(
-        newClass,
+      const updatedTimetable = reconcileTimetableWithClasses(
+        updatedClasses,
         prev.timetable,
         updatedTeachers,
         prev.teachingAssistants
@@ -619,16 +620,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateClass = (id: string, updates: Partial<ClassItem>) => {
     setData(prev => {
       const updatedClasses = prev.classes.map(c => (c.id === id ? { ...c, ...updates } : c));
-      const targetClass = updatedClasses.find(c => c.id === id);
       const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
-      const updatedTimetable = targetClass
-        ? syncSingleClassToTimetable(
-            targetClass,
-            prev.timetable,
-            updatedTeachers,
-            prev.teachingAssistants
-          )
-        : prev.timetable;
+      const updatedTimetable = reconcileTimetableWithClasses(
+        updatedClasses,
+        prev.timetable,
+        updatedTeachers,
+        prev.teachingAssistants
+      );
 
       return {
         ...prev,
@@ -643,19 +641,27 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const deleteClass = (id: string) => {
     const cls = data.classes.find(c => c.id === id);
-    setData(prev => ({
-      ...prev,
-      classes: prev.classes.filter(c => c.id !== id),
-      timetable: prev.timetable.filter(s => s.classId !== id),
-      teachers: prev.teachers.map(t => ({
-        ...t,
-        assignedClassIds: t.assignedClassIds.filter(cid => cid !== id)
-      })),
-      students: prev.students.map(s => ({
-        ...s,
-        classIds: s.classIds.filter(cid => cid !== id)
-      }))
-    }));
+    setData(prev => {
+      const updatedClasses = prev.classes.filter(c => c.id !== id);
+      const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
+      const updatedTimetable = reconcileTimetableWithClasses(
+        updatedClasses,
+        prev.timetable,
+        updatedTeachers,
+        prev.teachingAssistants
+      );
+
+      return {
+        ...prev,
+        classes: updatedClasses,
+        timetable: updatedTimetable,
+        teachers: updatedTeachers,
+        students: prev.students.map(s => ({
+          ...s,
+          classIds: s.classIds.filter(cid => cid !== id)
+        }))
+      };
+    });
     addActivityLog('Xóa lớp học', `Đã xóa lớp học ${cls?.name || id}`);
     queueKeysForCloudSync(['classes', 'timetable', 'teachers', 'students']);
   };
