@@ -57,8 +57,14 @@ export const ClassesView: React.FC = () => {
   const { showToast } = useToast();
 
   const isTeacher = currentUser.role === 'teacher';
-  const teacherObj = isTeacher ? data.teachers.find(t => t.id === currentUser.teacherId || t.email === currentUser.email) : null;
-  const teacherClassIds = teacherObj ? teacherObj.assignedClassIds : [];
+  const teacherObj = isTeacher
+    ? data.teachers.find(
+        t =>
+          String(t.id).trim() === String(currentUser.teacherId).trim() ||
+          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
+      )
+    : null;
+  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassItem | null>(null);
@@ -89,9 +95,10 @@ export const ClassesView: React.FC = () => {
   // Schedule conflict warning inside modal
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
 
+  // Filter classes accessible to user: teacherId ONLY, excluding TA-only assignments
   const displayedClasses = data.classes.filter(cls => {
     if (isTeacher) {
-      return teacherClassIds.includes(cls.id);
+      return Boolean(currentTeacherId) && String(cls.teacherId).trim() === currentTeacherId;
     }
     return true;
   });
@@ -295,25 +302,27 @@ export const ClassesView: React.FC = () => {
 
   const openRosterManager = (cls: ClassItem) => {
     setManagingRosterClass(cls);
-    setSelectedStudentIds([...cls.studentIds]);
+    setSelectedStudentIds(Array.from(new Set((cls.studentIds || []).map(id => String(id).trim()).filter(Boolean))));
   };
 
-  const toggleStudentInRoster = (studentId: string) => {
-    if (selectedStudentIds.includes(studentId)) {
-      setSelectedStudentIds(prev => prev.filter(id => id !== studentId));
+  const toggleStudentInRoster = (studentId: string | number) => {
+    const sId = String(studentId).trim();
+    if (selectedStudentIds.includes(sId)) {
+      setSelectedStudentIds(prev => prev.filter(id => id !== sId));
     } else {
       if (managingRosterClass && selectedStudentIds.length >= managingRosterClass.maxCapacity) {
         showToast(`Lớp đã đạt sĩ số tối đa (${managingRosterClass.maxCapacity} học sinh)`, 'warning');
         return;
       }
-      setSelectedStudentIds(prev => [...prev, studentId]);
+      setSelectedStudentIds(prev => Array.from(new Set([...prev, sId])));
     }
   };
 
   const handleSaveRoster = () => {
     if (!managingRosterClass) return;
-    assignStudentsToClass(managingRosterClass.id, selectedStudentIds);
-    showToast(`Đã cập nhật sĩ số lớp: ${selectedStudentIds.length} học sinh`, 'success');
+    const cleanRoster = Array.from(new Set(selectedStudentIds.map(id => String(id).trim()).filter(Boolean)));
+    assignStudentsToClass(managingRosterClass.id, cleanRoster);
+    showToast(`Đã cập nhật sĩ số lớp: ${cleanRoster.length} học sinh`, 'success');
     setManagingRosterClass(null);
   };
 
@@ -522,7 +531,8 @@ export const ClassesView: React.FC = () => {
               </p>
               <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
                 {data.students.map(student => {
-                  const isChecked = selectedStudentIds.includes(student.id);
+                  const sId = String(student.id).trim();
+                  const isChecked = selectedStudentIds.includes(sId);
                   return (
                     <label
                       key={student.id}
@@ -534,7 +544,7 @@ export const ClassesView: React.FC = () => {
                         <input
                           type="checkbox"
                           checked={isChecked}
-                          onChange={() => toggleStudentInRoster(student.id)}
+                          onChange={() => toggleStudentInRoster(sId)}
                           className="w-4 h-4 text-red-600 rounded border-slate-300 focus:ring-red-500"
                         />
                         <div>
@@ -853,31 +863,38 @@ export const ClassesView: React.FC = () => {
               </div>
 
               <div>
-                <h4 className="font-bold text-slate-800 text-sm mb-2">
-                  Danh sách học sinh ({viewingClass.studentIds.length}/{viewingClass.maxCapacity})
-                </h4>
-                <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
-                  {viewingClass.studentIds.map((sid, idx) => {
-                    const st = data.students.find(s => s.id === sid);
-                    if (!st) return null;
-                    return (
-                      <div key={sid} className="p-2.5 flex items-center justify-between bg-white hover:bg-slate-50">
-                        <div className="flex items-center gap-2">
-                          <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-bold flex items-center justify-center text-[10px]">
-                            {idx + 1}
-                          </span>
-                          <span className="font-bold text-slate-800">
-                            {isTeacher ? (st.vietnameseName?.trim() || st.fullName) : st.fullName}
-                          </span>
-                          <span className="text-slate-400">({st.id})</span>
-                        </div>
-                        {!isTeacher && (
-                          <span className="text-slate-500 font-medium">PH: {st.parentPhone}</span>
-                        )}
+                {(() => {
+                  const dedupStudentIds = Array.from(new Set((viewingClass.studentIds || []).map(sid => String(sid).trim()).filter(Boolean)));
+                  return (
+                    <>
+                      <h4 className="font-bold text-slate-800 text-sm mb-2">
+                        Danh sách học sinh ({dedupStudentIds.length}/{viewingClass.maxCapacity})
+                      </h4>
+                      <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                        {dedupStudentIds.map((sid, idx) => {
+                          const st = data.students.find(s => String(s.id).trim() === sid);
+                          if (!st) return null;
+                          return (
+                            <div key={sid} className="p-2.5 flex items-center justify-between bg-white hover:bg-slate-50">
+                              <div className="flex items-center gap-2">
+                                <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-bold flex items-center justify-center text-[10px]">
+                                  {idx + 1}
+                                </span>
+                                <span className="font-bold text-slate-800">
+                                  {isTeacher ? (st.vietnameseName?.trim() || st.fullName) : st.fullName}
+                                </span>
+                                <span className="text-slate-400">({st.id})</span>
+                              </div>
+                              {!isTeacher && (
+                                <span className="text-slate-500 font-medium">PH: {st.parentPhone}</span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
 
