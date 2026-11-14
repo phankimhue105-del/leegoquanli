@@ -69,10 +69,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   );
   const teacherSessions = data.timetable.filter(s => {
     if (!currentTeacherId) return false;
-    const cls = s.classId ? data.classes.find(c => String(c.id).trim() === String(s.classId).trim()) : null;
-    if (cls && cls.status === 'cancelled') return false;
-    const effTeacherId = String(s.teacherId || cls?.teacherId || '').trim();
-    return effTeacherId === currentTeacherId;
+    if (s.classId) {
+      const cls = data.classes.find(c => String(c.id).trim() === String(s.classId).trim());
+      if (!cls || cls.status === 'cancelled') return false;
+      const slot = cls.weeklySchedule?.find(slotItem => slotItem.dayOfWeek === s.dayOfWeek);
+      const effTeacherId = String(slot?.teacherId || cls.teacherId || s.teacherId || '').trim();
+      return effTeacherId === currentTeacherId;
+    }
+    return String(s.teacherId).trim() === currentTeacherId;
   });
   const teacherPendingReports = data.lessonPlans.filter(lp =>
     Boolean(currentTeacherId) && String(lp.teacherId).trim() === currentTeacherId && lp.status === 'submitted'
