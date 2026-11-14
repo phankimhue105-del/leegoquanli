@@ -10,6 +10,9 @@ export interface GasUserResponse {
   role?: string;
   status?: string;
   teacherId?: string;
+  academicManagerId?: string;
+  teachingAssistantId?: string;
+  assistantId?: string;
   email?: string;
 }
 
@@ -26,11 +29,27 @@ export interface GasAuthResult {
  */
 export function mapGasUserToAppUser(gasUser: GasUserResponse): User {
   const rawRole = String(gasUser.role || '').toLowerCase().trim();
+  const rawTeacherId = gasUser.teacherId ? String(gasUser.teacherId).trim() : '';
+  const rawAssistantId = gasUser.teachingAssistantId || gasUser.assistantId ? String(gasUser.teachingAssistantId || gasUser.assistantId).trim() : '';
+  const hasTaPrefix = rawTeacherId.toUpperCase().startsWith('TA-');
+
+  const isTA =
+    rawRole === 'teaching_assistant' ||
+    rawRole === 'assistant' ||
+    rawRole === 'ta' ||
+    rawRole.includes('trợ giảng') ||
+    rawRole.includes('trogiang') ||
+    rawRole.includes('assistant') ||
+    Boolean(rawAssistantId) ||
+    hasTaPrefix;
+
   const role: UserRole =
     rawRole === 'admin' || rawRole.includes('admin') || rawRole.includes('quản trị') || rawRole.includes('quantri')
       ? 'admin'
       : rawRole === 'academic_manager' || rawRole.includes('academic') || rawRole.includes('học thuật') || rawRole.includes('hocthuat') || rawRole.includes('manager')
       ? 'academic_manager'
+      : isTA
+      ? 'teaching_assistant'
       : 'teacher';
 
   const username = gasUser.username || gasUser.userId || 'user';
@@ -38,13 +57,18 @@ export function mapGasUserToAppUser(gasUser: GasUserResponse): User {
     gasUser.email ||
     (username.toLowerCase().replace(/\s+/g, '.') + '@leego.edu.vn');
 
+  const resolvedAssistantId = isTA ? (rawAssistantId || (hasTaPrefix ? rawTeacherId : undefined)) : undefined;
+
   return {
     id: gasUser.userId || `USR-${username}`,
     name: gasUser.fullName || username,
     username: username,
     email: email,
     role: role,
-    teacherId: gasUser.teacherId ? String(gasUser.teacherId).trim() : undefined,
+    teacherId: (!isTA && rawTeacherId && !hasTaPrefix) ? rawTeacherId : undefined,
+    academicManagerId: gasUser.academicManagerId ? String(gasUser.academicManagerId).trim() : undefined,
+    teachingAssistantId: resolvedAssistantId,
+    assistantId: resolvedAssistantId,
     status: (gasUser.status === 'inactive' ? 'inactive' : 'active'),
     createdAt: '2025-01-01',
     lastLogin: 'Hôm nay lúc ' + new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
