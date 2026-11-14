@@ -18,6 +18,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
+import { resolveStaffProfile } from '../../services/dataService';
 import { NavigationTab } from './Sidebar';
 
 interface HeaderProps {
@@ -43,13 +44,16 @@ export const Header: React.FC<HeaderProps> = ({
   const [showActivityDrawer, setShowActivityDrawer] = useState(false);
   const [showFirebaseModal, setShowFirebaseModal] = useState(false);
 
+  const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
+  const displayStaffName = staff.staffName || currentUser?.name || 'Tài khoản';
+
   const tabTitles: Record<NavigationTab, { title: string; subtitle: string }> = {
     dashboard: { title: 'Bảng Điều Khiển (Dashboard)', subtitle: 'Tổng quan vận hành và thống kê trung tâm LeeGo' },
     students: { title: 'Quản Lý Học Sinh (Students)', subtitle: 'Hồ sơ học sinh, chuyển lớp, nhập xuất danh sách' },
     parents: { title: 'Quản Lý Phụ Huynh (Parents)', subtitle: 'Thông tin liên hệ, học sinh phụ thuộc và lịch sử trao đổi' },
     classes: { title: 'Quản Lý Lớp Học (Classes)', subtitle: 'Danh sách lớp, phân công giáo viên và phòng học' },
     teaching_schedule: { title: 'Lịch Giảng Dạy (Teaching Schedule)', subtitle: 'Kế hoạch giảng dạy hàng tháng, nội dung buổi dạy và xuất văn bản Word/Excel' },
-    programs: { title: 'Chương Trình Học (Curricula)', subtitle: 'Khung Cambridge Starters, Movers, Flyers, KET, PET' },
+    programs: { title: 'Thời Lượng Khóa Học (Course Duration)', subtitle: 'Quản lý chương trình học, số buổi và thời lượng chi tiết' },
     teachers: { title: 'Quản Lý Giáo Viên (Teachers)', subtitle: 'Đội ngũ giáo viên bản ngữ & Việt Nam, tải giờ giảng dạy' },
     assistants: { title: 'Quản Lý Trợ Giảng (Assistants)', subtitle: 'Đội ngũ trợ giảng hỗ trợ lớp học và sửa bài tập' },
     timetable: { title: 'Thời Khóa Biểu (Timetable)', subtitle: 'Lịch học hàng tuần và tự động phát hiện xung đột lịch' },
@@ -159,11 +163,11 @@ export const Header: React.FC<HeaderProps> = ({
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 transition-all text-xs font-semibold cursor-pointer"
             >
               <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold bg-red-600 shadow-xs">
-                {currentUser?.name ? currentUser.name.charAt(0) : 'U'}
+                {displayStaffName ? displayStaffName.charAt(0) : 'U'}
               </div>
               <div className="text-left hidden md:block">
                 <div className="text-xs font-bold leading-tight truncate max-w-[140px] text-slate-900">
-                  {currentUser?.name || 'Tài khoản'}
+                  {displayStaffName}
                 </div>
                 <div className="text-[10px] text-red-600 font-semibold uppercase tracking-wider">
                   {currentUser?.role === 'admin'
@@ -184,11 +188,11 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 mb-1">
                   <div className="flex items-center gap-2.5">
                     <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-                      {currentUser?.name ? currentUser.name.charAt(0) : 'U'}
+                      {displayStaffName ? displayStaffName.charAt(0) : 'U'}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-bold text-xs text-slate-900 truncate">
-                        {currentUser?.name || 'Chưa đăng nhập'}
+                        {displayStaffName}
                       </div>
                       <div className="text-[11px] text-slate-500 truncate">
                         {currentUser?.email || 'user@leego.edu.vn'}
