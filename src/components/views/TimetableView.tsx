@@ -73,21 +73,29 @@ export const TimetableView: React.FC = () => {
 
   // Filter sessions
   const filteredSessions = data.timetable.filter(session => {
+    const cls = session.classId
+      ? data.classes.find(c => String(c.id).trim() === String(session.classId).trim())
+      : null;
+    if (cls && cls.status === 'cancelled') return false;
+
+    const effTeacherId = String(session.teacherId || cls?.teacherId || '').trim();
+
     // If logged in as teacher, show only their sessions by default (teacherId only)
     if (isTeacher) {
-      if (currentTeacherId && String(session.teacherId).trim() !== currentTeacherId) return false;
+      if (currentTeacherId && effTeacherId !== currentTeacherId) return false;
     }
 
     if (filterMode === 'teacher' && selectedFilterValue !== 'all') {
-      if (session.teacherId !== selectedFilterValue) return false;
+      if (effTeacherId !== selectedFilterValue) return false;
     }
 
     if (filterMode === 'classroom' && selectedFilterValue !== 'all') {
-      if (session.classroom !== selectedFilterValue) return false;
+      const effClassroom = session.classroom || cls?.classroom || '';
+      if (effClassroom !== selectedFilterValue) return false;
     }
 
     if (filterMode === 'class' && selectedFilterValue !== 'all') {
-      if (session.classId !== selectedFilterValue) return false;
+      if (String(session.classId).trim() !== selectedFilterValue) return false;
     }
 
     if (calendarView === 'day' && session.dayOfWeek !== selectedDay) {
@@ -378,53 +386,64 @@ export const TimetableView: React.FC = () => {
                       Trống lịch
                     </div>
                   ) : (
-                    daySessions.map(session => (
-                      <div
-                        key={session.id}
-                        className="p-3 rounded-xl bg-white border border-slate-200 shadow-xs hover:border-red-300 transition-all text-xs space-y-2 relative group"
-                      >
-                        <div className="flex items-start justify-between">
-                          <span className="font-bold text-slate-900 leading-tight block">
-                            {session.className}
-                          </span>
-                          {!isTeacher && (
-                            <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shrink-0">
-                              <button
-                                onClick={() => openEditSessionModal(session)}
-                                className="p-1 hover:text-amber-600 text-slate-400"
-                                title="Sửa ca học"
-                              >
-                                <Edit2 className="w-3 h-3" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteSession(session)}
-                                className="p-1 hover:text-red-600 text-slate-400"
-                                title="Hủy ca học"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
+                    daySessions.map(session => {
+                      const cls = session.classId
+                        ? data.classes.find(c => String(c.id).trim() === String(session.classId).trim())
+                        : null;
+                      const effClassName = cls?.name || session.className;
+                      const effTeacherId = String(session.teacherId || cls?.teacherId || '').trim();
+                      const teacherObj = data.teachers.find(t => String(t.id).trim() === effTeacherId);
+                      const effTeacherName = teacherObj?.fullName || session.teacherName;
+                      const effClassroom = session.classroom || cls?.classroom || 'Phòng học';
+
+                      return (
+                        <div
+                          key={session.id}
+                          className="p-3 rounded-xl bg-white border border-slate-200 shadow-xs hover:border-red-300 transition-all text-xs space-y-2 relative group"
+                        >
+                          <div className="flex items-start justify-between">
+                            <span className="font-bold text-slate-900 leading-tight block">
+                              {effClassName}
+                            </span>
+                            {!isTeacher && (
+                              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={() => openEditSessionModal(session)}
+                                  className="p-1 hover:text-amber-600 text-slate-400"
+                                  title="Sửa ca học"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteSession(session)}
+                                  className="p-1 hover:text-red-600 text-slate-400"
+                                  title="Hủy ca học"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="space-y-1 text-[11px] text-slate-500">
+                            <div className="flex items-center gap-1 font-semibold text-red-600">
+                              <Clock className="w-3 h-3" />
+                              <span>{session.startTime} - {session.endTime}</span>
                             </div>
-                          )}
-                        </div>
 
-                        <div className="space-y-1 text-[11px] text-slate-500">
-                          <div className="flex items-center gap-1 font-semibold text-red-600">
-                            <Clock className="w-3 h-3" />
-                            <span>{session.startTime} - {session.endTime}</span>
-                          </div>
+                            <div className="flex items-center gap-1 text-slate-700">
+                              <UserCheck className="w-3 h-3 text-slate-400" />
+                              <span className="truncate">{effTeacherName}</span>
+                            </div>
 
-                          <div className="flex items-center gap-1 text-slate-700">
-                            <UserCheck className="w-3 h-3 text-slate-400" />
-                            <span className="truncate">{session.teacherName}</span>
-                          </div>
-
-                          <div className="flex items-center gap-1 text-slate-600">
-                            <MapPin className="w-3 h-3 text-slate-400" />
-                            <span className="truncate">{session.classroom}</span>
+                            <div className="flex items-center gap-1 text-slate-600">
+                              <MapPin className="w-3 h-3 text-slate-400" />
+                              <span className="truncate">{effClassroom}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -444,46 +463,57 @@ export const TimetableView: React.FC = () => {
                 Không có ca học nào được xếp vào ngày này.
               </p>
             ) : (
-              filteredSessions.map(session => (
-                <div
-                  key={session.id}
-                  className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-red-100 text-red-700 rounded-xl font-bold text-xs flex flex-col items-center justify-center">
-                      <Clock className="w-4 h-4 mb-1" />
-                      <span>{session.startTime}</span>
-                      <span>{session.endTime}</span>
-                    </div>
+              filteredSessions.map(session => {
+                const cls = session.classId
+                  ? data.classes.find(c => String(c.id).trim() === String(session.classId).trim())
+                  : null;
+                const effClassName = cls?.name || session.className;
+                const effTeacherId = String(session.teacherId || cls?.teacherId || '').trim();
+                const teacherObj = data.teachers.find(t => String(t.id).trim() === effTeacherId);
+                const effTeacherName = teacherObj?.fullName || session.teacherName;
+                const effClassroom = session.classroom || cls?.classroom || 'Phòng học';
 
-                    <div>
-                      <h4 className="font-extrabold text-slate-900 text-sm">{session.className}</h4>
-                      <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
-                        <span>Giáo viên: <strong className="text-slate-700">{session.teacherName}</strong></span>
-                        {session.assistantName && <span>Trợ giảng: <strong>{session.assistantName}</strong></span>}
-                        <span>Phòng: <strong className="text-slate-700">{session.classroom}</strong></span>
+                return (
+                  <div
+                    key={session.id}
+                    className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-red-100 text-red-700 rounded-xl font-bold text-xs flex flex-col items-center justify-center">
+                        <Clock className="w-4 h-4 mb-1" />
+                        <span>{session.startTime}</span>
+                        <span>{session.endTime}</span>
+                      </div>
+
+                      <div>
+                        <h4 className="font-extrabold text-slate-900 text-sm">{effClassName}</h4>
+                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
+                          <span>Giáo viên: <strong className="text-slate-700">{effTeacherName}</strong></span>
+                          {session.assistantName && <span>Trợ giảng: <strong>{session.assistantName}</strong></span>}
+                          <span>Phòng: <strong className="text-slate-700">{effClassroom}</strong></span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {!isTeacher && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openEditSessionModal(session)}
-                        className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                      >
-                        Chỉnh sửa
-                      </button>
-                      <button
-                        onClick={() => handleDeleteSession(session)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))
+                    {!isTeacher && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => openEditSessionModal(session)}
+                          className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                        >
+                          Chỉnh sửa
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSession(session)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
