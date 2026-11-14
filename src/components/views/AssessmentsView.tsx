@@ -19,36 +19,28 @@ import { AssessmentRecord, StudentScoreEntry } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import { exportAssessmentReportToExcel } from '../../services/dataService';
+import { exportAssessmentReportToExcel, resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
 
 export const AssessmentsView: React.FC = () => {
   const { currentUser } = useAuth();
   const { data, saveAssessment, updateAssessmentScore } = useData();
   const { showToast } = useToast();
 
-  const isTeacher = currentUser.role === 'teacher';
-  const teacherObj = isTeacher
-    ? data.teachers.find(
-        t =>
-          String(t.id).trim() === String(currentUser.teacherId).trim() ||
-          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
-      )
-    : null;
-  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
+  const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
+  const isTeacher = staff.isTeacher;
+  const isTA = staff.isTA;
+  const isStaff = isTeacher || isTA;
 
   const availableClasses = useMemo(() => {
-    if (isTeacher) {
-      return data.classes.filter(c => Boolean(currentTeacherId) && String(c.teacherId).trim() === currentTeacherId);
-    }
-    return data.classes;
-  }, [data.classes, isTeacher, currentTeacherId]);
+    return isStaff ? getAssignedClassesForStaff(data.classes, staff) : data.classes;
+  }, [data.classes, isStaff, staff]);
 
   const availableClassIds = useMemo(() => availableClasses.map(c => String(c.id).trim()), [availableClasses]);
   const availableAssessments = useMemo(() => {
-    return isTeacher
+    return isStaff
       ? data.assessments.filter(a => availableClassIds.includes(String(a.classId).trim()))
       : data.assessments;
-  }, [data.assessments, isTeacher, availableClassIds]);
+  }, [data.assessments, isStaff, availableClassIds]);
 
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string>(availableAssessments[0]?.id || '');
   const [showCreateModal, setShowCreateModal] = useState(false);
