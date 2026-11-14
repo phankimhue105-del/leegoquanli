@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'academic_manager' | 'teacher';
+export type UserRole = 'admin' | 'academic_manager' | 'teacher' | 'teaching_assistant';
 
 export interface User {
   id: string;
@@ -11,7 +11,9 @@ export interface User {
   phone?: string;
   teacherId?: string; // Links to teacher record if role is teacher
   academicManagerId?: string; // Links to academic manager record if role is academic_manager
-  assignedClasses?: string[]; // Optional assigned classes IDs for teacher
+  teachingAssistantId?: string; // Links to teaching assistant record if role is teaching_assistant
+  assistantId?: string; // Alias for teachingAssistantId
+  assignedClasses?: string[]; // Optional assigned classes IDs for teacher or assistant
   status: 'active' | 'inactive';
   lastLogin?: string;
   createdAt: string;
