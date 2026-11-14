@@ -17,31 +17,25 @@ import { LessonPlanReport } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
+import { resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
 
 export const LessonPlansView: React.FC = () => {
   const { currentUser } = useAuth();
   const { data, submitLessonPlan, reviewLessonPlan } = useData();
   const { showToast } = useToast();
 
-  const isTeacher = currentUser.role === 'teacher';
+  const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
+  const isTeacher = staff.isTeacher;
+  const isTA = staff.isTA;
+  const isStaff = isTeacher || isTA;
   const isManager = currentUser.role === 'academic_manager' || currentUser.role === 'admin';
-  const teacherObj = isTeacher
-    ? data.teachers.find(
-        t =>
-          String(t.id).trim() === String(currentUser.teacherId).trim() ||
-          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
-      )
-    : null;
-  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
 
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [viewingPlan, setViewingPlan] = useState<LessonPlanReport | null>(null);
   const [managerFeedbackText, setManagerFeedbackText] = useState('');
 
-  // Submit form state (teacherId only, excluding TA-only assignments)
-  const availableClasses = isTeacher
-    ? data.classes.filter(c => Boolean(currentTeacherId) && String(c.teacherId).trim() === currentTeacherId)
-    : data.classes;
+  // Submit form state (strictly separating Teacher vs TA assignments)
+  const availableClasses = getAssignedClassesForStaff(data.classes, staff);
 
   const [formData, setFormData] = useState({
     classId: availableClasses[0]?.id || '',
@@ -58,7 +52,17 @@ export const LessonPlansView: React.FC = () => {
 
   const displayedPlans = data.lessonPlans.filter(lp => {
     if (isTeacher) {
-      return Boolean(currentTeacherId) && String(lp.teacherId).trim() === currentTeacherId;
+      return Boolean(staff.staffId) && String(lp.teacherId).trim() === staff.staffId;
+    }
+    if (isTA) {
+      const cls = data.classes.find(c => c.id === lp.classId);
+      return (
+        cls && (
+          String(cls.assistantTeacherId || '').trim() === staff.staffId ||
+          (cls.weeklySchedule || []).some(s => String(s.assistantTeacherId || '').trim() === staff.staffId) ||
+          (staff.assistant?.assignedClassIds || []).includes(cls.id)
+        )
+      );
     }
     return true;
   });
@@ -76,8 +80,8 @@ export const LessonPlansView: React.FC = () => {
     submitLessonPlan({
       classId: cls.id,
       className: cls.name,
-      teacherId: teacherObj?.id || 'TCH-001',
-      teacherName: teacherObj?.fullName || currentUser.name,
+      teacherId: isTeacher ? (staff.teacher?.id || 'TCH-001') : (cls.teacherId || 'TCH-001'),
+      teacherName: isTeacher ? (staff.teacher?.fullName || currentUser.name) : `${cls.teacherId ? (data.teachers.find(t => t.id === cls.teacherId)?.fullName || 'Giáo viên') : 'Giáo viên'} (Trợ giảng: ${staff.assistant?.fullName || currentUser.name})`,
       date: formData.date,
       lessonNumber: Number(formData.lessonNumber),
       textbook: formData.textbook,
@@ -113,11 +117,13 @@ export const LessonPlansView: React.FC = () => {
           <p className="text-xs text-slate-500 mt-0.5">
             {isTeacher
               ? 'Nộp báo cáo tiến độ từng buổi học, bài tập về nhà và học sinh cần lưu ý.'
+              : isTA
+              ? 'Nộp báo cáo tiến độ buổi học và hỗ trợ học sinh cho các lớp trợ giảng.'
               : 'Quản lý học thuật kiểm duyệt chất lượng giảng dạy và theo dõi tiến độ chương trình.'}
           </p>
         </div>
 
-        {isTeacher && (
+        {isStaff && (
           <button
             onClick={() => setShowSubmitModal(true)}
             className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-red-950/20"
@@ -408,4 +414,3 @@ export const LessonPlansView: React.FC = () => {
     </div>
   );
 };
-
