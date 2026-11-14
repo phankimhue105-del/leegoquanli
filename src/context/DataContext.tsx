@@ -41,7 +41,9 @@ import {
   RecordConflict,
   resolveConflict as resolveConflictUtil,
   BASELINE_DATA_MAP,
-  isRecordModified
+  isRecordModified,
+  syncSingleClassToTimetable,
+  recalculateTeacherAssignedClasses
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
 
@@ -591,63 +593,52 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addClass = (clsData: Omit<ClassItem, 'id'>): ClassItem => {
     const newId = `CLS-${Date.now().toString().slice(-4)}`;
     const newClass: ClassItem = { ...clsData, id: newId };
-    const assignedTeacherIds = new Set<string>(
-      [
-        newClass.teacherId,
-        ...(newClass.weeklySchedule?.map(slot => slot.teacherId) || [])
-      ].filter(Boolean)
-    );
     setData(prev => {
-      // also update teacher's assignedClassIds
-      const updatedTeachers = prev.teachers.map(t => {
-        if (assignedTeacherIds.has(t.id) && !t.assignedClassIds.includes(newId)) {
-          return {
-            ...t,
-            assignedClassIds: [...t.assignedClassIds, newId],
-            workloadHours: t.workloadHours + 3
-          };
-        }
-        return t;
-      });
+      const updatedClasses = [newClass, ...prev.classes];
+      const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
+      const updatedTimetable = syncSingleClassToTimetable(
+        newClass,
+        prev.timetable,
+        updatedTeachers,
+        prev.teachingAssistants
+      );
 
       return {
         ...prev,
-        classes: [newClass, ...prev.classes],
-        teachers: updatedTeachers
+        classes: updatedClasses,
+        teachers: updatedTeachers,
+        timetable: updatedTimetable
       };
     });
 
     addActivityLog('Tạo lớp học mới', `Đã mở lớp ${newClass.name} (${newClass.code})`);
-    queueKeysForCloudSync(['classes', 'teachers']);
+    queueKeysForCloudSync(['classes', 'teachers', 'timetable']);
     return newClass;
   };
 
   const updateClass = (id: string, updates: Partial<ClassItem>) => {
     setData(prev => {
       const updatedClasses = prev.classes.map(c => (c.id === id ? { ...c, ...updates } : c));
-      const nextAssignedTeacherIds = new Set<string>(
-        [
-          updates.teacherId,
-          ...(updates.weeklySchedule?.map(slot => slot.teacherId) || [])
-        ].filter((tid): tid is string => Boolean(tid))
-      );
-      const updatedTeachers =
-        nextAssignedTeacherIds.size > 0
-          ? prev.teachers.map(t =>
-              nextAssignedTeacherIds.has(t.id) && !t.assignedClassIds.includes(id)
-                ? { ...t, assignedClassIds: [...t.assignedClassIds, id] }
-                : t
-            )
-          : prev.teachers;
+      const targetClass = updatedClasses.find(c => c.id === id);
+      const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
+      const updatedTimetable = targetClass
+        ? syncSingleClassToTimetable(
+            targetClass,
+            prev.timetable,
+            updatedTeachers,
+            prev.teachingAssistants
+          )
+        : prev.timetable;
 
       return {
         ...prev,
         classes: updatedClasses,
-        teachers: updatedTeachers
+        teachers: updatedTeachers,
+        timetable: updatedTimetable
       };
     });
     addActivityLog('Cập nhật lớp học', `Đã cập nhật thông tin lớp học mã ${id}`);
-    queueKeysForCloudSync(['classes', 'teachers']);
+    queueKeysForCloudSync(['classes', 'teachers', 'timetable']);
   };
 
   const deleteClass = (id: string) => {
@@ -934,13 +925,46 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, conflict };
     }
 
-    setData(prev => ({
-      ...prev,
-      timetable: prev.timetable.map(s => (s.id === id ? { ...s, ...updates } : s))
-    }));
+    setData(prev => {
+      const updatedTimetable = prev.timetable.map(s => (s.id === id ? { ...s, ...updates } : s));
+      const targetSession = updatedTimetable.find(s => s.id === id);
+
+      let updatedClasses = prev.classes;
+      if (targetSession?.classId) {
+        updatedClasses = prev.classes.map(c => {
+          if (c.id !== targetSession.classId) return c;
+          const nextWeekly = c.weeklySchedule ? [...c.weeklySchedule] : [];
+          const slotIdx = nextWeekly.findIndex(s => s.dayOfWeek === current.dayOfWeek);
+          if (slotIdx >= 0) {
+            nextWeekly[slotIdx] = {
+              ...nextWeekly[slotIdx],
+              dayOfWeek: targetSession.dayOfWeek,
+              dayName: targetSession.dayName,
+              startTime: targetSession.startTime,
+              endTime: targetSession.endTime,
+              teacherId: targetSession.teacherId,
+              assistantTeacherId: targetSession.assistantId
+            };
+          }
+          return {
+            ...c,
+            classroom: targetSession.classroom || c.classroom,
+            weeklySchedule: nextWeekly
+          };
+        });
+      }
+      const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
+
+      return {
+        ...prev,
+        timetable: updatedTimetable,
+        classes: updatedClasses,
+        teachers: updatedTeachers
+      };
+    });
 
     addActivityLog('Cập nhật ca học TKB', `Đã cập nhật ca học ${id}`);
-    queueKeysForCloudSync(['timetable']);
+    queueKeysForCloudSync(['timetable', 'classes', 'teachers']);
     return { success: true };
   };
 
