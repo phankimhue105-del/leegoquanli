@@ -35,10 +35,10 @@ export const ParentsView: React.FC = () => {
     if (!searchTerm) return true;
     const q = searchTerm.toLowerCase();
     return (
-      p.name.toLowerCase().includes(q) ||
-      p.phone.includes(q) ||
-      p.studentName.toLowerCase().includes(q) ||
-      p.studentId.toLowerCase().includes(q)
+      String(p.name || '').toLowerCase().includes(q) ||
+      String(p.phone || '').includes(q) ||
+      String(p.studentName || '').toLowerCase().includes(q) ||
+      String(p.studentId || '').toLowerCase().includes(q)
     );
   });
 
