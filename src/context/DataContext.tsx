@@ -28,6 +28,7 @@ import {
   loadInitialStorage,
   saveStorage,
   resetStorage,
+  normalizeAppDataStore,
   AppDataStore,
   getClassWeeklySchedule,
   getVietnamNowFormatted,
@@ -397,15 +398,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 1. Students
   const addStudent = (studentData: Omit<Student, 'id'>): Student => {
     const newId = `LG-STU-${String(data.students.length + 1).padStart(3, '0')}`;
+    const normClassIds = Array.from(new Set((studentData.classIds || []).map(cid => String(cid).trim()).filter(Boolean)));
     const newStudent: Student = {
       ...studentData,
-      id: newId
+      id: String(newId).trim(),
+      classIds: normClassIds
     };
     setData(prev => {
       // Auto-assign student to class if selected
       const updatedClasses = prev.classes.map(cls => {
-        if (newStudent.classIds.includes(cls.id) && !cls.studentIds.includes(newId)) {
-          return { ...cls, studentIds: [...cls.studentIds, newId] };
+        const clsId = String(cls.id).trim();
+        const curStudentIds = (cls.studentIds || []).map(sid => String(sid).trim());
+        if (newStudent.classIds.includes(clsId) && !curStudentIds.includes(newStudent.id)) {
+          return { ...cls, studentIds: Array.from(new Set([...curStudentIds, newStudent.id])) };
         }
         return cls;
       });
@@ -422,19 +427,23 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateStudent = (id: string, updates: Partial<Student>) => {
+    const normId = String(id).trim();
     setData(prev => {
-      const updatedStudents = prev.students.map(s => (s.id === id ? { ...s, ...updates } : s));
+      const updatedStudents = prev.students.map(s => (String(s.id).trim() === normId ? { ...s, ...updates } : s));
       // Update class bindings if classIds changed
       let updatedClasses = prev.classes;
       if (updates.classIds) {
+        const normUpdatesClassIds = updates.classIds.map(cid => String(cid).trim());
         updatedClasses = prev.classes.map(cls => {
-          const shouldHave = updates.classIds!.includes(cls.id);
-          const has = cls.studentIds.includes(id);
+          const clsId = String(cls.id).trim();
+          const shouldHave = normUpdatesClassIds.includes(clsId);
+          const curStudentIds = (cls.studentIds || []).map(sid => String(sid).trim());
+          const has = curStudentIds.includes(normId);
           if (shouldHave && !has) {
-            return { ...cls, studentIds: [...cls.studentIds, id] };
+            return { ...cls, studentIds: Array.from(new Set([...curStudentIds, normId])) };
           }
           if (!shouldHave && has) {
-            return { ...cls, studentIds: cls.studentIds.filter(sid => sid !== id) };
+            return { ...cls, studentIds: curStudentIds.filter(sid => sid !== normId) };
           }
           return cls;
         });
@@ -450,13 +459,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteStudent = (id: string) => {
-    const student = data.students.find(s => s.id === id);
+    const normId = String(id).trim();
+    const student = data.students.find(s => String(s.id).trim() === normId);
     setData(prev => ({
       ...prev,
-      students: prev.students.filter(s => s.id !== id),
+      students: prev.students.filter(s => String(s.id).trim() !== normId),
       classes: prev.classes.map(c => ({
         ...c,
-        studentIds: c.studentIds.filter(sid => sid !== id)
+        studentIds: (c.studentIds || []).map(sid => String(sid).trim()).filter(sid => sid !== normId)
       }))
     }));
     addActivityLog('Xóa học sinh', `Đã xóa học sinh ${student?.fullName || id}`);
@@ -464,30 +474,43 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const transferStudentClass = (studentId: string, fromClassId: string, toClassId: string) => {
-    const student = data.students.find(s => s.id === studentId);
-    const fromClass = data.classes.find(c => c.id === fromClassId);
-    const toClass = data.classes.find(c => c.id === toClassId);
+    const normStudentId = String(studentId).trim();
+    const normFromClassId = String(fromClassId).trim();
+    const normToClassId = String(toClassId).trim();
+
+    const student = data.students.find(s => String(s.id).trim() === normStudentId);
+    const fromClass = data.classes.find(c => String(c.id).trim() === normFromClassId);
+    const toClass = data.classes.find(c => String(c.id).trim() === normToClassId);
 
     setData(prev => {
       // 1. Update student's classIds
       const updatedStudents = prev.students.map(s => {
-        if (s.id === studentId) {
-          const newClassIds = s.classIds.filter(cid => cid !== fromClassId);
-          if (!newClassIds.includes(toClassId)) {
-            newClassIds.push(toClassId);
+        if (String(s.id).trim() === normStudentId) {
+          const newClassIds = (s.classIds || [])
+            .map(cid => String(cid).trim())
+            .filter(cid => cid !== normFromClassId);
+          if (!newClassIds.includes(normToClassId)) {
+            newClassIds.push(normToClassId);
           }
-          return { ...s, classIds: newClassIds };
+          return { ...s, classIds: Array.from(new Set(newClassIds)) };
         }
         return s;
       });
 
-      // 2. Update classes studentIds
+      // 2. Update classes studentIds with deduplication
       const updatedClasses = prev.classes.map(cls => {
-        if (cls.id === fromClassId) {
-          return { ...cls, studentIds: cls.studentIds.filter(id => id !== studentId) };
+        const clsId = String(cls.id).trim();
+        const curStudentIds = (cls.studentIds || []).map(sid => String(sid).trim());
+        if (clsId === normFromClassId) {
+          return {
+            ...cls,
+            studentIds: curStudentIds.filter(id => id !== normStudentId)
+          };
         }
-        if (cls.id === toClassId && !cls.studentIds.includes(studentId)) {
-          return { ...cls, studentIds: [...cls.studentIds, studentId] };
+        if (clsId === normToClassId) {
+          if (!curStudentIds.includes(normStudentId)) {
+            return { ...cls, studentIds: Array.from(new Set([...curStudentIds, normStudentId])) };
+          }
         }
         return cls;
       });
@@ -646,23 +669,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     queueKeysForCloudSync(['classes', 'timetable', 'teachers', 'students']);
   };
 
-  const assignStudentsToClass = (classId: string, studentIds: string[]) => {
+  const assignStudentsToClass = (classId: string, studentIds: (string | number)[]) => {
+    const normClassId = String(classId).trim();
+    const normStudentIds = Array.from(
+      new Set((studentIds || []).map(sid => String(sid ?? '').trim()).filter(Boolean))
+    );
+
     setData(prev => {
       const updatedClasses = prev.classes.map(c => {
-        if (c.id === classId) {
-          return { ...c, studentIds };
+        if (String(c.id).trim() === normClassId) {
+          return { ...c, studentIds: normStudentIds };
         }
         return c;
       });
 
       const updatedStudents = prev.students.map(s => {
-        const inThisClass = studentIds.includes(s.id);
-        const hasId = s.classIds.includes(classId);
+        const sId = String(s.id).trim();
+        const inThisClass = normStudentIds.includes(sId);
+        const currentClassIds = (s.classIds || []).map(cid => String(cid).trim());
+        const hasId = currentClassIds.includes(normClassId);
         if (inThisClass && !hasId) {
-          return { ...s, classIds: [...s.classIds, classId] };
+          return { ...s, classIds: Array.from(new Set([...currentClassIds, normClassId])) };
         }
         if (!inThisClass && hasId) {
-          return { ...s, classIds: s.classIds.filter(cid => cid !== classId) };
+          return { ...s, classIds: currentClassIds.filter(cid => cid !== normClassId) };
         }
         return s;
       });
@@ -673,7 +703,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         students: updatedStudents
       };
     });
-    addActivityLog('Cập nhật danh sách lớp', `Đã cập nhật danh sách ${studentIds.length} học sinh cho lớp mã ${classId}`);
+    addActivityLog('Cập nhật danh sách lớp', `Đã cập nhật danh sách ${normStudentIds.length} học sinh cho lớp mã ${normClassId}`);
     queueKeysForCloudSync(['classes', 'students']);
   };
 
@@ -1208,7 +1238,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           teachingAssistantName: dayConfig.taName,
           time: dayConfig.time,
           classroom: dayConfig.classroom,
-          courseBook: cls?.curriculum || program?.textbook || 'GET READY FOR STARTERS',
+          courseBook: cls?.curriculum || program?.textbook || '',
           lesson: programOutline ? `Unit ${sessionCounter}: ${programOutline.title}` : `Unit ${sessionCounter}`,
           contents: programOutline ? `- Grammar: ${programOutline.grammarFocus}\n- Vocabulary: ${programOutline.vocabFocus}\n- Homework: ${programOutline.homework}` : '',
           notes: '',
@@ -1232,9 +1262,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       teacherName: defaultTeacherLabel,
       teachingAssistantId: cls?.assistantTeacherId,
       teachingAssistantName: defaultTALabel,
-      defaultTime: cls?.scheduleTime || '7:30 – 9:00pm, Monday/Thursday',
-      defaultClassroom: cls?.classroom || '1A',
-      courseBook: cls?.curriculum || program?.textbook || 'GET READY FOR STARTERS',
+      defaultTime: cls?.scheduleTime || '',
+      defaultClassroom: cls?.classroom || '',
+      courseBook: cls?.curriculum || program?.textbook || '',
       generatedFromTimetable: true,
       sessions,
       createdBy: currentUser.name,
