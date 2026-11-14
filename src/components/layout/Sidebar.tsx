@@ -61,7 +61,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     label: string;
     sublabel?: string;
     icon: React.ElementType;
-    allowedRoles: ('admin' | 'academic_manager' | 'teacher')[];
+    allowedRoles: ('admin' | 'academic_manager' | 'teacher' | 'teaching_assistant')[];
     badge?: string;
   }
 
@@ -71,14 +71,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Dashboard',
       sublabel: 'Tổng quan',
       icon: LayoutDashboard,
-      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'students',
       label: 'Học sinh',
       sublabel: 'Students',
       icon: GraduationCap,
-      allowedRoles: ['admin', 'academic_manager'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'parents',
@@ -92,14 +92,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Lớp học',
       sublabel: 'Classes',
       icon: BookOpen,
-      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'teaching_schedule',
       label: 'Teaching Schedule',
       sublabel: 'Lịch giảng dạy',
       icon: CalendarDays,
-      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'teachers',
@@ -120,35 +120,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Thời khóa biểu',
       sublabel: 'Timetable',
       icon: Calendar,
-      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'attendance',
       label: 'Điểm danh',
       sublabel: 'Attendance',
       icon: ClipboardCheck,
-      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'assessments',
       label: 'Đánh giá học tập',
       sublabel: 'Assessments',
       icon: Award,
-      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'lesson_plans',
       label: 'Giáo án & Báo cáo',
       sublabel: 'Lesson Plans',
       icon: FileText,
-      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'lesson_reports',
       label: 'Lesson Report',
       sublabel: 'Báo cáo buổi học',
       icon: FileSpreadsheet,
-      allowedRoles: ['admin', 'academic_manager', 'teacher'],
+      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
       id: 'reports',
@@ -223,6 +223,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? 'bg-amber-400 ring-4 ring-amber-400/20'
                   : role === 'academic_manager'
                   ? 'bg-blue-400 ring-4 ring-blue-400/20'
+                  : role === 'teaching_assistant'
+                  ? 'bg-purple-400 ring-4 ring-purple-400/20'
                   : 'bg-emerald-400 ring-4 ring-emerald-400/20'
               }`}
             />
@@ -230,6 +232,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {role === 'admin' && 'Admin - Quản trị viên cao cấp'}
               {role === 'academic_manager' && 'Quản lý học thuật'}
               {role === 'teacher' && 'Giáo viên giảng dạy'}
+              {role === 'teaching_assistant' && 'Trợ giảng (Teaching Assistant)'}
             </span>
           </div>
         </div>
