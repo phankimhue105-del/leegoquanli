@@ -19,28 +19,34 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
 
 export const LessonPlansView: React.FC = () => {
-  const { currentUser, resolveTeacherProfile } = useAuth();
+  const { currentUser } = useAuth();
   const { data, submitLessonPlan, reviewLessonPlan } = useData();
   const { showToast } = useToast();
 
   const isTeacher = currentUser.role === 'teacher';
   const isManager = currentUser.role === 'academic_manager' || currentUser.role === 'admin';
-  const teacherObj = isTeacher ? resolveTeacherProfile(data.teachers) : null;
-  const teacherClassIds = teacherObj ? teacherObj.assignedClassIds : [];
+  const teacherObj = isTeacher
+    ? data.teachers.find(
+        t =>
+          String(t.id).trim() === String(currentUser.teacherId).trim() ||
+          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
+      )
+    : null;
+  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
 
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [viewingPlan, setViewingPlan] = useState<LessonPlanReport | null>(null);
   const [managerFeedbackText, setManagerFeedbackText] = useState('');
 
-  // Submit form state
+  // Submit form state (teacherId only, excluding TA-only assignments)
   const availableClasses = isTeacher
-    ? data.classes.filter(c => teacherClassIds.includes(c.id))
+    ? data.classes.filter(c => Boolean(currentTeacherId) && String(c.teacherId).trim() === currentTeacherId)
     : data.classes;
 
   const [formData, setFormData] = useState({
     classId: availableClasses[0]?.id || '',
     lessonNumber: 1,
-    textbook: 'Kid\'s Box Starter Unit 4',
+    textbook: availableClasses[0]?.curriculum || '',
     lessonContent: '',
     learningObjectives: '',
     activitiesCompleted: '',
@@ -52,7 +58,7 @@ export const LessonPlansView: React.FC = () => {
 
   const displayedPlans = data.lessonPlans.filter(lp => {
     if (isTeacher) {
-      return teacherObj ? lp.teacherId === teacherObj.id : false;
+      return Boolean(currentTeacherId) && String(lp.teacherId).trim() === currentTeacherId;
     }
     return true;
   });
@@ -67,15 +73,10 @@ export const LessonPlansView: React.FC = () => {
     const cls = data.classes.find(c => c.id === formData.classId);
     if (!cls) return;
 
-    if (isTeacher && !teacherObj) {
-      showToast('Tài khoản của bạn chưa được liên kết với hồ sơ Giáo viên', 'error');
-      return;
-    }
-
     submitLessonPlan({
       classId: cls.id,
       className: cls.name,
-      teacherId: teacherObj?.id || cls.teacherId || '',
+      teacherId: teacherObj?.id || 'TCH-001',
       teacherName: teacherObj?.fullName || currentUser.name,
       date: formData.date,
       lessonNumber: Number(formData.lessonNumber),
@@ -407,3 +408,4 @@ export const LessonPlansView: React.FC = () => {
     </div>
   );
 };
+
