@@ -81,6 +81,99 @@ export const initialUsers: User[] = [
     status: 'active',
     createdAt: '2025-02-20',
     lastLogin: 'Hôm nay lúc 08:00'
+  },
+  {
+    id: 'USR-HUE',
+    name: 'Tiêu Thị Huệ',
+    email: 'hue.tieu@leego.edu.vn',
+    username: 'hue.tieu',
+    password: 'teacher@leego2025',
+    role: 'teacher',
+    teacherId: 'TCH-009',
+    phone: '0985678901',
+    status: 'active',
+    createdAt: '2025-02-01',
+    lastLogin: 'Hôm nay lúc 08:00'
+  },
+  {
+    id: 'USR-HOA',
+    name: 'Lê Thị Hoa',
+    email: 'hoa.le@leego.edu.vn',
+    username: 'hoa.le',
+    password: 'teacher@leego2025',
+    role: 'teacher',
+    teacherId: 'TCH-007',
+    phone: '0983456789',
+    status: 'active',
+    createdAt: '2025-02-01',
+    lastLogin: 'Hôm nay lúc 08:00'
+  },
+  {
+    id: 'USR-THANH-HUYEN',
+    name: 'Trần Thị Thanh Huyền',
+    email: 'huyen.tran@leego.edu.vn',
+    username: 'huyen.tran',
+    password: 'teacher@leego2025',
+    role: 'teacher',
+    teacherId: 'TCH-006',
+    phone: '0982345678',
+    status: 'active',
+    createdAt: '2025-02-01',
+    lastLogin: 'Hôm nay lúc 08:00'
+  },
+  {
+    id: 'USR-DAO-HUYEN',
+    name: 'Đào Thị Huyền',
+    email: 'huyen.dao@leego.edu.vn',
+    username: 'huyen.dao',
+    password: 'teacher@leego2025',
+    role: 'teacher',
+    teacherId: 'TCH-008',
+    phone: '0984567890',
+    status: 'active',
+    createdAt: '2025-02-01',
+    lastLogin: 'Hôm nay lúc 08:00'
+  },
+  {
+    id: 'USR-THUY',
+    name: 'Nguyễn Phương Thúy',
+    email: 'thuy.nguyen@leego.edu.vn',
+    username: 'thuy.nguyen',
+    password: 'teacher@leego2025',
+    role: 'teacher',
+    teacherId: 'TCH-THUY',
+    phone: '0986789012',
+    status: 'active',
+    createdAt: '2025-02-01',
+    lastLogin: 'Hôm nay lúc 08:00'
+  },
+  {
+    id: 'USR-QUYEN',
+    name: 'Lê Đỗ Quyên',
+    email: 'quyen.le@leego.edu.vn',
+    username: 'quyen.le',
+    password: 'ta@leego2025',
+    role: 'teaching_assistant',
+    teachingAssistantId: 'TA-004',
+    assistantId: 'TA-004',
+    phone: '0968992233',
+    status: 'active',
+    createdAt: '2025-02-01',
+    lastLogin: 'Hôm nay lúc 08:00'
+  },
+  {
+    id: 'USR-THIEN',
+    name: 'Đinh Phúc Thiện',
+    email: 'thien.dinh@leego.edu.vn',
+    username: 'thien.dinh',
+    password: 'ta@leego2025',
+    role: 'teaching_assistant',
+    teachingAssistantId: 'TA-005',
+    assistantId: 'TA-005',
+    phone: '0969113344',
+    status: 'active',
+    createdAt: '2025-02-01',
+    lastLogin: 'Hôm nay lúc 08:00'
   }
 ];
 
@@ -167,9 +260,9 @@ export const initialTeachers: Teacher[] = [
   },
   {
     id: 'TCH-006',
-    fullName: 'Đỗ Thị Huyền',
-    vietnameseName: 'Ms.D.Huyền',
-    email: 'huyen.do@leego.edu.vn',
+    fullName: 'Trần Thị Thanh Huyền',
+    vietnameseName: 'Ms.Thanh Huyền',
+    email: 'huyen.tran@leego.edu.vn',
     phone: '0982345678',
     nationality: 'Việt Nam',
     isNative: false,
@@ -180,6 +273,70 @@ export const initialTeachers: Teacher[] = [
     assignedClassIds: ['CLS-STA-01'],
     workloadHours: 8,
     hourlyRate: 400000
+  },
+  {
+    id: 'TCH-007',
+    fullName: 'Lê Thị Hoa',
+    vietnameseName: 'Cô Hoa',
+    email: 'hoa.le@leego.edu.vn',
+    phone: '0983456789',
+    nationality: 'Việt Nam',
+    isNative: false,
+    qualifications: 'Thạc sĩ Sư phạm Tiếng Anh, TESOL, IELTS 7.5',
+    experienceYears: 4,
+    teachingLevels: ['Pre A1 Starters', 'A1 Movers', 'A2 Flyers'],
+    status: 'active',
+    assignedClassIds: [],
+    workloadHours: 8,
+    hourlyRate: 380000
+  },
+  {
+    id: 'TCH-008',
+    fullName: 'Đào Thị Huyền',
+    vietnameseName: 'Ms.Đào Huyền',
+    email: 'huyen.dao@leego.edu.vn',
+    phone: '0984567890',
+    nationality: 'Việt Nam',
+    isNative: false,
+    qualifications: 'Cử nhân Sư phạm Tiếng Anh, TESOL 120h',
+    experienceYears: 5,
+    teachingLevels: ['A1 Movers', 'A2 Flyers'],
+    status: 'active',
+    assignedClassIds: [],
+    workloadHours: 10,
+    hourlyRate: 400000
+  },
+  {
+    id: 'TCH-009',
+    fullName: 'Tiêu Thị Huệ',
+    vietnameseName: 'Cô Huệ',
+    email: 'hue.tieu@leego.edu.vn',
+    phone: '0985678901',
+    nationality: 'Việt Nam',
+    isNative: false,
+    qualifications: 'Cử nhân Sư phạm Tiếng Anh, TESOL 120h, IELTS 7.5',
+    experienceYears: 4,
+    teachingLevels: ['Pre A1 Starters', 'A1 Movers', 'A2 Flyers'],
+    status: 'active',
+    assignedClassIds: [],
+    workloadHours: 12,
+    hourlyRate: 380000
+  },
+  {
+    id: 'TCH-THUY',
+    fullName: 'Nguyễn Phương Thúy',
+    vietnameseName: 'Cô Thúy',
+    email: 'thuy.nguyen@leego.edu.vn',
+    phone: '0986789012',
+    nationality: 'Việt Nam',
+    isNative: false,
+    qualifications: 'Cử nhân Ngôn ngữ Anh, IELTS 8.0, TESOL International',
+    experienceYears: 6,
+    teachingLevels: ['A2 Flyers', 'A2 Key for Schools (KET)', 'B1 Preliminary (PET)'],
+    status: 'active',
+    assignedClassIds: [],
+    workloadHours: 10,
+    hourlyRate: 420000
   }
 ];
 
@@ -216,6 +373,28 @@ export const initialTeachingAssistants: TeachingAssistant[] = [
     assignedClassIds: ['CLS-STA-01'],
     status: 'active',
     notes: 'Trợ giảng Thiên nhiệt tình hỗ trợ lớp Starters'
+  },
+  {
+    id: 'TA-004',
+    fullName: 'Lê Đỗ Quyên',
+    email: 'quyen.le@leego.edu.vn',
+    phone: '0968992233',
+    university: 'Đại học Hà Nội (HANU)',
+    englishCertificate: 'IELTS 7.5',
+    assignedClassIds: [],
+    status: 'active',
+    notes: 'Trợ giảng tận tâm, hỗ trợ bài tập và báo cáo học tập chu đáo'
+  },
+  {
+    id: 'TA-005',
+    fullName: 'Đinh Phúc Thiện',
+    email: 'thien.dinh@leego.edu.vn',
+    phone: '0969113344',
+    university: 'Đại học Bách Khoa Hà Nội (HUST)',
+    englishCertificate: 'IELTS 8.0',
+    assignedClassIds: [],
+    status: 'active',
+    notes: 'Trợ giảng năng nổ, hỗ trợ kỹ năng nói và tương tác lớp học xuất sắc'
   }
 ];
 
