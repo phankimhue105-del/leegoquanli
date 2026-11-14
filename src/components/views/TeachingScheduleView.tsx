@@ -75,24 +75,30 @@ export const TeachingScheduleView: React.FC = () => {
   const canDelete = hasPermission('teaching_schedule.delete') || isAdmin;
   const canExport = hasPermission('teaching_schedule.export') || isAdmin;
 
-  // Filter classes accessible to current user
+  // Filter classes accessible to current user (teacherId only, excluding TA-only assignments)
   const availableClasses = useMemo(() => {
     const classesList = Array.isArray(data?.classes) ? data.classes : [];
     if (currentUser.role === 'teacher') {
-      const teacherId = currentUser.teacherId;
+      const teacherId = currentUser.teacherId ? String(currentUser.teacherId).trim() : '';
       return classesList.filter(
-        c => c.teacherId === teacherId || c.assistantTeacherId === teacherId
+        c => Boolean(teacherId) && String(c.teacherId).trim() === teacherId
       );
     }
     return classesList;
   }, [data?.classes, currentUser]);
 
-  // Selected Class, Month & Year (Default to CLS-STA-01, November 2026 as primary test case)
+  const now = new Date();
   const [selectedClassId, setSelectedClassId] = useState<string>(() => {
-    return availableClasses[0]?.id || 'CLS-STA-01';
+    return availableClasses[0]?.id || '';
   });
-  const [selectedMonth, setSelectedMonth] = useState<number>(11);
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
+  const [selectedMonth, setSelectedMonth] = useState<number>(now.getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number>(now.getFullYear());
+
+  useEffect(() => {
+    if ((!selectedClassId || !availableClasses.some(c => c.id === selectedClassId)) && availableClasses.length > 0) {
+      setSelectedClassId(availableClasses[0].id);
+    }
+  }, [availableClasses, selectedClassId]);
 
   // Active schedule being viewed/edited
   const [currentSchedule, setCurrentSchedule] = useState<MonthlyTeachingSchedule | null>(null);
@@ -120,16 +126,31 @@ export const TeachingScheduleView: React.FC = () => {
 
   // New session modal state
   const [newSessionData, setNewSessionData] = useState({
-    date: '2026-11-06',
-    teacherName: 'Foreign teacher',
-    teachingAssistantName: 'Thiên',
-    time: '7:30 – 9:00pm',
-    classroom: '1A',
-    lesson: 'Makeup Session',
-    contents: '- Makeup teaching session\n- Additional speaking & review',
-    notes: 'Extra session',
+    date: new Date().toISOString().slice(0, 10),
+    teacherName: '',
+    teachingAssistantName: '',
+    time: '',
+    classroom: '',
+    lesson: '',
+    contents: '',
+    notes: '',
     notesHighlight: false
   });
+
+  const handleOpenAddSession = () => {
+    setNewSessionData({
+      date: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`,
+      teacherName: currentSchedule?.teacherName || headerInfoEdit.teacherName || '',
+      teachingAssistantName: currentSchedule?.teachingAssistantName || headerInfoEdit.teachingAssistantName || '',
+      time: currentSchedule?.defaultTime || headerInfoEdit.defaultTime || '',
+      classroom: currentSchedule?.defaultClassroom || headerInfoEdit.defaultClassroom || '',
+      lesson: '',
+      contents: '',
+      notes: '',
+      notesHighlight: false
+    });
+    setShowAddSessionModal(true);
+  };
 
   // Selected class object
   const currentClass = useMemo(() => {
@@ -652,7 +673,7 @@ export const TeachingScheduleView: React.FC = () => {
             {/* Add Extra Session button */}
             {canEdit && (
               <button
-                onClick={() => setShowAddSessionModal(true)}
+                onClick={handleOpenAddSession}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-medium transition-colors border border-indigo-200"
                 title="Thêm buổi học bù / tăng cường vào tháng"
               >
