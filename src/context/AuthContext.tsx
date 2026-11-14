@@ -290,8 +290,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return true;
     }
     if (currentUser.role === 'teacher') {
-      if (assignedClassIds && assignedClassIds.includes(classId)) return true;
-      if (currentUser.assignedClasses && currentUser.assignedClasses.includes(classId)) return true;
+      const normClassId = String(classId).trim();
+      if (assignedClassIds && assignedClassIds.map(cid => String(cid).trim()).includes(normClassId)) return true;
+      if (currentUser.assignedClasses && currentUser.assignedClasses.map(cid => String(cid).trim()).includes(normClassId)) return true;
       return false;
     }
     return false;
@@ -302,7 +303,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return true;
     }
     if (currentUser.role === 'teacher') {
-      return currentUser.teacherId === teacherId;
+      return String(currentUser.teacherId ?? '').trim() === String(teacherId).trim();
     }
     return false;
   };
