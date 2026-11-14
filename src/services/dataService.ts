@@ -1903,6 +1903,148 @@ export function recalculateTeacherAssignedClasses(
 }
 
 /**
+ * Reconcile the timetable with authoritative class records.
+ * Rules:
+ * 1. Classes are the authoritative source for recurring class schedules.
+ * 2. Any timetable session whose classId is not found in active classes (or whose class is cancelled)
+ *    is an orphan / obsolete record and is PURGED.
+ * 3. Any timetable session whose class exists is updated to strictly reflect the current class's:
+ *    - teacherId (from class or slot)
+ *    - assistantTeacherId
+ *    - teacherName (from current teachers list)
+ *    - assistantName (from current assistants list)
+ *    - className (from current class.name)
+ *    - classroom (from current class.classroom)
+ *    - startTime & endTime (from current class slot)
+ *    - dayOfWeek & dayName
+ * 4. Obsolete slots (e.g. days the class no longer meets) are PURGED.
+ * 5. Missing slots for active classes are GENERATED with stable IDs.
+ * 6. Non-class ad-hoc sessions (empty or undefined classId) are preserved.
+ */
+export function reconcileTimetableWithClasses(
+  classes: ClassItem[],
+  timetable: TimetableSession[],
+  teachers: Teacher[] = [],
+  assistants: TeachingAssistant[] = []
+): TimetableSession[] {
+  const safeClasses = Array.isArray(classes) ? classes : [];
+  const safeTimetable = Array.isArray(timetable) ? timetable : [];
+  const safeTeachers = Array.isArray(teachers) ? teachers : [];
+  const safeAssistants = Array.isArray(assistants) ? assistants : [];
+
+  // Map of active classes by normalized ID
+  const activeClassesMap = new Map<string, ClassItem>();
+  for (const c of safeClasses) {
+    if (c && c.status !== 'cancelled') {
+      const cid = String(c.id ?? '').trim();
+      if (cid) {
+        activeClassesMap.set(cid, c);
+      }
+    }
+  }
+
+  // Preserve non-class ad-hoc sessions (sessions without classId)
+  const nonClassSessions = safeTimetable.filter(s => {
+    const cid = String(s.classId ?? '').trim();
+    return !cid;
+  });
+
+  // Reconciled sessions for active classes
+  const reconciledClassSessions: TimetableSession[] = [];
+
+  // Group existing class sessions by classId
+  const existingByClass = new Map<string, TimetableSession[]>();
+  for (const s of safeTimetable) {
+    const cid = String(s.classId ?? '').trim();
+    if (cid && activeClassesMap.has(cid)) {
+      if (!existingByClass.has(cid)) {
+        existingByClass.set(cid, []);
+      }
+      existingByClass.get(cid)!.push(s);
+    }
+  }
+
+  // For every active class, generate or update its authoritative sessions
+  for (const [classId, cls] of activeClassesMap.entries()) {
+    let slots: Array<{
+      dayOfWeek: number;
+      dayName?: string;
+      startTime: string;
+      endTime: string;
+      teacherId?: string;
+      assistantTeacherId?: string;
+    }> = [];
+
+    if (Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0) {
+      slots = cls.weeklySchedule
+        .filter(s => typeof s.dayOfWeek === 'number' && s.dayOfWeek >= 1 && s.dayOfWeek <= 7)
+        .map(s => ({
+          dayOfWeek: s.dayOfWeek,
+          dayName: s.dayName || getDayNameFromNumber(s.dayOfWeek),
+          startTime: s.startTime || '17:30',
+          endTime: s.endTime || '19:00',
+          teacherId: s.teacherId || cls.teacherId,
+          assistantTeacherId: s.assistantTeacherId || cls.assistantTeacherId
+        }));
+    } else {
+      const parsed = getClassWeeklySchedule(cls);
+      slots = parsed.map(p => ({
+        dayOfWeek: p.dayOfWeek,
+        dayName: p.dayName || getDayNameFromNumber(p.dayOfWeek),
+        startTime: p.startTime || '17:30',
+        endTime: p.endTime || '19:00',
+        teacherId: cls.teacherId,
+        assistantTeacherId: cls.assistantTeacherId
+      }));
+    }
+
+    if (slots.length === 0) {
+      continue;
+    }
+
+    const existingSessions = existingByClass.get(classId) || [];
+    const usedSessionIds = new Set<string>();
+
+    for (const slot of slots) {
+      const effTeacherId = String(slot.teacherId || cls.teacherId || '').trim();
+      const effTaId = String(slot.assistantTeacherId || cls.assistantTeacherId || '').trim();
+
+      const teacherObj = safeTeachers.find(t => String(t.id).trim() === effTeacherId);
+      const taObj = safeAssistants.find(ta => String(ta.id).trim() === effTaId);
+
+      // Match existing session by dayOfWeek if available and not yet claimed
+      const existing = existingSessions.find(
+        s => s.dayOfWeek === slot.dayOfWeek && !usedSessionIds.has(s.id)
+      );
+      if (existing) {
+        usedSessionIds.add(existing.id);
+      }
+
+      const cleanTime = (slot.startTime || '1730').replace(/[^0-9]/g, '');
+      const sessionId = existing?.id || `SES-${classId}-D${slot.dayOfWeek}-${cleanTime}`;
+
+      reconciledClassSessions.push({
+        id: sessionId,
+        classId,
+        className: cls.name || existing?.className || '',
+        teacherId: effTeacherId,
+        teacherName: teacherObj?.fullName || existing?.teacherName || 'Chưa phân công GV',
+        assistantId: effTaId || undefined,
+        assistantName: taObj?.fullName || existing?.assistantName || undefined,
+        classroom: cls.classroom || existing?.classroom || 'Phòng học',
+        dayOfWeek: slot.dayOfWeek,
+        dayName: slot.dayName || getDayNameFromNumber(slot.dayOfWeek),
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        status: 'scheduled'
+      });
+    }
+  }
+
+  return [...nonClassSessions, ...reconciledClassSessions];
+}
+
+/**
  * Synchronize a single class's recurring schedule into the timetable.
  * Updates existing sessions in place (preserving session IDs where possible)
  * and removes obsolete sessions for this class.
@@ -2016,14 +2158,7 @@ export function syncAllClassesToTimetable(
   teachers: Teacher[] = [],
   assistants: TeachingAssistant[] = []
 ): TimetableSession[] {
-  if (!Array.isArray(classes)) return timetable || [];
-  let current = Array.isArray(timetable) ? [...timetable] : [];
-
-  for (const cls of classes) {
-    current = syncSingleClassToTimetable(cls, current, teachers, assistants);
-  }
-
-  return current;
+  return reconcileTimetableWithClasses(classes, timetable, teachers, assistants);
 }
 
 export function exportLessonReportToExcel(report: LessonReport) {
