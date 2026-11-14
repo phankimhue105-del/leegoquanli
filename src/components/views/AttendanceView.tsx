@@ -17,29 +17,20 @@ import { AttendanceStatus, StudentAttendanceEntry } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import { exportAttendanceReportToExcel } from '../../services/dataService';
+import { exportAttendanceReportToExcel, resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
 
 export const AttendanceView: React.FC = () => {
   const { currentUser } = useAuth();
   const { data, saveAttendance } = useData();
   const { showToast } = useToast();
 
-  const isTeacher = currentUser.role === 'teacher';
-  const teacherObj = isTeacher
-    ? data.teachers.find(
-        t =>
-          String(t.id).trim() === String(currentUser.teacherId).trim() ||
-          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
-      )
-    : null;
-  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
+  const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
+  const isTeacher = staff.isTeacher;
+  const isTA = staff.isTA;
 
   const availableClasses = useMemo(() => {
-    if (isTeacher) {
-      return data.classes.filter(c => Boolean(currentTeacherId) && String(c.teacherId).trim() === currentTeacherId);
-    }
-    return data.classes;
-  }, [data.classes, isTeacher, currentTeacherId]);
+    return getAssignedClassesForStaff(data.classes, staff);
+  }, [data.classes, staff]);
 
   // Selected Class & Date for taking attendance
   const [selectedClassId, setSelectedClassId] = useState<string>(availableClasses[0]?.id || '');
@@ -165,6 +156,31 @@ export const AttendanceView: React.FC = () => {
           <span>Xuất báo cáo điểm danh Excel</span>
         </button>
       </div>
+
+      {/* Account Diagnostic Warning if Link is Missing */}
+      {staff.diagnosticMessage && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+          <div>
+            <h4 className="text-xs font-bold text-amber-900">Thông báo liên kết tài khoản</h4>
+            <p className="text-xs text-amber-700 mt-0.5">{staff.diagnosticMessage}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Meaningful empty state if no classes are assigned */}
+      {availableClasses.length === 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
+          <ClipboardCheck className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+          <h4 className="text-sm font-bold text-slate-700">Chưa có lớp học được phân công</h4>
+          <p className="text-xs text-slate-500 mt-1">
+            {isTA
+              ? 'Bạn hiện chưa được phân công trợ giảng cho lớp học nào để thực hiện điểm danh.'
+              : isTeacher
+              ? 'Bạn hiện chưa được phân công giảng dạy lớp học nào để thực hiện điểm danh.'
+              : 'Hiện chưa có lớp học nào trong hệ thống.'}
+          </p>
+        </div>
+      )}
 
       {/* Control Selector Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
