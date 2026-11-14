@@ -170,13 +170,14 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
     normTeachingAssistants
   );
   const syncedTeachers = recalculateTeacherAssignedClasses(normClasses, normTeachers);
+  const syncedAssistants = recalculateAssistantAssignedClasses(normClasses, normTeachingAssistants);
 
   return {
     ...store,
     students: normStudents,
     classes: normClasses,
     teachers: syncedTeachers,
-    teachingAssistants: normTeachingAssistants,
+    teachingAssistants: syncedAssistants,
     academicManagers: normAcademicManagers,
     attendance: normAttendance,
     assessments: normAssessments,
@@ -1900,6 +1901,216 @@ export function recalculateTeacherAssignedClasses(
       assignedClassIds: Array.from(assignedIds)
     };
   });
+}
+
+/**
+ * Recompute teaching assistant assignedClassIds accurately from active classes.
+ * Ensures an assistant who was unassigned does not retain stale class IDs,
+ * and newly assigned assistants receive the class ID.
+ */
+export function recalculateAssistantAssignedClasses(
+  classes: ClassItem[],
+  assistants: TeachingAssistant[]
+): TeachingAssistant[] {
+  if (!Array.isArray(assistants)) return [];
+  const activeClasses = (Array.isArray(classes) ? classes : []).filter(
+    c => c.status !== 'cancelled'
+  );
+
+  return assistants.map(ta => {
+    const taId = String(ta.id).trim();
+    const assignedIds = new Set<string>();
+
+    activeClasses.forEach(c => {
+      const classId = String(c.id).trim();
+      const primaryAssistantMatch = String(c.assistantTeacherId ?? '').trim() === taId;
+      const slotAssistantMatch = (c.weeklySchedule || []).some(
+        s => String(s.assistantTeacherId ?? '').trim() === taId
+      );
+      if (primaryAssistantMatch || slotAssistantMatch) {
+        assignedIds.add(classId);
+      }
+    });
+
+    return {
+      ...ta,
+      assignedClassIds: Array.from(assignedIds)
+    };
+  });
+}
+
+export interface StaffProfileResolution {
+  isTeacher: boolean;
+  isTA: boolean;
+  isAdmin: boolean;
+  isAcademicManager: boolean;
+  teacher?: Teacher | null;
+  assistant?: TeachingAssistant | null;
+  staffId: string;
+  staffName: string;
+  hasValidProfileLink: boolean;
+  diagnosticMessage?: string;
+}
+
+/**
+ * Resolves the logged-in user to their authoritative staff profile (Teacher or Teaching Assistant).
+ * Avoids fragile matching, prioritizes stable IDs, and provides clear diagnostics if a profile link is missing.
+ */
+export function resolveStaffProfile(
+  currentUser: User | null | undefined,
+  teachers: Teacher[],
+  assistants: TeachingAssistant[]
+): StaffProfileResolution {
+  if (!currentUser) {
+    return {
+      isTeacher: false,
+      isTA: false,
+      isAdmin: false,
+      isAcademicManager: false,
+      staffId: '',
+      staffName: '',
+      hasValidProfileLink: false,
+      diagnosticMessage: 'Người dùng chưa đăng nhập.'
+    };
+  }
+
+  const role = currentUser.role;
+  const isAdmin = role === 'admin';
+  const isAcademicManager = role === 'academic_manager';
+
+  if (isAdmin) {
+    return {
+      isTeacher: false,
+      isTA: false,
+      isAdmin: true,
+      isAcademicManager: false,
+      staffId: currentUser.id,
+      staffName: currentUser.name,
+      hasValidProfileLink: true
+    };
+  }
+
+  if (isAcademicManager) {
+    return {
+      isTeacher: false,
+      isTA: false,
+      isAdmin: false,
+      isAcademicManager: true,
+      staffId: currentUser.academicManagerId || currentUser.id,
+      staffName: currentUser.name,
+      hasValidProfileLink: true
+    };
+  }
+
+  // Check if account is a Teaching Assistant
+  const taIdFromUser = currentUser.teachingAssistantId || currentUser.assistantId || '';
+  const isTaRole = role === 'teaching_assistant';
+  const hasTaPrefixInTeacherId = Boolean(
+    currentUser.teacherId && String(currentUser.teacherId).trim().toUpperCase().startsWith('TA-')
+  );
+
+  const matchedAssistant = (assistants || []).find(ta => {
+    const tid = String(ta.id).trim().toUpperCase();
+    if (taIdFromUser && tid === String(taIdFromUser).trim().toUpperCase()) return true;
+    if (hasTaPrefixInTeacherId && tid === String(currentUser.teacherId).trim().toUpperCase()) return true;
+    if (isTaRole && tid === String(currentUser.id).trim().toUpperCase()) return true;
+    if (isTaRole && tid === String(currentUser.id).trim().replace(/^USR-/, '').toUpperCase()) return true;
+    if (currentUser.email && ta.email && ta.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase()) return true;
+    return false;
+  });
+
+  const isTA =
+    isTaRole ||
+    Boolean(taIdFromUser) ||
+    hasTaPrefixInTeacherId ||
+    Boolean(matchedAssistant && !teachers.some(t => t.id === currentUser.teacherId));
+
+  if (isTA) {
+    const staffId = matchedAssistant
+      ? String(matchedAssistant.id).trim()
+      : (taIdFromUser || (hasTaPrefixInTeacherId ? String(currentUser.teacherId).trim() : ''));
+    const hasValidLink = Boolean(matchedAssistant);
+
+    return {
+      isTeacher: false,
+      isTA: true,
+      isAdmin: false,
+      isAcademicManager: false,
+      assistant: matchedAssistant || null,
+      staffId: matchedAssistant ? String(matchedAssistant.id).trim() : '',
+      staffName: matchedAssistant?.fullName || currentUser.name,
+      hasValidProfileLink: hasValidLink,
+      diagnosticMessage: hasValidLink
+        ? undefined
+        : 'Tài khoản Trợ Giảng chưa được liên kết với hồ sơ Trợ Giảng tương ứng. Vui lòng liên hệ Quản trị viên để kiểm tra mã trợ giảng hoặc email đăng ký.'
+    };
+  }
+
+  // Otherwise, account is Teacher
+  const matchedTeacher = (teachers || []).find(t => {
+    const tid = String(t.id).trim().toUpperCase();
+    if (currentUser.teacherId && !hasTaPrefixInTeacherId && tid === String(currentUser.teacherId).trim().toUpperCase()) return true;
+    if (currentUser.email && t.email && t.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase()) return true;
+    if (tid === String(currentUser.id).trim().toUpperCase()) return true;
+    if (tid === String(currentUser.id).trim().replace(/^USR-/, '').toUpperCase()) return true;
+    return false;
+  });
+
+  const staffId = matchedTeacher ? String(matchedTeacher.id).trim() : '';
+  const hasValidLink = Boolean(matchedTeacher);
+
+  return {
+    isTeacher: true,
+    isTA: false,
+    isAdmin: false,
+    isAcademicManager: false,
+    teacher: matchedTeacher || null,
+    staffId,
+    staffName: matchedTeacher?.fullName || currentUser.name,
+    hasValidProfileLink: hasValidLink,
+    diagnosticMessage: hasValidLink
+      ? undefined
+      : 'Tài khoản Giáo Viên chưa được liên kết với hồ sơ Giáo Viên tương ứng. Vui lòng liên hệ Quản trị viên.'
+  };
+}
+
+/**
+ * Returns the active classes assigned to a staff member (strictly separating Teacher vs TA).
+ */
+export function getAssignedClassesForStaff(
+  classes: ClassItem[],
+  staff: StaffProfileResolution
+): ClassItem[] {
+  const activeClasses = (Array.isArray(classes) ? classes : []).filter(c => c.status !== 'cancelled');
+  if (staff.isAdmin || staff.isAcademicManager) {
+    return activeClasses;
+  }
+
+  if (staff.isTA) {
+    if (!staff.staffId) return [];
+    return activeClasses.filter(c => {
+      const primaryMatch = String(c.assistantTeacherId || '').trim() === staff.staffId;
+      const slotMatch = (c.weeklySchedule || []).some(
+        s => String(s.assistantTeacherId || '').trim() === staff.staffId
+      );
+      const assignedMatch = (staff.assistant?.assignedClassIds || []).includes(c.id);
+      return primaryMatch || slotMatch || assignedMatch;
+    });
+  }
+
+  if (staff.isTeacher) {
+    if (!staff.staffId) return [];
+    return activeClasses.filter(c => {
+      const primaryMatch = String(c.teacherId || '').trim() === staff.staffId;
+      const slotMatch = (c.weeklySchedule || []).some(
+        s => String(s.teacherId || '').trim() === staff.staffId
+      );
+      const assignedMatch = (staff.teacher?.assignedClassIds || []).includes(c.id);
+      return primaryMatch || slotMatch || assignedMatch;
+    });
+  }
+
+  return [];
 }
 
 /**
