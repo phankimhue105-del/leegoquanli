@@ -420,7 +420,7 @@ export const UserManagementView: React.FC = () => {
                     <option value="">-- Chọn hồ sơ trợ giảng --</option>
                     {data.teachingAssistants.map(ta => (
                       <option key={ta.id} value={ta.id}>
-                        {ta.fullName} ({ta.id})
+                        {ta.fullName} (Teaching Assistant – {ta.id})
                       </option>
                     ))}
                   </select>
@@ -440,7 +440,7 @@ export const UserManagementView: React.FC = () => {
                     <option value="">-- Chọn hồ sơ giáo viên --</option>
                     {data.teachers.map(t => (
                       <option key={t.id} value={t.id}>
-                        {t.fullName} ({t.id})
+                        {t.fullName} (Teacher – {t.id})
                       </option>
                     ))}
                   </select>
