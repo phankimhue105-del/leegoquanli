@@ -67,6 +67,20 @@ export const initialUsers: User[] = [
     status: 'active',
     createdAt: '2025-02-15',
     lastLogin: 'Hôm qua lúc 18:20'
+  },
+  {
+    id: 'USR-005',
+    name: 'Nguyễn Thảo Linh (Teaching Assistant)',
+    email: 'thaolinh.nguyen@leego.edu.vn',
+    username: 'ta@leego.edu.vn',
+    password: 'ta@leego2025',
+    role: 'teaching_assistant',
+    teachingAssistantId: 'TA-001',
+    assistantId: 'TA-001',
+    phone: '0966554433',
+    status: 'active',
+    createdAt: '2025-02-20',
+    lastLogin: 'Hôm nay lúc 08:00'
   }
 ];
 
