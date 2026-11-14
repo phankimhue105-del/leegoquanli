@@ -165,7 +165,7 @@ const AppContent: React.FC = () => {
     if (role === 'academic_manager') {
       return !['users', 'settings'].includes(tab);
     }
-    if (role === 'teacher') {
+    if (role === 'teacher' || role === 'teaching_assistant') {
       return ['dashboard', 'students', 'classes', 'teaching_schedule', 'timetable', 'attendance', 'assessments', 'lesson_plans', 'lesson_reports'].includes(tab);
     }
     return false;
