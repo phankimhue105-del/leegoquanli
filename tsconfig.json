@@ -24,5 +24,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["dist", "src_backup_milestone5d", "src_backup_timetable_sync"]
+  "exclude": ["dist", "src_backup_milestone5d", "src_backup_timetable_sync", "verify_timetable_sync.ts"]
 }
