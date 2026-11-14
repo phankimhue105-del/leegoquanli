@@ -27,28 +27,22 @@ import { Student, StudentStatus } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import { exportStudentsToExcel, parseExcelToStudents } from '../../services/dataService';
+import { exportStudentsToExcel, parseExcelToStudents, resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
 
 export const StudentsView: React.FC = () => {
   const { currentUser } = useAuth();
   const { data, addStudent, updateStudent, deleteStudent, transferStudentClass, importStudents } = useData();
   const { showToast } = useToast();
 
-  const isTeacher = currentUser.role === 'teacher';
-  const teacherObj = isTeacher
-    ? data.teachers.find(
-        t =>
-          String(t.id).trim() === String(currentUser.teacherId).trim() ||
-          (Boolean(currentUser.email) && t.email.toLowerCase() === currentUser.email.toLowerCase())
-      )
-    : null;
-  const currentTeacherId = teacherObj ? String(teacherObj.id).trim() : (currentUser.teacherId ? String(currentUser.teacherId).trim() : '');
-  const teacherClasses = useMemo(() => {
-    return isTeacher
-      ? data.classes.filter(c => Boolean(currentTeacherId) && String(c.teacherId).trim() === currentTeacherId)
-      : [];
-  }, [data.classes, isTeacher, currentTeacherId]);
-  const teacherClassIds = useMemo(() => teacherClasses.map(c => String(c.id).trim()), [teacherClasses]);
+  const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
+  const isTeacher = staff.isTeacher;
+  const isTA = staff.isTA;
+  const isStaff = isTeacher || isTA;
+
+  const staffClasses = useMemo(() => {
+    return isStaff ? getAssignedClassesForStaff(data.classes, staff) : data.classes;
+  }, [data.classes, isStaff, staff]);
+  const staffClassIds = useMemo(() => staffClasses.map(c => String(c.id).trim()), [staffClasses]);
 
   // Filter & Search states
   const [searchTerm, setSearchTerm] = useState('');
@@ -66,10 +60,10 @@ export const StudentsView: React.FC = () => {
   // Filter students based on role and filters
   const filteredStudents = useMemo(() => {
     return data.students.filter(student => {
-      // Role enforcement: Teachers only see students enrolled in their assigned classes (teacherId only)
-      if (isTeacher) {
-        const inTeacherClass = (student.classIds || []).some(cid => teacherClassIds.includes(String(cid).trim()));
-        if (!inTeacherClass) return false;
+      // Role enforcement: Teachers and TAs only see students enrolled in their assigned classes
+      if (isStaff) {
+        const inStaffClass = (student.classIds || []).some(cid => staffClassIds.includes(String(cid).trim()));
+        if (!inStaffClass) return false;
       }
 
       // Search term: Safe string conversion to prevent crashes on numeric IDs / numbers
@@ -99,7 +93,7 @@ export const StudentsView: React.FC = () => {
 
       return true;
     });
-  }, [data.students, isTeacher, teacherClassIds, searchTerm, selectedClassFilter, selectedGradeFilter, selectedStatusFilter]);
+  }, [data.students, isStaff, staffClassIds, searchTerm, selectedClassFilter, selectedGradeFilter, selectedStatusFilter]);
 
   // Form State for Add / Edit
   const [formData, setFormData] = useState<Omit<Student, 'id'>>({
@@ -259,12 +253,14 @@ export const StudentsView: React.FC = () => {
           <p className="text-xs text-slate-500 mt-0.5">
             {isTeacher
               ? 'Danh sách học sinh thuộc các lớp Thầy/Cô được phân công giảng dạy.'
+              : isTA
+              ? 'Danh sách học sinh thuộc các lớp bạn phụ trách trợ giảng.'
               : 'Quản lý thông tin cá nhân, phụ huynh, chuyển lớp và theo dõi học tập toàn diện.'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {!isTeacher && (
+          {!isStaff && (
             <>
               <label className="cursor-pointer px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors">
                 <Upload className="w-4 h-4 text-slate-500" />
@@ -318,7 +314,7 @@ export const StudentsView: React.FC = () => {
             className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             <option value="all">Tất cả lớp học</option>
-            {(isTeacher ? teacherClasses : data.classes).map(c => (
+            {(isStaff ? staffClasses : data.classes).map(c => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
@@ -451,7 +447,7 @@ export const StudentsView: React.FC = () => {
                             <Eye className="w-4 h-4" />
                           </button>
 
-                          {!isTeacher && (
+                          {!isStaff && (
                             <>
                               <button
                                 onClick={() => openTransferModal(student)}
