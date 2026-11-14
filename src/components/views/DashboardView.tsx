@@ -72,7 +72,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
       if (!cls || cls.status === 'cancelled') return false;
       const slot = cls.weeklySchedule?.find(slotItem => slotItem.dayOfWeek === s.dayOfWeek);
       if (isTA) {
-        const effAssistantId = String(slot?.assistantTeacherId || cls.assistantTeacherId || s.assistantId || '').trim();
+        // Authoritative session-level assistant assignment (strictly session/slot, never inferring from entire class)
+        const effAssistantId = String(slot?.assistantTeacherId ?? s.assistantId ?? '').trim();
         return effAssistantId === staff.staffId;
       }
       const effTeacherId = String(slot?.teacherId || cls.teacherId || s.teacherId || '').trim();
@@ -110,7 +111,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               <span>Hệ thống Quản lý LeeGo English Center</span>
             </div>
             <h2 className="text-xl md:text-2xl font-extrabold tracking-tight">
-              Xin chào, {currentUser.name}!
+              Xin chào, {staff.staffName || currentUser.name}!
             </h2>
             <p className="text-red-100 text-xs md:text-sm mt-1 max-w-xl">
               {role === 'admin' && 'Chào mừng Quản trị viên. Bạn đang có toàn quyền quản lý học sinh, giáo viên, lớp học và hệ thống LeeGo.'}
