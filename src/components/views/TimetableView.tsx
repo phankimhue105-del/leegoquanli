@@ -81,16 +81,17 @@ export const TimetableView: React.FC = () => {
     // Authoritative teacher assignment MUST come from current class record (or slot)
     const slot = cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
     const effTeacherId = String(slot?.teacherId || cls?.teacherId || session.teacherId || '').trim();
-    const effAssistantId = String(slot?.assistantTeacherId || cls?.assistantTeacherId || session.assistantId || '').trim();
+    // Authoritative session-level assistant assignment (strictly session/slot, never inferring from entire class)
+    const effAssistantId = String(slot?.assistantTeacherId ?? session.assistantId ?? '').trim();
 
     // If logged in as teacher, show only their sessions by default (teacherId only)
     if (isTeacher) {
       if (staff.staffId && effTeacherId !== staff.staffId) return false;
     }
 
-    // If logged in as TA, show only their sessions by default (assistantTeacherId only)
+    // If logged in as TA, show only sessions where this TA is explicitly assigned to that session
     if (isTA) {
-      if (staff.staffId && effAssistantId !== staff.staffId) return false;
+      if (!staff.staffId || effAssistantId !== staff.staffId) return false;
     }
 
     if (filterMode === 'teacher' && selectedFilterValue !== 'all') {
