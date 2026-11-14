@@ -123,6 +123,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!authUser.academicManagerId && matched.academicManagerId) {
               authUser.academicManagerId = matched.academicManagerId;
             }
+            if (!authUser.teachingAssistantId && (matched.teachingAssistantId || matched.assistantId)) {
+              authUser.teachingAssistantId = matched.teachingAssistantId || matched.assistantId;
+              authUser.assistantId = matched.teachingAssistantId || matched.assistantId;
+            }
+            if (matched.role === 'teaching_assistant' && authUser.role !== 'admin' && authUser.role !== 'academic_manager') {
+              authUser.role = 'teaching_assistant';
+            }
           }
         }
         setCurrentUser(authUser);
@@ -167,7 +174,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         (lowerInput === 'teacher@leego.edu.vn' && u.role === 'teacher') ||
         (lowerInput === 'teacher' && u.role === 'teacher') ||
         (lowerInput === 'admin' && u.role === 'admin') ||
-        (lowerInput === 'academic' && u.role === 'academic_manager')
+        (lowerInput === 'academic' && u.role === 'academic_manager') ||
+        (lowerInput === 'ta' && u.role === 'teaching_assistant') ||
+        (lowerInput === 'assistant' && u.role === 'teaching_assistant')
       );
     });
 
@@ -185,7 +194,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'LeeGo@2025',
         'admin@leego2025',
         'academic@leego2025',
-        'teacher@leego2025'
+        'teacher@leego2025',
+        'ta@leego2025'
       ].filter(Boolean);
 
       const isMatch = validPasswords.includes(trimmedPass);
@@ -282,6 +292,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return teacherAllowed.includes(permission);
     }
 
+    if (role === 'teaching_assistant') {
+      const taAllowed = [
+        'view_dashboard',
+        'view_assigned_classes',
+        'view_assigned_students',
+        'view_timetable',
+        'take_attendance',
+        'view_attendance',
+        'submit_lesson_plan',
+        'view_lesson_plans',
+        'view_teaching_history',
+        'view_profile',
+        'teaching_schedule.view',
+        'teaching_schedule.export',
+      ];
+      return taAllowed.includes(permission);
+    }
+
     return false;
   };
 
@@ -289,7 +317,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (currentUser.role === 'admin' || currentUser.role === 'academic_manager') {
       return true;
     }
-    if (currentUser.role === 'teacher') {
+    if (currentUser.role === 'teacher' || currentUser.role === 'teaching_assistant') {
       const normClassId = String(classId).trim();
       if (assignedClassIds && assignedClassIds.map(cid => String(cid).trim()).includes(normClassId)) return true;
       if (currentUser.assignedClasses && currentUser.assignedClasses.map(cid => String(cid).trim()).includes(normClassId)) return true;
