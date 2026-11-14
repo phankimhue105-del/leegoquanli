@@ -44,6 +44,7 @@ import {
   isRecordModified,
   syncSingleClassToTimetable,
   recalculateTeacherAssignedClasses,
+  recalculateAssistantAssignedClasses,
   reconcileTimetableWithClasses
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
@@ -597,23 +598,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setData(prev => {
       const updatedClasses = [newClass, ...prev.classes];
       const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
+      const updatedAssistants = recalculateAssistantAssignedClasses(updatedClasses, prev.teachingAssistants);
       const updatedTimetable = reconcileTimetableWithClasses(
         updatedClasses,
         prev.timetable,
         updatedTeachers,
-        prev.teachingAssistants
+        updatedAssistants
       );
 
       return {
         ...prev,
         classes: updatedClasses,
         teachers: updatedTeachers,
+        teachingAssistants: updatedAssistants,
         timetable: updatedTimetable
       };
     });
 
     addActivityLog('Tạo lớp học mới', `Đã mở lớp ${newClass.name} (${newClass.code})`);
-    queueKeysForCloudSync(['classes', 'teachers', 'timetable']);
+    queueKeysForCloudSync(['classes', 'teachers', 'teachingAssistants', 'timetable']);
     return newClass;
   };
 
@@ -621,22 +624,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setData(prev => {
       const updatedClasses = prev.classes.map(c => (c.id === id ? { ...c, ...updates } : c));
       const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
+      const updatedAssistants = recalculateAssistantAssignedClasses(updatedClasses, prev.teachingAssistants);
       const updatedTimetable = reconcileTimetableWithClasses(
         updatedClasses,
         prev.timetable,
         updatedTeachers,
-        prev.teachingAssistants
+        updatedAssistants
       );
 
       return {
         ...prev,
         classes: updatedClasses,
         teachers: updatedTeachers,
+        teachingAssistants: updatedAssistants,
         timetable: updatedTimetable
       };
     });
     addActivityLog('Cập nhật lớp học', `Đã cập nhật thông tin lớp học mã ${id}`);
-    queueKeysForCloudSync(['classes', 'teachers', 'timetable']);
+    queueKeysForCloudSync(['classes', 'teachers', 'teachingAssistants', 'timetable']);
   };
 
   const deleteClass = (id: string) => {
@@ -644,11 +649,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setData(prev => {
       const updatedClasses = prev.classes.filter(c => c.id !== id);
       const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
+      const updatedAssistants = recalculateAssistantAssignedClasses(updatedClasses, prev.teachingAssistants);
       const updatedTimetable = reconcileTimetableWithClasses(
         updatedClasses,
         prev.timetable,
         updatedTeachers,
-        prev.teachingAssistants
+        updatedAssistants
       );
 
       return {
@@ -656,6 +662,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         classes: updatedClasses,
         timetable: updatedTimetable,
         teachers: updatedTeachers,
+        teachingAssistants: updatedAssistants,
         students: prev.students.map(s => ({
           ...s,
           classIds: s.classIds.filter(cid => cid !== id)
@@ -663,7 +670,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     });
     addActivityLog('Xóa lớp học', `Đã xóa lớp học ${cls?.name || id}`);
-    queueKeysForCloudSync(['classes', 'timetable', 'teachers', 'students']);
+    queueKeysForCloudSync(['classes', 'timetable', 'teachers', 'teachingAssistants', 'students']);
   };
 
   const assignStudentsToClass = (classId: string, studentIds: (string | number)[]) => {
@@ -758,11 +765,31 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteAssistant = (id: string) => {
-    setData(prev => ({
-      ...prev,
-      teachingAssistants: prev.teachingAssistants.filter(a => a.id !== id)
-    }));
-    queueKeysForCloudSync(['teachingAssistants']);
+    setData(prev => {
+      const updatedAssistants = prev.teachingAssistants.filter(a => a.id !== id);
+      const updatedClasses = prev.classes.map(c => {
+        if (c.assistantTeacherId === id) {
+          const updatedSlots = c.weeklySchedule?.map(slot =>
+            slot.assistantTeacherId === id ? { ...slot, assistantTeacherId: undefined } : slot
+          );
+          return { ...c, assistantTeacherId: undefined, weeklySchedule: updatedSlots };
+        }
+        return c;
+      });
+      const updatedTimetable = reconcileTimetableWithClasses(
+        updatedClasses,
+        prev.timetable,
+        prev.teachers,
+        updatedAssistants
+      );
+      return {
+        ...prev,
+        teachingAssistants: updatedAssistants,
+        classes: updatedClasses,
+        timetable: updatedTimetable
+      };
+    });
+    queueKeysForCloudSync(['teachingAssistants', 'classes', 'timetable']);
   };
 
   const addAcademicManager = (managerData: Omit<AcademicManager, 'id'>): AcademicManager => {
@@ -1626,7 +1653,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const originalDeadline = currentStored?.deadlineAt || report.deadlineAt || computeReportDeadlineISO(report.teachingDate);
     const expired = isReportExpired({ teachingDate: report.teachingDate, deadlineAt: originalDeadline }) && !isUnlockedAfterExp;
 
-    if (currentUser.role === 'teacher' && (isCurrentlyLocked || expired)) {
+    if ((currentUser.role === 'teacher' || currentUser.role === 'teaching_assistant') && (isCurrentlyLocked || expired)) {
       return {
         success: false,
         error: isCurrentlyLocked
@@ -1711,7 +1738,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const originalDeadline = currentStored?.deadlineAt || baseReport.deadlineAt || computeReportDeadlineISO(baseReport.teachingDate);
     const expired = isReportExpired({ teachingDate: baseReport.teachingDate, deadlineAt: originalDeadline }) && !isUnlockedAfterExp;
 
-    if (currentUser.role === 'teacher' && (isCurrentlyLocked || expired)) {
+    if ((currentUser.role === 'teacher' || currentUser.role === 'teaching_assistant') && (isCurrentlyLocked || expired)) {
       return {
         success: false,
         error: isCurrentlyLocked
