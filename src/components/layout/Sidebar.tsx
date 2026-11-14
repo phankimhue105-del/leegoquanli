@@ -102,6 +102,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
+      id: 'programs',
+      label: 'Thời lượng khóa học',
+      sublabel: 'Course Duration',
+      icon: BookMarked,
+      allowedRoles: ['admin'],
+    },
+    {
       id: 'teachers',
       label: 'Giáo viên',
       sublabel: 'Teachers',
