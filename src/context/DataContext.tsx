@@ -54,7 +54,10 @@ import {
   syncSingleClassToTimetable,
   recalculateTeacherAssignedClasses,
   recalculateAssistantAssignedClasses,
-  reconcileTimetableWithClasses
+  reconcileTimetableWithClasses,
+  recordLocalDeletedClassId,
+  registerPendingCreatedClassId,
+  unregisterPendingCreatedClassId
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
 
@@ -84,6 +87,7 @@ interface DataContextType {
   updateClass: (id: string, updates: Partial<ClassItem>) => void;
   deleteClass: (id: string) => void;
   assignStudentsToClass: (classId: string, studentIds: string[]) => void;
+  removeStudentFromClass: (classId: string, studentId: string) => void;
 
   // Teachers & TAs
   addTeacher: (teacher: Omit<Teacher, 'id'>) => Teacher;
@@ -346,6 +350,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const res = await saveCenterDataToGoogleAppsScript(payload, keysToSave);
         if (res.success) {
           setLastSyncTime(new Date().toLocaleTimeString('vi-VN'));
+          if (keysToSave.includes('classes') && Array.isArray((payload as any).classes)) {
+            ((payload as any).classes as ClassItem[]).forEach(c => {
+              if (c?.id) unregisterPendingCreatedClassId(c.id);
+            });
+          }
         } else {
           keysToSave.forEach(k => pendingKeysToSyncRef.current.add(k));
           console.warn('Background sync warning on save:', res.error);
@@ -625,6 +634,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 3. Classes
   const addClass = (clsData: Omit<ClassItem, 'id'>): ClassItem => {
     const newId = `CLS-${Date.now().toString().slice(-4)}`;
+    registerPendingCreatedClassId(newId);
     const newClass: ClassItem = { ...clsData, id: newId };
     setData(prev => {
       const updatedClasses = [newClass, ...prev.classes];
@@ -677,6 +687,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const deleteClass = (id: string) => {
     const cls = data.classes.find(c => c.id === id);
+    recordLocalDeletedClassId(id);
     setData(prev => {
       const updatedClasses = prev.classes.filter(c => c.id !== id);
       const updatedTeachers = recalculateTeacherAssignedClasses(updatedClasses, prev.teachers);
@@ -687,6 +698,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatedTeachers,
         updatedAssistants
       );
+      const updatedSchedules = (prev.teachingSchedules || []).filter(s => s.classId !== id);
+      const existingDeleted = prev.settings?.deletedClassIds || [];
+      const updatedDeletedClassIds = Array.from(new Set([...existingDeleted, id]));
+      const updatedSettings = {
+        ...(prev.settings || {}),
+        deletedClassIds: updatedDeletedClassIds
+      };
 
       return {
         ...prev,
@@ -694,14 +712,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         timetable: updatedTimetable,
         teachers: updatedTeachers,
         teachingAssistants: updatedAssistants,
+        teachingSchedules: updatedSchedules,
+        settings: updatedSettings,
         students: prev.students.map(s => ({
           ...s,
-          classIds: s.classIds.filter(cid => cid !== id)
+          classIds: (s.classIds || []).filter(cid => cid !== id)
         }))
       };
     });
     addActivityLog('Xóa lớp học', `Đã xóa lớp học ${cls?.name || id}`);
-    queueKeysForCloudSync(['classes', 'timetable', 'teachers', 'teachingAssistants', 'students']);
+    queueKeysForCloudSync(['classes', 'timetable', 'teachers', 'teachingAssistants', 'students', 'teachingSchedules', 'settings']);
+  };
+
+  const removeStudentFromClass = (classId: string, studentId: string) => {
+    const normClassId = String(classId).trim();
+    const normStudentId = String(studentId).trim();
+    if (!normClassId || !normStudentId) return;
+
+    const targetClass = data.classes.find(c => String(c.id).trim() === normClassId);
+    if (!targetClass) return;
+
+    const updatedStudentIds = (targetClass.studentIds || []).filter(sid => String(sid).trim() !== normStudentId);
+    assignStudentsToClass(normClassId, updatedStudentIds);
   };
 
   const assignStudentsToClass = (classId: string, studentIds: (string | number)[]) => {
@@ -2431,6 +2463,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateClass,
         deleteClass,
         assignStudentsToClass,
+        removeStudentFromClass,
         addTeacher,
         updateTeacher,
         deleteTeacher,
