@@ -28,16 +28,78 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const AUTH_USER_KEY = 'leego_auth_user_v1';
-const AUTH_STATUS_KEY = 'leego_auth_status_v1';
+export const AUTH_USER_KEY = 'leego_session_user_v1';
+export const AUTH_STATUS_KEY = 'leego_auth_status_v1';
+export const AUTH_META_KEY = 'leego_session_meta_v1';
+
+// Legacy keys to purge on startup/logout to prevent persistent localStorage logins
+const LEGACY_STORAGE_KEYS = ['leego_auth_user_v1', 'leego_auth_status_v1', 'leego_auth_meta_v1'];
+
+export const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes idle timeout
+export const ABSOLUTE_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours absolute session lifetime
+
+export interface SessionMeta {
+  loginTime: number;
+  lastActivity: number;
+}
+
+export function sanitizeUserForSession(user: User): User {
+  const safeUser = { ...user };
+  delete safeUser.password;
+  return safeUser;
+}
+
+export function isSessionExpired(meta: SessionMeta | null): { expired: boolean; reason?: 'idle' | 'absolute' } {
+  if (!meta || typeof meta.loginTime !== 'number' || typeof meta.lastActivity !== 'number') {
+    return { expired: true };
+  }
+  const now = Date.now();
+  // Check absolute lifetime: 8 hours
+  if (now - meta.loginTime > ABSOLUTE_TIMEOUT_MS) {
+    return { expired: true, reason: 'absolute' };
+  }
+  // Check idle timeout: 30 minutes
+  if (now - meta.lastActivity > IDLE_TIMEOUT_MS) {
+    return { expired: true, reason: 'idle' };
+  }
+  // Protection against future clock drift
+  if (meta.loginTime > now + 60000 || meta.lastActivity > now + 60000) {
+    return { expired: true };
+  }
+  return { expired: false };
+}
+
+export function clearPersistentAndSessionStorage(): void {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(AUTH_STATUS_KEY);
+      sessionStorage.removeItem(AUTH_USER_KEY);
+      sessionStorage.removeItem(AUTH_META_KEY);
+    }
+    if (typeof localStorage !== 'undefined') {
+      LEGACY_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
+    }
+  } catch (e) {
+    console.error('Error clearing auth storage:', e);
+  }
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User>(() => {
     try {
-      const stored = localStorage.getItem(AUTH_USER_KEY);
-      const status = localStorage.getItem(AUTH_STATUS_KEY);
-      if (status === 'true' && stored) {
-        return JSON.parse(stored);
+      if (typeof localStorage !== 'undefined') {
+        LEGACY_STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
+      }
+      if (typeof sessionStorage !== 'undefined') {
+        const status = sessionStorage.getItem(AUTH_STATUS_KEY);
+        const stored = sessionStorage.getItem(AUTH_USER_KEY);
+        const metaRaw = sessionStorage.getItem(AUTH_META_KEY);
+        if (status === 'true' && stored && metaRaw) {
+          const meta: SessionMeta = JSON.parse(metaRaw);
+          if (!isSessionExpired(meta).expired) {
+            return sanitizeUserForSession(JSON.parse(stored));
+          }
+        }
       }
     } catch (e) {
       console.error(e);
@@ -47,48 +109,153 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     try {
-      const status = localStorage.getItem(AUTH_STATUS_KEY);
-      const stored = localStorage.getItem(AUTH_USER_KEY);
-      return status === 'true' && Boolean(stored);
+      if (typeof sessionStorage !== 'undefined') {
+        const status = sessionStorage.getItem(AUTH_STATUS_KEY);
+        const stored = sessionStorage.getItem(AUTH_USER_KEY);
+        const metaRaw = sessionStorage.getItem(AUTH_META_KEY);
+        if (status === 'true' && stored && metaRaw) {
+          const meta: SessionMeta = JSON.parse(metaRaw);
+          if (!isSessionExpired(meta).expired) {
+            return true;
+          }
+        }
+      }
+      clearPersistentAndSessionStorage();
     } catch (e) {
       console.error(e);
-      return false;
+      clearPersistentAndSessionStorage();
     }
+    return false;
   });
 
-  useEffect(() => {
+  const saveSession = (user: User, customMeta?: SessionMeta) => {
+    const safeUser = sanitizeUserForSession(user);
+    const meta: SessionMeta = customMeta || {
+      loginTime: Date.now(),
+      lastActivity: Date.now()
+    };
     try {
-      if (isAuthenticated && currentUser) {
-        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(currentUser));
-        localStorage.setItem(AUTH_STATUS_KEY, 'true');
-      } else if (!isAuthenticated) {
-        localStorage.removeItem(AUTH_STATUS_KEY);
-        localStorage.removeItem(AUTH_USER_KEY);
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem(AUTH_USER_KEY, JSON.stringify(safeUser));
+        sessionStorage.setItem(AUTH_META_KEY, JSON.stringify(meta));
+        sessionStorage.setItem(AUTH_STATUS_KEY, 'true');
+      }
+      if (typeof localStorage !== 'undefined') {
+        LEGACY_STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
       }
     } catch (e) {
-      console.error(e);
+      console.error('Error writing session storage:', e);
     }
-  }, [currentUser, isAuthenticated]);
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let lastSavedActivity = Date.now();
+    const handleUserActivity = () => {
+      const now = Date.now();
+      try {
+        if (typeof sessionStorage === 'undefined') return;
+        const metaRaw = sessionStorage.getItem(AUTH_META_KEY);
+        if (!metaRaw) {
+          logout();
+          return;
+        }
+        const meta: SessionMeta = JSON.parse(metaRaw);
+        const check = isSessionExpired(meta);
+        if (check.expired) {
+          logout();
+          return;
+        }
+        // Throttle writing lastActivity to sessionStorage (every 15s)
+        if (now - lastSavedActivity >= 15000) {
+          lastSavedActivity = now;
+          meta.lastActivity = now;
+          sessionStorage.setItem(AUTH_META_KEY, JSON.stringify(meta));
+        }
+      } catch (e) {
+        console.error('Activity check error:', e);
+      }
+    };
+
+    const activityEvents = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+    activityEvents.forEach(evt => window.addEventListener(evt, handleUserActivity, { passive: true }));
+
+    // Periodic timer checking idle timeout and absolute session lifetime every 15s
+    const timerId = setInterval(() => {
+      try {
+        if (typeof sessionStorage === 'undefined') return;
+        const metaRaw = sessionStorage.getItem(AUTH_META_KEY);
+        if (!metaRaw) {
+          logout();
+          return;
+        }
+        const meta: SessionMeta = JSON.parse(metaRaw);
+        const check = isSessionExpired(meta);
+        if (check.expired) {
+          logout();
+        }
+      } catch (e) {
+        logout();
+      }
+    }, 15000);
+
+    // Visibility change check (e.g. returning after computer sleep or switching back from another window)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        try {
+          if (typeof sessionStorage === 'undefined') return;
+          const metaRaw = sessionStorage.getItem(AUTH_META_KEY);
+          if (!metaRaw) {
+            logout();
+            return;
+          }
+          const meta: SessionMeta = JSON.parse(metaRaw);
+          const check = isSessionExpired(meta);
+          if (check.expired) {
+            logout();
+          } else {
+            handleUserActivity();
+          }
+        } catch (e) {
+          logout();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      activityEvents.forEach(evt => window.removeEventListener(evt, handleUserActivity));
+      clearInterval(timerId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isAuthenticated]);
 
   const switchUser = (userId: string) => {
     const user = initialUsers.find(u => u.id === userId);
     if (user) {
-      setCurrentUser(user);
+      const safe = sanitizeUserForSession(user);
+      setCurrentUser(safe);
       setIsAuthenticated(true);
+      saveSession(safe);
     }
   };
 
   const switchRoleQuick = (role: UserRole) => {
     const targetUser = initialUsers.find(u => u.role === role);
     if (targetUser) {
-      setCurrentUser(targetUser);
+      const safe = sanitizeUserForSession(targetUser);
+      setCurrentUser(safe);
       setIsAuthenticated(true);
+      saveSession(safe);
     }
   };
 
   const loginAs = (user: User) => {
-    setCurrentUser(user);
+    const safe = sanitizeUserForSession(user);
+    setCurrentUser(safe);
     setIsAuthenticated(true);
+    saveSession(safe);
   };
 
   const loginWithCredentials = async (
@@ -132,15 +299,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
         }
-        setCurrentUser(authUser);
+        const cleanUser = sanitizeUserForSession(authUser);
+        setCurrentUser(cleanUser);
         setIsAuthenticated(true);
-        try {
-          localStorage.setItem(AUTH_USER_KEY, JSON.stringify(authUser));
-          localStorage.setItem(AUTH_STATUS_KEY, 'true');
-        } catch (e) {
-          console.error(e);
-        }
-        return { success: true, user: authUser };
+        saveSession(cleanUser);
+        return { success: true, user: cleanUser };
       }
 
       if (gasResult.error) {
@@ -200,16 +363,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const isMatch = validPasswords.includes(trimmedPass);
       if (isMatch) {
-        // Success: create authenticated session with authoritative user record
-        setCurrentUser(found);
+        // Success: create authenticated session with authoritative user record (password stripped)
+        const cleanUser = sanitizeUserForSession(found);
+        setCurrentUser(cleanUser);
         setIsAuthenticated(true);
-        try {
-          localStorage.setItem(AUTH_USER_KEY, JSON.stringify(found));
-          localStorage.setItem(AUTH_STATUS_KEY, 'true');
-        } catch (e) {
-          console.error(e);
-        }
-        return { success: true, user: found };
+        saveSession(cleanUser);
+        return { success: true, user: cleanUser };
       }
     }
 
@@ -220,12 +379,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
-    try {
-      localStorage.removeItem(AUTH_STATUS_KEY);
-      localStorage.removeItem(AUTH_USER_KEY);
-    } catch (e) {
-      console.error(e);
-    }
+    clearPersistentAndSessionStorage();
     setIsAuthenticated(false);
   };
 
