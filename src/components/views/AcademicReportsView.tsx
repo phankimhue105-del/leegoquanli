@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   BarChart3,
   Download,
@@ -21,6 +21,67 @@ import {
   exportAssessmentReportToExcel,
   exportTeacherWorkloadToExcel
 } from '../../services/dataService';
+import {
+  AssessmentRecord,
+  StudentScoreEntry,
+  AssessmentComponentKey
+} from '../../types';
+
+const ASSESSMENT_COMPONENT_INFO: Record<AssessmentComponentKey, { label: string; short: string }> = {
+  listening: { label: 'Listening (Nghe)', short: 'Nghe' },
+  speaking: { label: 'Speaking (Nói)', short: 'Nói' },
+  reading_and_writing: { label: 'Reading & Writing', short: 'Đọc-Viết' },
+  reading: { label: 'Reading (Đọc)', short: 'Đọc' },
+  writing: { label: 'Writing (Viết)', short: 'Viết' },
+  language_focus: { label: 'Language Focus', short: 'Ngữ pháp' },
+  phonetics: { label: 'Phonetics', short: 'Phát âm' },
+  overall_score: { label: 'Overall Score (Tổng điểm)', short: 'Overall' },
+};
+
+const getEffectiveComponents = (asm: AssessmentRecord): AssessmentComponentKey[] => {
+  if (Array.isArray(asm.selectedComponents) && asm.selectedComponents.length > 0) {
+    return asm.selectedComponents;
+  }
+  return ['listening', 'speaking', 'reading', 'writing', 'language_focus', 'overall_score'];
+};
+
+const getStudentComponentScore = (sc: StudentScoreEntry, key: AssessmentComponentKey): number | null | undefined => {
+  switch (key) {
+    case 'listening':
+      return sc.listening;
+    case 'speaking':
+      return sc.speaking;
+    case 'reading_and_writing':
+      return sc.readingAndWriting;
+    case 'reading':
+      return sc.reading;
+    case 'writing':
+      return sc.writing;
+    case 'language_focus':
+      return sc.languageFocus ?? sc.grammar;
+    case 'phonetics':
+      return sc.phonetics;
+    case 'overall_score':
+      return sc.overallScore ?? sc.totalScore;
+    default:
+      return undefined;
+  }
+};
+
+const calculateClassAverage = (scores: StudentScoreEntry[], compKey: AssessmentComponentKey) => {
+  let sum = 0;
+  let count = 0;
+  for (const sc of scores) {
+    if (sc.participationStatus === 'absent') continue;
+    const val = getStudentComponentScore(sc, compKey);
+    if (val !== undefined && val !== null && !isNaN(Number(val))) {
+      sum += Number(val);
+      count++;
+    }
+  }
+  if (count === 0) return { avg: null, count: 0 };
+  return { avg: parseFloat((sum / count).toFixed(2)), count };
+};
 
 type ReportTab =
   | 'enrollment'
@@ -36,6 +97,44 @@ export const AcademicReportsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ReportTab>('enrollment');
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>('all');
+
+  // Performance Report Filters
+  const [reportClassId, setReportClassId] = useState<string>('all');
+  const [reportMonth, setReportMonth] = useState<string>('all');
+  const [reportAssessmentId, setReportAssessmentId] = useState<string>('all');
+
+  const assessmentsForFilterDropdown = useMemo(() => {
+    return data.assessments.filter(asm => {
+      if (reportClassId !== 'all' && String(asm.classId).trim() !== String(reportClassId).trim()) {
+        return false;
+      }
+      if (reportMonth !== 'all') {
+        const m = asm.month || (asm.date ? parseInt(asm.date.split('-')[1], 10) : undefined);
+        if (m !== parseInt(reportMonth, 10)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [data.assessments, reportClassId, reportMonth]);
+
+  const filteredPerformanceAssessments = useMemo(() => {
+    return data.assessments.filter(asm => {
+      if (reportClassId !== 'all' && String(asm.classId).trim() !== String(reportClassId).trim()) {
+        return false;
+      }
+      if (reportMonth !== 'all') {
+        const m = asm.month || (asm.date ? parseInt(asm.date.split('-')[1], 10) : undefined);
+        if (m !== parseInt(reportMonth, 10)) {
+          return false;
+        }
+      }
+      if (reportAssessmentId !== 'all' && asm.id !== reportAssessmentId) {
+        return false;
+      }
+      return true;
+    });
+  }, [data.assessments, reportClassId, reportMonth, reportAssessmentId]);
 
   // Print friendly handler
   const handlePrint = () => {
@@ -335,66 +434,265 @@ export const AcademicReportsView: React.FC = () => {
       {/* TAB 4: PERFORMANCE REPORT */}
       {activeTab === 'performance' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 text-xs">
-            <div className="font-bold text-slate-800">
-              Kết quả đánh giá tổng hợp các kỳ thi Cambridge & Nội bộ
+          {/* Filters Bar */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-3 no-print">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-red-600" />
+                <span className="font-bold text-slate-800 text-xs uppercase tracking-wider">
+                  Bộ Lọc Báo Cáo Điểm Số & Xếp Loại
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  exportAssessmentReportToExcel(filteredPerformanceAssessments);
+                  showToast(
+                    filteredPerformanceAssessments.length === data.assessments.length
+                      ? 'Đã xuất toàn bộ điểm thi ra Excel'
+                      : `Đã xuất ${filteredPerformanceAssessments.length} kỳ thi đã lọc ra Excel`,
+                    'success'
+                  );
+                }}
+                disabled={filteredPerformanceAssessments.length === 0}
+                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700 font-bold rounded-lg border border-red-200 flex items-center gap-1.5 text-xs transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Xuất Excel Điểm Số ({filteredPerformanceAssessments.length})</span>
+              </button>
             </div>
-            <button
-              onClick={() => {
-                exportAssessmentReportToExcel(data.assessments);
-                showToast('Đã xuất toàn bộ điểm thi ra Excel', 'success');
-              }}
-              className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-lg border border-red-200 flex items-center gap-1"
-            >
-              <Download className="w-3.5 h-3.5" /> Xuất Excel Điểm Số
-            </button>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Filter Class */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  Lớp học
+                </label>
+                <select
+                  value={reportClassId}
+                  onChange={e => {
+                    setReportClassId(e.target.value);
+                    setReportAssessmentId('all');
+                  }}
+                  className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20"
+                >
+                  <option value="all">Tất cả các lớp ({data.classes.length})</option>
+                  {data.classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter Month */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  Tháng kiểm tra
+                </label>
+                <select
+                  value={reportMonth}
+                  onChange={e => {
+                    setReportMonth(e.target.value);
+                    setReportAssessmentId('all');
+                  }}
+                  className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20"
+                >
+                  <option value="all">Tất cả các tháng</option>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                    <option key={m} value={String(m)}>
+                      Tháng {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter Assessment */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  Kỳ thi / Đánh giá
+                </label>
+                <select
+                  value={reportAssessmentId}
+                  onChange={e => setReportAssessmentId(e.target.value)}
+                  className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20"
+                >
+                  <option value="all">Tất cả kỳ thi ({assessmentsForFilterDropdown.length})</option>
+                  {assessmentsForFilterDropdown.map(asm => (
+                    <option key={asm.id} value={asm.id}>
+                      {asm.title} - {asm.className} ({asm.date})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
-          <div className="space-y-4">
-            {data.assessments.map(asm => (
-              <div key={asm.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
-                <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">{asm.title}</h4>
-                    <p className="text-slate-500 text-xs">Lớp: {asm.className} • Ngày thi: {asm.date}</p>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full bg-red-50 text-red-700 font-bold text-xs">
-                    {asm.scaleType}
-                  </span>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-50 text-slate-600 font-bold">
-                      <tr>
-                        <th className="py-2 px-3">Học sinh</th>
-                        <th className="py-2 px-3 text-center">Nghe</th>
-                        <th className="py-2 px-3 text-center">Nói</th>
-                        <th className="py-2 px-3 text-center">Đọc</th>
-                        <th className="py-2 px-3 text-center">Viết</th>
-                        <th className="py-2 px-3 text-center">Ngữ pháp</th>
-                        <th className="py-2 px-3 text-center text-red-700">Tổng điểm</th>
-                        <th className="py-2 px-3">Nhận xét</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {asm.scores.map(sc => (
-                        <tr key={sc.studentId}>
-                          <td className="py-2 px-3 font-bold text-slate-900">{sc.studentName}</td>
-                          <td className="py-2 px-3 text-center">{sc.listening}</td>
-                          <td className="py-2 px-3 text-center">{sc.speaking}</td>
-                          <td className="py-2 px-3 text-center">{sc.reading}</td>
-                          <td className="py-2 px-3 text-center">{sc.writing}</td>
-                          <td className="py-2 px-3 text-center">{sc.grammar}</td>
-                          <td className="py-2 px-3 text-center font-black text-red-600">{sc.totalScore}</td>
-                          <td className="py-2 px-3 text-slate-600 italic">{sc.teacherFeedback}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+          {/* Assessment List */}
+          <div className="space-y-5">
+            {filteredPerformanceAssessments.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
+                <Award className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                <p className="font-semibold text-slate-600 text-sm">Không có dữ liệu bài kiểm tra</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Chưa có bài thi nào phù hợp với bộ lọc lớp học hoặc tháng đã chọn.
+                </p>
               </div>
-            ))}
+            ) : (
+              filteredPerformanceAssessments.map(asm => {
+                const components = getEffectiveComponents(asm);
+                const scores = asm.scores || [];
+                const totalStudents = scores.length;
+                const participatingCount = scores.filter(s => s.participationStatus !== 'absent').length;
+                const absentCount = totalStudents - participatingCount;
+
+                return (
+                  <div key={asm.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
+                    {/* Header */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 border-b border-slate-100 pb-3">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-bold text-slate-900 text-sm">{asm.title}</h4>
+                          <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-bold text-[10px] border border-red-100">
+                            {asm.examType || 'Bài thi'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium text-[10px]">
+                            {asm.scaleType}
+                          </span>
+                        </div>
+                        <p className="text-slate-500 text-xs mt-1">
+                          Lớp: <span className="font-semibold text-slate-700">{asm.className}</span> • 
+                          Ngày thi: <span className="font-semibold text-slate-700">{asm.date}</span>
+                          {asm.month && <span> • Tháng: <span className="font-semibold text-slate-700">{asm.month}/{asm.year || ''}</span></span>}
+                          {asm.evaluatedBy && <span> • Đánh giá: <span className="font-semibold text-slate-700">{asm.evaluatedBy}</span></span>}
+                          <span> • Sĩ số: <span className="font-semibold text-slate-700">{totalStudents}</span> ({participatingCount} tham gia, {absentCount} vắng)</span>
+                        </p>
+                        {asm.notes && (
+                          <p className="text-[11px] text-slate-400 italic mt-0.5">Ghi chú: {asm.notes}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-50 text-slate-600 font-bold border-y border-slate-200/80">
+                          <tr>
+                            <th className="py-2.5 px-3 w-10 text-center">STT</th>
+                            <th className="py-2.5 px-3">Học sinh</th>
+                            <th className="py-2.5 px-3 text-center">Trạng thái</th>
+                            {components.map(comp => (
+                              <th
+                                key={comp}
+                                className={`py-2.5 px-3 text-center ${
+                                  comp === 'overall_score'
+                                    ? 'text-red-700 bg-red-50/50 font-black'
+                                    : ''
+                                }`}
+                              >
+                                {ASSESSMENT_COMPONENT_INFO[comp]?.short || comp}
+                              </th>
+                            ))}
+                            {asm.scaleType === 'cambridge-shields' && (
+                              <th className="py-2.5 px-3 text-center">Khiên</th>
+                            )}
+                            <th className="py-2.5 px-3">Nhận xét</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {scores.map((sc, idx) => {
+                            const isAbsent = sc.participationStatus === 'absent';
+                            return (
+                              <tr key={sc.studentId || idx} className={isAbsent ? 'bg-amber-50/20' : 'hover:bg-slate-50/50'}>
+                                <td className="py-2 px-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                                <td className="py-2 px-3 font-bold text-slate-900">{sc.studentName}</td>
+                                <td className="py-2 px-3 text-center">
+                                  {isAbsent ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                                      Vắng thi
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                      Tham gia
+                                    </span>
+                                  )}
+                                </td>
+                                {components.map(comp => {
+                                  const val = getStudentComponentScore(sc, comp);
+                                  return (
+                                    <td
+                                      key={comp}
+                                      className={`py-2 px-3 text-center ${
+                                        comp === 'overall_score'
+                                          ? 'font-black text-red-600'
+                                          : 'text-slate-700 font-medium'
+                                      }`}
+                                    >
+                                      {isAbsent ? (
+                                        <span className="text-slate-300 font-normal">—</span>
+                                      ) : val !== undefined && val !== null ? (
+                                        val
+                                      ) : (
+                                        <span className="text-slate-300">—</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                {asm.scaleType === 'cambridge-shields' && (
+                                  <td className="py-2 px-3 text-center font-bold text-amber-600">
+                                    {isAbsent ? '—' : sc.shields ? `🛡️ ${sc.shields}/5` : '—'}
+                                  </td>
+                                )}
+                                <td className="py-2 px-3 text-slate-600 italic text-[11px]">
+                                  {sc.teacherFeedback || '—'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        {/* Class Average Footer */}
+                        <tfoot className="bg-slate-100/80 font-bold border-t-2 border-slate-300 text-slate-800">
+                          <tr>
+                            <td colSpan={3} className="py-2.5 px-3 text-right">
+                              <span className="text-xs uppercase tracking-wider text-slate-600">
+                                Điểm trung bình lớp:
+                              </span>
+                            </td>
+                            {components.map(comp => {
+                              const { avg, count } = calculateClassAverage(scores, comp);
+                              return (
+                                <td
+                                  key={comp}
+                                  className={`py-2.5 px-3 text-center font-bold ${
+                                    comp === 'overall_score' ? 'text-red-700 bg-red-100/40 font-black' : 'text-slate-900'
+                                  }`}
+                                >
+                                  {avg !== null ? (
+                                    <div>
+                                      <span>{avg}</span>
+                                      <span className="block text-[9px] font-normal text-slate-500">
+                                        (N={count})
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-400 font-normal">—</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            {asm.scaleType === 'cambridge-shields' && (
+                              <td className="py-2.5 px-3 text-center text-slate-400 font-normal">—</td>
+                            )}
+                            <td className="py-2.5 px-3 text-slate-400 font-normal text-[11px]">
+                              {participatingCount}/{totalStudents} học sinh tham gia
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}
