@@ -56,7 +56,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
 }) => {
   const { currentUser } = useAuth();
-  const role = currentUser.role;
+  const rawRole = String(currentUser?.role || '').toLowerCase().trim().replace(/[\s-]/g, '_');
+  const role: 'admin' | 'academic_manager' | 'teacher' | 'teaching_assistant' =
+    rawRole === 'admin' || rawRole.includes('admin')
+      ? 'admin'
+      : rawRole === 'academic_manager' || rawRole.includes('academic') || rawRole === 'academicmanager'
+      ? 'academic_manager'
+      : rawRole === 'teaching_assistant' || rawRole === 'teachingassistant' || rawRole === 'assistant' || rawRole === 'ta'
+      ? 'teaching_assistant'
+      : 'teacher';
 
   interface MenuItem {
     id: NavigationTab;
