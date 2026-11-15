@@ -22,7 +22,16 @@ import {
   MakeupClassSession,
   IncompleteReportRecord,
   LessonReportLockAuditEntry,
-  StudentLessonReportEntry
+  StudentLessonReportEntry,
+  CourseDurationRecord,
+  DurationMode,
+  CourseStatus,
+  ExtensionPolicy,
+  CourseHoliday,
+  CourseMakeupSession,
+  HolidayType,
+  CourseDurationHistory,
+  CourseCalculationResult
 } from '../types';
 import {
   loadInitialStorage,
@@ -165,6 +174,27 @@ interface DataContextType {
   addMakeupClass?: (session: Omit<MakeupClassSession, 'id'>) => { success: boolean; error?: string };
   deleteMakeupClass?: (makeupId: string) => { success: boolean; error?: string };
   resolveIncompleteReport?: (incompleteId: string) => void;
+
+  // Course Duration Module
+  calculateCourseCompletionDate?: (params: {
+    startDate: string;
+    durationMode: DurationMode;
+    durationValue: number;
+    classId?: string;
+    extensionPolicy?: ExtensionPolicy;
+  }) => CourseCalculationResult;
+  addCourseDuration?: (course: Omit<CourseDurationRecord, 'id'>) => { success: boolean; course?: CourseDurationRecord; error?: string };
+  updateCourseDuration?: (id: string, updates: Partial<CourseDurationRecord>, reason?: string) => { success: boolean; error?: string };
+  deleteCourseDuration?: (id: string) => { success: boolean; error?: string };
+  recalculateCourseDates?: (courseId: string, reason: string) => { success: boolean; updatedDate?: string; error?: string };
+  recalculateAllCourses?: () => { success: boolean; updatedCount: number };
+  addCourseHoliday?: (holiday: Omit<CourseHoliday, 'id'>) => CourseHoliday;
+  updateCourseHoliday?: (id: string, updates: Partial<CourseHoliday>) => void;
+  deleteCourseHoliday?: (id: string) => void;
+  addCourseMakeup?: (makeup: Omit<CourseMakeupSession, 'id'>) => CourseMakeupSession;
+  updateCourseMakeup?: (id: string, updates: Partial<CourseMakeupSession>) => void;
+  deleteCourseMakeup?: (id: string) => void;
+  getCourseHistory?: (courseId: string) => CourseDurationHistory[];
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -2034,6 +2064,307 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // ==========================================
+  // COURSE DURATION ENGINE IMPLEMENTATION
+  // ==========================================
+
+  const calculateCourseCompletionDate = (params: {
+    startDate: string;
+    durationMode: DurationMode;
+    durationValue: number;
+    classId?: string;
+    extensionPolicy?: ExtensionPolicy;
+  }): CourseCalculationResult => {
+    const { startDate, durationMode, durationValue, classId, extensionPolicy = 'scheduled_holidays' } = params;
+
+    const start = new Date(startDate || new Date().toISOString().slice(0, 10));
+    start.setHours(0, 0, 0, 0);
+
+    const holidays = (data.courseHolidays || []).filter(h => h.affectsScheduledLessons);
+    const isHoliday = (d: Date) => {
+      const iso = d.toISOString().slice(0, 10);
+      return holidays.some(h => iso >= h.startDate && iso <= h.endDate);
+    };
+
+    const targetClass = classId ? data.classes.find(c => c.id === classId) : null;
+    const timetables = classId ? data.timetable.filter(t => t.classId === classId) : [];
+    const scheduleDaysSet = new Set<number>();
+
+    if (timetables.length > 0) {
+      timetables.forEach(t => scheduleDaysSet.add(t.dayOfWeek));
+    } else if (targetClass?.scheduleDays) {
+      if (/thứ 2|thứ hai|t2|mon/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(1);
+      if (/thứ 3|thứ ba|t3|tue/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(2);
+      if (/thứ 4|thứ tư|t4|wed/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(3);
+      if (/thứ 5|thứ năm|t5|thu/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(4);
+      if (/thứ 6|thứ sáu|t6|fri/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(5);
+      if (/thứ 7|thứ bảy|t7|sat/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(6);
+      if (/chủ nhật|cn|sun/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(7);
+    }
+
+    // Default to Tue, Thu (2 sessions/week) if no specific class schedule found
+    if (scheduleDaysSet.size === 0) {
+      scheduleDaysSet.add(2);
+      scheduleDaysSet.add(4);
+    }
+
+    const isClassDay = (d: Date) => {
+      const jsDay = d.getDay();
+      const appDay = jsDay === 0 ? 7 : jsDay;
+      return scheduleDaysSet.has(appDay);
+    };
+
+    let currentDate = new Date(start);
+    let scheduledSessionsCount = 0;
+    let holidaysEncounteredCount = 0;
+    const breakdownDates: { date: string; type: string; note: string }[] = [];
+
+    if (durationMode === 'learning_sessions') {
+      const targetSessions = Number(durationValue) || 48;
+
+      while (scheduledSessionsCount < targetSessions) {
+        const iso = currentDate.toISOString().slice(0, 10);
+
+        if (isClassDay(currentDate)) {
+          if (extensionPolicy !== 'none' && isHoliday(currentDate)) {
+            holidaysEncounteredCount++;
+            breakdownDates.push({
+              date: iso,
+              type: 'holiday_skipped',
+              note: 'Trùng ngày nghỉ lễ (Buổi học được tự động gia hạn bù)'
+            });
+          } else {
+            scheduledSessionsCount++;
+            breakdownDates.push({
+              date: iso,
+              type: 'regular',
+              note: `Buổi học số ${scheduledSessionsCount}`
+            });
+          }
+        }
+
+        if (scheduledSessionsCount < targetSessions) {
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+      }
+    } else if (durationMode === 'months') {
+      const targetMonths = Number(durationValue) || 6;
+      currentDate.setMonth(currentDate.getMonth() + targetMonths);
+
+      // Check holidays encountered during this month span
+      let checkDate = new Date(start);
+      while (checkDate <= currentDate) {
+        if (isClassDay(checkDate)) {
+          if (isHoliday(checkDate)) {
+            holidaysEncounteredCount++;
+            breakdownDates.push({
+              date: checkDate.toISOString().slice(0, 10),
+              type: 'holiday_skipped',
+              note: 'Nghỉ lễ trong kỳ học'
+            });
+          } else {
+            scheduledSessionsCount++;
+          }
+        }
+        checkDate.setDate(checkDate.getDate() + 1);
+      }
+
+      // Extension policy by holiday days
+      if (extensionPolicy === 'scheduled_holidays' && holidaysEncounteredCount > 0) {
+        const addedDays = Math.ceil(holidaysEncounteredCount * 3.5);
+        currentDate.setDate(currentDate.getDate() + addedDays);
+      }
+    } else {
+      const targetDays = Number(durationValue) || 60;
+      currentDate.setDate(currentDate.getDate() + targetDays);
+      scheduledSessionsCount = Math.round(targetDays / 3.5);
+    }
+
+    const expectedDateStr = currentDate.toISOString().slice(0, 10);
+    const totalDaysSpan = Math.max(1, Math.round((currentDate.getTime() - start.getTime()) / (1000 * 3600 * 24)));
+
+    const makeupsForClass = classId
+      ? (data.courseMakeups || []).filter(m => m.classId === classId && m.status === 'completed').length
+      : 0;
+
+    const explanation = `Khóa học bắt đầu từ ${startDate.split('-').reverse().join('/')}, kéo dài ${durationValue} ${
+      durationMode === 'months' ? 'tháng lịch' : durationMode === 'learning_sessions' ? 'buổi học thực tế' : 'ngày'
+    }. Dự kiến hoàn thành ngày ${expectedDateStr.split('-').reverse().join('/')} (tổng ${totalDaysSpan} ngày lịch, ${scheduledSessionsCount} buổi học đạt chuẩn${
+      holidaysEncounteredCount > 0 ? `, đã tính bù ${holidaysEncounteredCount} buổi nghỉ lễ` : ''
+    }).`;
+
+    return {
+      expectedCompletionDate: expectedDateStr,
+      totalDaysSpan,
+      explanation,
+      scheduledSessionsCount,
+      holidaysEncounteredCount,
+      makeupsCount: makeupsForClass,
+      breakdownDates
+    };
+  };
+
+  const addCourseDuration = (courseData: Omit<CourseDurationRecord, 'id'>) => {
+    const newId = `CD-${Date.now().toString().slice(-6)}`;
+    const newCourse: CourseDurationRecord = {
+      ...courseData,
+      id: newId,
+      remainingSessions: Math.max(0, courseData.requiredSessions - courseData.completedSessions)
+    };
+
+    setData(prev => ({
+      ...prev,
+      courseDurations: [newCourse, ...(prev.courseDurations || [])]
+    }));
+
+    addActivityLog('Thêm khóa học', `Tạo theo dõi thời gian khóa học ${newCourse.courseName}`);
+    queueKeysForCloudSync(['courseDurations']);
+    return { success: true, course: newCourse };
+  };
+
+  const updateCourseDuration = (id: string, updates: Partial<CourseDurationRecord>, reason?: string) => {
+    const existing = (data.courseDurations || []).find(c => c.id === id);
+    if (!existing) return { success: false, error: 'Không tìm thấy khóa học!' };
+
+    const updated: CourseDurationRecord = {
+      ...existing,
+      ...updates,
+      remainingSessions: updates.requiredSessions !== undefined && updates.completedSessions !== undefined
+        ? Math.max(0, updates.requiredSessions - updates.completedSessions)
+        : existing.remainingSessions
+    };
+
+    // Record audit trail if expected date changed
+    const historyEntries: CourseDurationHistory[] = [];
+    if (updates.currentExpectedCompletionDate && updates.currentExpectedCompletionDate !== existing.currentExpectedCompletionDate) {
+      historyEntries.push({
+        id: `HIST-${Date.now()}`,
+        courseDurationId: id,
+        previousExpectedCompletionDate: existing.currentExpectedCompletionDate,
+        newExpectedCompletionDate: updates.currentExpectedCompletionDate,
+        reason: reason || 'Cập nhật lại ngày hoàn thành khóa học',
+        changedBy: currentUser?.name || 'Quản trị viên',
+        changedAt: new Date().toLocaleString('vi-VN')
+      });
+    }
+
+    setData(prev => ({
+      ...prev,
+      courseDurations: (prev.courseDurations || []).map(c => (c.id === id ? updated : c)),
+      courseDurationHistory: [...historyEntries, ...(prev.courseDurationHistory || [])]
+    }));
+
+    addActivityLog('Cập nhật khóa học', `Cập nhật thông số khóa học ${existing.courseName}`);
+    queueKeysForCloudSync(['courseDurations', 'courseDurationHistory']);
+    return { success: true };
+  };
+
+  const deleteCourseDuration = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      courseDurations: (prev.courseDurations || []).filter(c => c.id !== id),
+      courseDurationHistory: (prev.courseDurationHistory || []).filter(h => h.courseDurationId !== id)
+    }));
+    addActivityLog('Xóa khóa học', `Đã xóa bản ghi thời gian khóa học ${id}`);
+    queueKeysForCloudSync(['courseDurations', 'courseDurationHistory']);
+    return { success: true };
+  };
+
+  const recalculateCourseDates = (courseId: string, reason: string) => {
+    const course = (data.courseDurations || []).find(c => c.id === courseId);
+    if (!course) return { success: false, error: 'Không tìm thấy khóa học!' };
+
+    const calc = calculateCourseCompletionDate({
+      startDate: course.courseStartDate,
+      durationMode: course.durationMode,
+      durationValue: course.durationValue,
+      classId: course.classId,
+      extensionPolicy: course.extensionPolicy
+    });
+
+    updateCourseDuration(
+      courseId,
+      {
+        currentExpectedCompletionDate: calc.expectedCompletionDate,
+        calculationExplanation: calc.explanation
+      },
+      reason
+    );
+
+    return { success: true, updatedDate: calc.expectedCompletionDate };
+  };
+
+  const recalculateAllCourses = () => {
+    let count = 0;
+    (data.courseDurations || []).forEach(course => {
+      if (course.status !== 'completed') {
+        recalculateCourseDates(course.id, 'Tự động tính toán lại đồng loạt toàn trung tâm');
+        count++;
+      }
+    });
+    return { success: true, updatedCount: count };
+  };
+
+  const addCourseHoliday = (holidayData: Omit<CourseHoliday, 'id'>) => {
+    const newId = `HOL-${Date.now().toString().slice(-4)}`;
+    const newHoliday: CourseHoliday = { ...holidayData, id: newId };
+    setData(prev => ({
+      ...prev,
+      courseHolidays: [...(prev.courseHolidays || []), newHoliday]
+    }));
+    addActivityLog('Thêm ngày nghỉ', `Thêm ngày nghỉ lễ: ${newHoliday.holidayName}`);
+    queueKeysForCloudSync(['courseHolidays']);
+    return newHoliday;
+  };
+
+  const updateCourseHoliday = (id: string, updates: Partial<CourseHoliday>) => {
+    setData(prev => ({
+      ...prev,
+      courseHolidays: (prev.courseHolidays || []).map(h => (h.id === id ? { ...h, ...updates } : h))
+    }));
+    queueKeysForCloudSync(['courseHolidays']);
+  };
+
+  const deleteCourseHoliday = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      courseHolidays: (prev.courseHolidays || []).filter(h => h.id !== id)
+    }));
+    queueKeysForCloudSync(['courseHolidays']);
+  };
+
+  const addCourseMakeup = (makeupData: Omit<CourseMakeupSession, 'id'>) => {
+    const newId = `MKP-${Date.now().toString().slice(-4)}`;
+    const newMakeup: CourseMakeupSession = { ...makeupData, id: newId };
+    setData(prev => ({
+      ...prev,
+      courseMakeups: [...(prev.courseMakeups || []), newMakeup]
+    }));
+    addActivityLog('Thêm học bù', `Thêm lịch học bù cho lớp ${newMakeup.className} ngày ${newMakeup.makeupDate}`);
+    queueKeysForCloudSync(['courseMakeups']);
+    return newMakeup;
+  };
+
+  const updateCourseMakeup = (id: string, updates: Partial<CourseMakeupSession>) => {
+    setData(prev => ({
+      ...prev,
+      courseMakeups: (prev.courseMakeups || []).map(m => (m.id === id ? { ...m, ...updates } : m))
+    }));
+    queueKeysForCloudSync(['courseMakeups']);
+  };
+
+  const deleteCourseMakeup = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      courseMakeups: (prev.courseMakeups || []).filter(m => m.id !== id)
+    }));
+    queueKeysForCloudSync(['courseMakeups']);
+  };
+
+  const getCourseHistory = (courseId: string): CourseDurationHistory[] => {
+    return (data.courseDurationHistory || []).filter(h => h.courseDurationId === courseId);
+  };
+
   return (
     <DataContext.Provider
       value={{
@@ -2094,7 +2425,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toggleReportLock,
         addMakeupClass,
         deleteMakeupClass,
-        resolveIncompleteReport
+        resolveIncompleteReport,
+        calculateCourseCompletionDate,
+        addCourseDuration,
+        updateCourseDuration,
+        deleteCourseDuration,
+        recalculateCourseDates,
+        recalculateAllCourses,
+        addCourseHoliday,
+        updateCourseHoliday,
+        deleteCourseHoliday,
+        addCourseMakeup,
+        updateCourseMakeup,
+        deleteCourseMakeup,
+        getCourseHistory
       }}
     >
       {children}
