@@ -1150,25 +1150,58 @@ export function exportAttendanceReportToExcel(attendance: AttendanceRecord[]): v
 export function exportAssessmentReportToExcel(assessments: AssessmentRecord[]): void {
   const flatData: any[] = [];
   assessments.forEach(asm => {
+    const comps = asm.selectedComponents || ['listening', 'speaking', 'reading', 'writing', 'language_focus', 'overall_score'];
+    const hasRW = comps.includes('reading_and_writing');
+    const hasR = comps.includes('reading');
+    const hasW = comps.includes('writing');
+    const hasLF = comps.includes('language_focus');
+    const hasPhonetics = comps.includes('phonetics');
+    const hasOverall = comps.includes('overall_score');
+
     asm.scores.forEach((sc, idx) => {
-      flatData.push({
+      const isAbsent = sc.participationStatus === 'absent';
+      const row: Record<string, any> = {
         'STT': idx + 1,
         'Kỳ thi': asm.title,
         'Mã lớp': asm.classId,
         'Tên lớp': asm.className,
+        'Tháng': asm.month ? `Tháng ${asm.month}/${asm.year || ''}` : '',
         'Ngày kiểm tra': asm.date,
         'Mã học sinh': sc.studentId,
         'Họ tên học sinh': sc.studentName,
-        'Nghe (Listening)': sc.listening,
-        'Nói (Speaking)': sc.speaking,
-        'Đọc (Reading)': sc.reading,
-        'Viết (Writing)': sc.writing,
-        'Ngữ pháp (Grammar)': sc.grammar,
-        'Tổng điểm': sc.totalScore,
-        'Số Khiên (nếu có)': sc.shields || '-',
-        'Xếp loại': sc.status === 'excellent' ? 'Xuất sắc' : sc.status === 'good' ? 'Giỏi' : sc.status === 'pass' ? 'Đạt' : 'Cần cố gắng',
-        'Nhận xét của GV': sc.teacherFeedback
-      });
+        'Trạng thái': isAbsent ? 'Vắng thi' : 'Tham gia'
+      };
+
+      if (comps.includes('listening')) {
+        row['Nghe (Listening)'] = isAbsent ? 'Vắng' : (sc.listening ?? '—');
+      }
+      if (comps.includes('speaking')) {
+        row['Nói (Speaking)'] = isAbsent ? 'Vắng' : (sc.speaking ?? '—');
+      }
+      if (hasRW) {
+        row['Đọc & Viết (Reading & Writing)'] = isAbsent ? 'Vắng' : (sc.readingAndWriting ?? '—');
+      }
+      if (hasR) {
+        row['Đọc (Reading)'] = isAbsent ? 'Vắng' : (sc.reading ?? '—');
+      }
+      if (hasW) {
+        row['Viết (Writing)'] = isAbsent ? 'Vắng' : (sc.writing ?? '—');
+      }
+      if (hasLF) {
+        row['Language Focus (Ngữ pháp)'] = isAbsent ? 'Vắng' : (sc.languageFocus ?? sc.grammar ?? '—');
+      }
+      if (hasPhonetics) {
+        row['Phonetics (Phát âm)'] = isAbsent ? 'Vắng' : (sc.phonetics ?? '—');
+      }
+      if (hasOverall) {
+        row['Điểm tổng kết (Overall Score)'] = isAbsent ? 'Vắng' : (sc.overallScore ?? sc.totalScore ?? '—');
+      }
+
+      row['Số Khiên (nếu có)'] = sc.shields || '—';
+      row['Xếp loại'] = isAbsent ? 'Vắng thi' : (sc.status === 'excellent' ? 'Xuất sắc' : sc.status === 'good' ? 'Giỏi' : sc.status === 'pass' ? 'Đạt' : 'Cần cố gắng');
+      row['Nhận xét của GV'] = sc.teacherFeedback || '';
+
+      flatData.push(row);
     });
   });
 
