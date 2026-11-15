@@ -198,18 +198,43 @@ export interface AttendanceRecord {
   takenBy: string;
 }
 
+export type AssessmentComponentKey =
+  | 'listening'
+  | 'speaking'
+  | 'reading_and_writing'
+  | 'reading'
+  | 'writing'
+  | 'language_focus'
+  | 'phonetics'
+  | 'overall_score';
+
+export type AssessmentType =
+  | 'Monthly'
+  | 'Midterm'
+  | 'Final'
+  | 'Periodic'
+  | 'Speaking Check'
+  | 'Other';
+
+export type ParticipationStatus = 'participated' | 'absent';
+
 export interface StudentScoreEntry {
   studentId: string;
   studentName: string;
-  listening: number;
-  speaking: number;
-  reading: number;
-  writing: number;
-  grammar: number;
-  totalScore: number;
+  participationStatus?: ParticipationStatus; // 'participated' (default) | 'absent'
+  listening?: number | null;
+  speaking?: number | null;
+  readingAndWriting?: number | null;
+  reading?: number | null;
+  writing?: number | null;
+  languageFocus?: number | null;
+  phonetics?: number | null;
+  overallScore?: number | null; // MANUALLY ENTERED, never auto-calculated
+  grammar?: number; // Legacy alias for language_focus
+  totalScore?: number; // Legacy alias for overallScore
   shields?: number; // 1-5 shields for Cambridge Young Learners
-  teacherFeedback: string;
-  status: 'excellent' | 'good' | 'pass' | 'needs_improvement';
+  teacherFeedback?: string;
+  status?: 'excellent' | 'good' | 'pass' | 'needs_improvement';
 }
 
 export interface AssessmentRecord {
@@ -217,13 +242,20 @@ export interface AssessmentRecord {
   classId: string;
   className: string;
   title: string;
-  examType: 'Midterm' | 'Final' | 'Monthly' | 'Speaking Check';
+  examType: AssessmentType | string;
   date: string;
+  month?: number; // 1 - 12
+  year?: number; // e.g. 2026
   scaleType: '10-point' | 'cambridge-shields' | 'percentage';
   maxScore: number;
+  selectedComponents?: AssessmentComponentKey[];
+  notes?: string;
   scores: StudentScoreEntry[];
+  classAverages?: Record<string, number | null>;
   evaluatedBy: string;
   reviewedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface LessonPlanReport {
