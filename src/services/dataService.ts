@@ -246,8 +246,10 @@ export function loadInitialStorage(): AppDataStore {
     console.error('Failed to parse localStorage data', err);
   }
 
-  // Check if session is authenticated
-  const isAuth = typeof localStorage !== 'undefined' && localStorage.getItem('leego_auth_status_v1') === 'true';
+  // Check if session is authenticated (sessionStorage preferred, fallback to legacy check)
+  const isAuth =
+    (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('leego_auth_status_v1') === 'true') ||
+    (typeof localStorage !== 'undefined' && localStorage.getItem('leego_auth_status_v1') === 'true');
   if (isAuth) {
     // Authenticated user on a clean computer: do NOT initialize with fake demo data!
     return normalizeAppDataStore({
