@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Users,
   BookOpen,
@@ -29,7 +29,20 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   const { currentUser } = useAuth();
   const { data } = useData();
-  const role = currentUser.role;
+
+  // Normalize role
+  const rawRole = String(currentUser?.role || '').toLowerCase().trim().replace(/[\s-]/g, '_');
+  const role: 'admin' | 'academic_manager' | 'teacher' | 'teaching_assistant' =
+    rawRole === 'admin' || rawRole.includes('admin')
+      ? 'admin'
+      : rawRole === 'academic_manager' || rawRole.includes('academic') || rawRole === 'academicmanager'
+      ? 'academic_manager'
+      : rawRole === 'teaching_assistant' || rawRole === 'teachingassistant' || rawRole === 'assistant' || rawRole === 'ta'
+      ? 'teaching_assistant'
+      : 'teacher';
+
+  const isAcademicManager = role === 'academic_manager';
+  const isAuthorizedForAssessments = role === 'academic_manager' || role === 'teacher';
 
   const [overviewDate, setOverviewDate] = useState<string>(() => {
     const d = new Date();
@@ -99,6 +112,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
     return String(lp.teacherId).trim() === staff.staffId && lp.status === 'submitted';
   });
 
+  // Filter assessments visible to current staff
+  const teacherClassIds = useMemo(() => new Set(staffClasses.map(c => String(c.id).trim())), [staffClasses]);
+  const visibleAssessments = useMemo(() => {
+    if (isTeacher) {
+      return data.assessments.filter(a => teacherClassIds.has(String(a.classId).trim()));
+    }
+    return data.assessments;
+  }, [data.assessments, isTeacher, teacherClassIds]);
+
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
@@ -121,22 +143,56 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            {isStaff ? (
+          <div className="flex items-center gap-2 flex-wrap">
+            {isTeacher ? (
+              <>
+                <button
+                  onClick={() => onNavigate('attendance')}
+                  className="px-3.5 py-2.5 bg-white text-red-700 hover:bg-red-50 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  <ClipboardCheck className="w-4 h-4 text-red-600" />
+                  <span>Điểm danh lớp</span>
+                </button>
+                <button
+                  onClick={() => onNavigate('assessments')}
+                  className="px-3.5 py-2.5 bg-red-900/40 hover:bg-red-900/60 text-white border border-white/20 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  <Award className="w-4 h-4 text-amber-300" />
+                  <span>Đánh giá & Nhập điểm</span>
+                </button>
+              </>
+            ) : isTA ? (
               <button
                 onClick={() => onNavigate('attendance')}
                 className="px-4 py-2.5 bg-white text-red-700 hover:bg-red-50 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
               >
                 <ClipboardCheck className="w-4 h-4 text-red-600" />
-                Điểm danh lớp ngay
+                <span>Điểm danh lớp ngay</span>
               </button>
+            ) : isAcademicManager ? (
+              <>
+                <button
+                  onClick={() => onNavigate('classes')}
+                  className="px-3.5 py-2.5 bg-white text-red-700 hover:bg-red-50 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  <BookOpen className="w-4 h-4 text-red-600" />
+                  <span>Quản lý lớp học</span>
+                </button>
+                <button
+                  onClick={() => onNavigate('assessments')}
+                  className="px-3.5 py-2.5 bg-red-900/40 hover:bg-red-900/60 text-white border border-white/20 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  <Award className="w-4 h-4 text-amber-300" />
+                  <span>Đánh giá học thuật</span>
+                </button>
+              </>
             ) : (
               <button
                 onClick={() => onNavigate('classes')}
                 className="px-4 py-2.5 bg-white text-red-700 hover:bg-red-50 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
               >
                 <BookOpen className="w-4 h-4 text-red-600" />
-                Quản lý {activeClasses} lớp học
+                <span>Quản lý {activeClasses} lớp học</span>
               </button>
             )}
           </div>
@@ -498,36 +554,67 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
 
         {/* Right Column (1 Col): Academic Highlights & Quick Actions */}
         <div className="space-y-6">
-          {/* Recent Cambridge Assessments */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5">
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Award className="w-5 h-5 text-amber-500" />
-                <h3 className="font-bold text-slate-800 text-sm">Đánh giá & Kết quả</h3>
-              </div>
-              <button
-                onClick={() => onNavigate('assessments')}
-                className="text-xs font-semibold text-red-600 hover:text-red-700"
-              >
-                Xem điểm
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {data.assessments.slice(0, 2).map(asm => (
-                <div key={asm.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs space-y-2">
-                  <div className="font-bold text-slate-800">{asm.title}</div>
-                  <div className="text-[11px] text-slate-500">
-                    Lớp: <span className="font-semibold text-slate-700">{asm.className}</span> • Ngày: {asm.date}
-                  </div>
-                  <div className="text-[11px] text-emerald-700 font-medium flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Đã hoàn thành đánh giá cho {asm.scores.length} học viên
+          {/* Recent Assessments - ONLY visible to Academic Manager and Teacher */}
+          {isAuthorizedForAssessments && (
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <Award className="w-5 h-5 text-amber-500" />
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-sm">Đánh giá & Kết quả</h3>
+                    <p className="text-[11px] text-slate-400">
+                      {isTeacher ? 'Các bài kiểm tra lớp phụ trách' : 'Bài kiểm tra học thuật trung tâm'}
+                    </p>
                   </div>
                 </div>
-              ))}
+                <button
+                  onClick={() => onNavigate('assessments')}
+                  className="px-2.5 py-1 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors flex items-center gap-1"
+                >
+                  <span>Mở bảng điểm</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {visibleAssessments.length === 0 ? (
+                  <div className="text-center py-6 text-slate-400 text-xs">
+                    <p>Chưa có bài kiểm tra nào được tạo.</p>
+                    <button
+                      onClick={() => onNavigate('assessments')}
+                      className="mt-2 text-xs font-bold text-red-600 hover:underline"
+                    >
+                      + Tạo bài đánh giá ngay
+                    </button>
+                  </div>
+                ) : (
+                  visibleAssessments.slice(0, 3).map(asm => (
+                    <div
+                      key={asm.id}
+                      onClick={() => onNavigate('assessments')}
+                      className="p-3 bg-slate-50 hover:bg-red-50/40 rounded-xl border border-slate-100 hover:border-red-200 transition-all text-xs space-y-1.5 cursor-pointer group"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-800 group-hover:text-red-700 transition-colors">
+                          {asm.title}
+                        </span>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100/70 text-red-700">
+                          {asm.examType || 'Định kỳ'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Lớp: <span className="font-semibold text-slate-700">{asm.className}</span> • Ngày: {asm.date}
+                      </div>
+                      <div className="text-[11px] text-emerald-700 font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Đã có điểm: {asm.scores.length} học viên</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Quick Operations shortcuts */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5">
@@ -544,7 +631,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {role !== 'teacher' && (
+              {isAuthorizedForAssessments && (
+                <button
+                  onClick={() => onNavigate('assessments')}
+                  className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-red-50 text-slate-700 hover:text-red-700 border border-slate-200 hover:border-red-200 transition-colors text-xs font-semibold text-left"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Award className="w-4 h-4 text-amber-600" />
+                    <span>Nhập điểm & Đánh giá học tập</span>
+                  </div>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
+
+              {role !== 'teacher' && role !== 'teaching_assistant' && (
                 <button
                   onClick={() => onNavigate('students')}
                   className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-red-50 text-slate-700 hover:text-red-700 border border-slate-200 hover:border-red-200 transition-colors text-xs font-semibold text-left"
@@ -568,7 +668,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {role !== 'teacher' && (
+              {role !== 'teacher' && role !== 'teaching_assistant' && (
                 <button
                   onClick={() => onNavigate('reports')}
                   className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-red-50 text-slate-700 hover:text-red-700 border border-slate-200 hover:border-red-200 transition-colors text-xs font-semibold text-left"
