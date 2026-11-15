@@ -17,7 +17,7 @@ import { AttendanceStatus, StudentAttendanceEntry } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import { exportAttendanceReportToExcel, resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
+import { exportAttendanceReportToExcel, resolveStaffProfile, getAssignedClassesForStaff, canUserViewParentPhone } from '../../services/dataService';
 
 export const AttendanceView: React.FC = () => {
   const { currentUser } = useAuth();
@@ -27,6 +27,7 @@ export const AttendanceView: React.FC = () => {
   const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
   const isTeacher = staff.isTeacher;
   const isTA = staff.isTA;
+  const canViewParentPhone = canUserViewParentPhone(currentUser?.role);
 
   const availableClasses = useMemo(() => {
     return getAssignedClassesForStaff(data.classes, staff);
@@ -295,7 +296,7 @@ export const AttendanceView: React.FC = () => {
                             : entry.studentName}
                         </div>
                         <div className="text-[11px] text-slate-400">
-                          {entry.studentId}{!isTeacher && ` • PH: ${student?.parentPhone}`}
+                          {entry.studentId}{canViewParentPhone && ` • PH: ${student?.parentPhone}`}
                         </div>
                       </td>
                       <td className="py-3 px-4">
