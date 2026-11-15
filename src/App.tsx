@@ -162,12 +162,16 @@ const AppContent: React.FC = () => {
   const role = currentUser.role;
 
   const isTabAllowed = (tab: NavigationTab): boolean => {
+    // Assessments is accessible ONLY to Academic Manager and Teacher (NOT Admin, NOT TA)
+    if (tab === 'assessments') {
+      return role === 'academic_manager' || role === 'teacher';
+    }
     if (role === 'admin') return true;
     if (role === 'academic_manager') {
       return !['users', 'settings'].includes(tab);
     }
     if (role === 'teacher' || role === 'teaching_assistant') {
-      return ['dashboard', 'students', 'classes', 'teaching_schedule', 'timetable', 'attendance', 'assessments', 'lesson_plans', 'lesson_reports'].includes(tab);
+      return ['dashboard', 'students', 'classes', 'teaching_schedule', 'timetable', 'attendance', 'lesson_plans', 'lesson_reports'].includes(tab);
     }
     return false;
   };
