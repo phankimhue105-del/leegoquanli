@@ -417,4 +417,97 @@ export interface MakeupClassSession {
   notes?: string;
 }
 
+// ==========================================
+// COURSE DURATION MODULE TYPES
+// ==========================================
+
+export type DurationMode = 'months' | 'calendar_days' | 'learning_days' | 'learning_sessions';
+
+export type CourseStatus = 'not_started' | 'in_progress' | 'near_completion' | 'completed' | 'extended' | 'on_hold';
+
+export type ExtensionPolicy = 'none' | 'scheduled_holidays' | 'all_non_study_days' | 'missed_scheduled_lessons' | 'custom';
+
+export type HolidayType = 'tet' | 'national' | 'center' | 'suspension' | 'teacher_absence' | 'other';
+
+export interface CourseHoliday {
+  id: string;
+  holidayName: string;
+  startDate: string;
+  endDate: string;
+  holidayType: HolidayType;
+  reason?: string;
+  affectsScheduledLessons: boolean;
+  notes?: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
+export interface CourseMakeupSession {
+  id: string;
+  classId: string;
+  className?: string;
+  courseDurationId?: string;
+  originalMissedDate?: string;
+  makeupDate: string;
+  time?: string;
+  classroom?: string;
+  teacherId?: string;
+  teacherName?: string;
+  reason?: string;
+  countsTowardCourseProgress: boolean;
+  status: 'scheduled' | 'completed' | 'cancelled';
+  notes?: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
+export interface CourseDurationHistory {
+  id: string;
+  courseDurationId: string;
+  previousExpectedCompletionDate: string;
+  newExpectedCompletionDate: string;
+  reason: string;
+  changedBy: string;
+  changedAt: string;
+  originalStartDate?: string;
+}
+
+export interface CourseDurationRecord {
+  id: string;
+  courseName: string;
+  classId?: string;
+  className?: string;
+  courseBook?: string;
+  teacherId?: string;
+  teacherName?: string;
+  academicProgramId?: string;
+  durationMode: DurationMode;
+  durationValue: number;
+  courseStartDate: string;
+  originalExpectedCompletionDate: string;
+  currentExpectedCompletionDate: string;
+  extensionPolicy: ExtensionPolicy;
+  requiredSessions: number;
+  completedSessions: number;
+  remainingSessions?: number;
+  progressPercentage: number;
+  status: CourseStatus;
+  notes?: string;
+  calculationExplanation?: string;
+  createdAt?: string;
+  createdBy?: string;
+  updatedAt?: string;
+}
+
+export interface CourseCalculationResult {
+  expectedCompletionDate: string;
+  totalDaysSpan: number;
+  explanation: string;
+  scheduledSessionsCount: number;
+  holidaysEncounteredCount: number;
+  makeupsCount: number;
+  breakdownDates: { date: string; type: string; note: string }[];
+}
+
+
 
