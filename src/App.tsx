@@ -11,6 +11,7 @@ import { StudentsView } from './components/views/StudentsView';
 import { ParentsView } from './components/views/ParentsView';
 import { ClassesView } from './components/views/ClassesView';
 import { TeachingScheduleView } from './components/views/TeachingScheduleView';
+import { CourseDurationView } from './components/views/CourseDurationView';
 import { ProgramsView } from './components/views/ProgramsView';
 import { TeachersView } from './components/views/TeachersView';
 import { TeachingAssistantsView } from './components/views/TeachingAssistantsView';
@@ -229,6 +230,7 @@ const AppContent: React.FC = () => {
             {activeTab === 'parents' && <ParentsView />}
             {activeTab === 'classes' && <ClassesView />}
             {activeTab === 'teaching_schedule' && <TeachingScheduleView />}
+            {activeTab === 'course_duration' && <CourseDurationView />}
             {activeTab === 'programs' && <ProgramsView />}
             {activeTab === 'teachers' && <TeachersView />}
             {activeTab === 'assistants' && <TeachingAssistantsView />}
