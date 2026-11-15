@@ -9,6 +9,7 @@ import {
   UserPlus,
   Calendar,
   CalendarDays,
+  CalendarRange,
   ClipboardCheck,
   Award,
   FileText,
@@ -28,6 +29,7 @@ export type NavigationTab =
   | 'parents'
   | 'classes'
   | 'teaching_schedule'
+  | 'course_duration'
   | 'programs'
   | 'teachers'
   | 'assistants'
@@ -102,11 +104,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
     },
     {
-      id: 'programs',
+      id: 'course_duration',
       label: 'Thời lượng khóa học',
       sublabel: 'Course Duration',
+      icon: CalendarRange,
+      allowedRoles: ['admin', 'academic_manager'],
+    },
+    {
+      id: 'programs',
+      label: 'Chương trình học',
+      sublabel: 'Curricula',
       icon: BookMarked,
-      allowedRoles: ['admin'],
+      allowedRoles: ['admin', 'academic_manager'],
     },
     {
       id: 'teachers',
