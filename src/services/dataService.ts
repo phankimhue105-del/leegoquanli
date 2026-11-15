@@ -35,7 +35,11 @@ import {
   IncompleteReportRecord,
   MakeupClassSession,
   LessonReportLockAuditEntry,
-  StudentLessonReportEntry
+  StudentLessonReportEntry,
+  CourseDurationRecord,
+  CourseHoliday,
+  CourseMakeupSession,
+  CourseDurationHistory
 } from '../types';
 import {
   initialStudents,
@@ -52,7 +56,11 @@ import {
   initialSettings,
   initialActivityLogs,
   initialParents,
-  initialTeachingSchedules
+  initialTeachingSchedules,
+  initialCourseHolidays,
+  initialCourseMakeups,
+  initialCourseDurationHistory,
+  initialCourseDurations
 } from '../data/initialData';
 import { APPS_SCRIPT_URL } from './authService';
 
@@ -78,6 +86,10 @@ export interface AppDataStore {
   incompleteReports?: IncompleteReportRecord[];
   makeupSessions?: MakeupClassSession[];
   lessonReportLockAudits?: LessonReportLockAuditEntry[];
+  courseDurations?: CourseDurationRecord[];
+  courseHolidays?: CourseHoliday[];
+  courseMakeups?: CourseMakeupSession[];
+  courseDurationHistory?: CourseDurationHistory[];
 }
 
 export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
@@ -183,7 +195,11 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
     assessments: normAssessments,
     lessonReports: normLessonReports,
     timetable: syncedTimetable,
-    users: normUsers
+    users: normUsers,
+    courseDurations: Array.isArray(store.courseDurations) ? store.courseDurations : [],
+    courseHolidays: Array.isArray(store.courseHolidays) ? store.courseHolidays : [],
+    courseMakeups: Array.isArray(store.courseMakeups) ? store.courseMakeups : [],
+    courseDurationHistory: Array.isArray(store.courseDurationHistory) ? store.courseDurationHistory : []
   };
 }
 
@@ -213,6 +229,10 @@ export function loadInitialStorage(): AppDataStore {
         incompleteReports: Array.isArray(parsed.incompleteReports) ? parsed.incompleteReports : [],
         makeupSessions: Array.isArray(parsed.makeupSessions) ? parsed.makeupSessions : [],
         lessonReportLockAudits: Array.isArray(parsed.lessonReportLockAudits) ? parsed.lessonReportLockAudits : [],
+        courseDurations: Array.isArray(parsed.courseDurations) ? parsed.courseDurations : (initialCourseDurations || []),
+        courseHolidays: Array.isArray(parsed.courseHolidays) ? parsed.courseHolidays : (initialCourseHolidays || []),
+        courseMakeups: Array.isArray(parsed.courseMakeups) ? parsed.courseMakeups : (initialCourseMakeups || []),
+        courseDurationHistory: Array.isArray(parsed.courseDurationHistory) ? parsed.courseDurationHistory : (initialCourseDurationHistory || []),
       });
     }
   } catch (err) {
@@ -243,6 +263,10 @@ export function loadInitialStorage(): AppDataStore {
       incompleteReports: [],
       makeupSessions: [],
       lessonReportLockAudits: [],
+      courseDurations: [],
+      courseHolidays: [],
+      courseMakeups: [],
+      courseDurationHistory: [],
     });
   }
 
@@ -266,6 +290,10 @@ export function loadInitialStorage(): AppDataStore {
     incompleteReports: [],
     makeupSessions: [],
     lessonReportLockAudits: [],
+    courseDurations: initialCourseDurations,
+    courseHolidays: initialCourseHolidays,
+    courseMakeups: initialCourseMakeups,
+    courseDurationHistory: initialCourseDurationHistory,
   });
 
   saveStorage(defaultData);
@@ -296,6 +324,10 @@ export function resetStorage(): AppDataStore {
     settings: initialSettings,
     activityLogs: initialActivityLogs,
     teachingSchedules: initialTeachingSchedules,
+    courseDurations: initialCourseDurations,
+    courseHolidays: initialCourseHolidays,
+    courseMakeups: initialCourseMakeups,
+    courseDurationHistory: initialCourseDurationHistory,
   };
   saveStorage(defaultData);
   return defaultData;
@@ -640,7 +672,7 @@ export function mergeCenterData(
     'students', 'classes', 'teachers', 'teachingAssistants', 'academicManagers', 'programs',
     'timetable', 'attendance', 'assessments', 'lessonPlans', 'users', 'parents',
     'teachingSchedules', 'activityLogs', 'lessonReports', 'incompleteReports', 'makeupSessions',
-    'lessonReportLockAudits'
+    'lessonReportLockAudits', 'courseDurations', 'courseHolidays', 'courseMakeups', 'courseDurationHistory'
   ];
   for (const k of allArrayKeys) {
     if (!Array.isArray((normRemote as any)[k])) {
@@ -1171,6 +1203,69 @@ export function exportTeacherWorkloadToExcel(teachers: Teacher[], classes: Class
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Gio_day_Giao_vien');
   XLSX.writeFile(workbook, `LeeGo_Bao_Cao_Cong_Tac_Giao_Vien_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+/**
+ * Export Course Durations / Class Schedules to Excel (.xlsx)
+ * Required by CourseDurationView.tsx
+ */
+export function exportCourseDurationsToExcel(
+  items: any[],
+  programs?: AcademicProgram[]
+): void {
+  const progMap = new Map((programs || []).map(p => [p.id, p]));
+  const rows = (items || []).map((item, idx) => {
+    const prog = progMap.get(item.courseId || item.programId);
+
+    return {
+      'STT': idx + 1,
+      'Mã lớp': item.id || item.code || '',
+      'Tên lớp học / Khóa học': item.courseName || item.name || item.className || '',
+      'Trình độ / Level': item.level || prog?.level || '',
+      'Chương trình học': item.curriculum || prog?.curriculum || prog?.name || '',
+      'Giáo trình': item.courseBook || item.textbook || prog?.textbook || '',
+      'Ngày bắt đầu': item.courseStartDate || item.startDate || '',
+      'Ngày kết thúc dự kiến': item.currentExpectedCompletionDate || item.endDate || '',
+      'Tổng số buổi': item.requiredSessions || item.totalLessons || prog?.totalLessons || item.duration || '48 buổi',
+      'Buổi đã hoàn thành': item.completedSessions || 0,
+      'Tiến độ': item.progressPercentage ? `${item.progressPercentage}%` : '0%',
+      'Chính sách gia hạn': item.extensionPolicy || 'Mặc định',
+      'Giáo viên phụ trách': item.teacherName || item.teacherId || '',
+      'Trạng thái': item.status === 'in_progress'
+        ? 'Đang diễn ra'
+        : item.status === 'completed'
+        ? 'Đã kết thúc'
+        : item.status === 'near_completion'
+        ? 'Sắp hoàn thành'
+        : item.status === 'extended'
+        ? 'Đã gia hạn'
+        : item.status || 'Đang học',
+      'Ghi chú': item.notes || item.calculationExplanation || ''
+    };
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 6 },  // STT
+    { wch: 14 }, // Mã lớp
+    { wch: 28 }, // Tên lớp học / Khóa học
+    { wch: 18 }, // Level
+    { wch: 24 }, // Chương trình
+    { wch: 24 }, // Giáo trình
+    { wch: 14 }, // Ngày bắt đầu
+    { wch: 18 }, // Ngày kết thúc
+    { wch: 16 }, // Tổng số buổi
+    { wch: 16 }, // Buổi hoàn thành
+    { wch: 12 }, // Tiến độ
+    { wch: 20 }, // Chính sách
+    { wch: 22 }, // Giáo viên
+    { wch: 16 }, // Trạng thái
+    { wch: 32 }, // Ghi chú
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Thoi_luong_khoa_hoc');
+  XLSX.writeFile(workbook, `LeeGo_Thoi_Luong_Khoa_Hoc_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 // Parse Excel file to students
@@ -2601,6 +2696,10 @@ const CATEGORY_DEFINITIONS: Array<{ key: keyof AppDataStore; name: string }> = [
   { key: 'makeupSessions', name: 'Lớp học bù (Makeup Sessions)' },
   { key: 'lessonReportLockAudits', name: 'Nhật ký khóa báo cáo (Lock Audits)' },
   { key: 'activityLogs', name: 'Nhật ký hoạt động (Activity Logs)' },
+  { key: 'courseDurations', name: 'Thời lượng khóa học (Course Durations)' },
+  { key: 'courseHolidays', name: 'Lịch nghỉ lễ (Course Holidays)' },
+  { key: 'courseMakeups', name: 'Lịch học bù khóa học (Course Makeups)' },
+  { key: 'courseDurationHistory', name: 'Lịch sử thay đổi khóa học (Course History)' },
   { key: 'settings', name: 'Cấu hình trung tâm (Settings)' }
 ];
 
