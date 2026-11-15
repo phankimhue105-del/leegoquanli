@@ -95,21 +95,28 @@ export interface AppDataStore {
 export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
   if (!store || typeof store !== 'object') return store;
 
+  const deletedClassIds = new Set<string>([
+    ...(store.settings?.deletedClassIds || []),
+    ...getLocalDeletedClassIds()
+  ]);
+
+  const normClasses = (Array.isArray(store.classes) ? store.classes : [])
+    .filter(c => !deletedClassIds.has(String(c.id ?? '').trim()))
+    .map(c => ({
+      ...c,
+      id: String(c.id ?? '').trim(),
+      teacherId: c.teacherId ? String(c.teacherId).trim() : '',
+      assistantTeacherId: c.assistantTeacherId ? String(c.assistantTeacherId).trim() : undefined,
+      studentIds: Array.from(new Set((c.studentIds || []).map(sid => String(sid).trim()).filter(Boolean)))
+    }));
+
   const normStudents = (Array.isArray(store.students) ? store.students : []).map(s => ({
     ...s,
     id: String(s.id ?? '').trim(),
     fullName: String(s.fullName ?? '').trim(),
     vietnameseName: s.vietnameseName ? String(s.vietnameseName).trim() : '',
     parentPhone: s.parentPhone !== undefined && s.parentPhone !== null ? String(s.parentPhone).trim() : '',
-    classIds: Array.from(new Set((s.classIds || []).map(cid => String(cid).trim()).filter(Boolean)))
-  }));
-
-  const normClasses = (Array.isArray(store.classes) ? store.classes : []).map(c => ({
-    ...c,
-    id: String(c.id ?? '').trim(),
-    teacherId: c.teacherId ? String(c.teacherId).trim() : '',
-    assistantTeacherId: c.assistantTeacherId ? String(c.assistantTeacherId).trim() : undefined,
-    studentIds: Array.from(new Set((c.studentIds || []).map(sid => String(sid).trim()).filter(Boolean)))
+    classIds: Array.from(new Set((s.classIds || []).map(cid => String(cid).trim()).filter(cid => cid && !deletedClassIds.has(cid))))
   }));
 
   const normTeachers = (Array.isArray(store.teachers) ? store.teachers : []).map(t => ({
@@ -544,6 +551,63 @@ function mergeObjectArrayByKey(localArr: any[], cloudArr: any[]): any[] {
   return result;
 }
 
+// Tombstones & creation tracking for reliable deletion synchronization
+const TOMBSTONES_STORAGE_KEY = 'leego_deleted_class_ids_v1';
+
+export function getLocalDeletedClassIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(TOMBSTONES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordLocalDeletedClassId(classId: string): void {
+  if (!classId || typeof localStorage === 'undefined') return;
+  try {
+    const existing = new Set(getLocalDeletedClassIds());
+    existing.add(String(classId).trim());
+    localStorage.setItem(TOMBSTONES_STORAGE_KEY, JSON.stringify(Array.from(existing)));
+  } catch {}
+}
+
+const pendingCreatedClassIds = new Set<string>();
+
+export function registerPendingCreatedClassId(id: string): void {
+  pendingCreatedClassIds.add(String(id).trim());
+}
+
+export function unregisterPendingCreatedClassId(id: string): void {
+  pendingCreatedClassIds.delete(String(id).trim());
+}
+
+export function isClassPendingCreation(id: string): boolean {
+  return pendingCreatedClassIds.has(String(id).trim());
+}
+
+/**
+ * Role-aware check for whether the current user is permitted to view parent phone numbers.
+ * Privacy rule: Parent phone numbers must be visible ONLY to Admin and Academic Manager.
+ * Must be hidden from Teacher and Teaching Assistant.
+ */
+export function canUserViewParentPhone(role?: string): boolean {
+  const norm = String(role || '').toLowerCase().trim().replace(/[\s-]/g, '_');
+  return norm === 'admin' || norm === 'academic_manager' || norm.includes('admin') || norm.includes('academic');
+}
+
+/**
+ * Safely format parent phone number based on role permission.
+ * Returns the actual phone number if permitted (Admin/AM), or empty string if not permitted (Teacher/TA).
+ */
+export function formatParentPhoneForRole(parentPhone: string | undefined | null, role?: string): string {
+  if (!canUserViewParentPhone(role)) {
+    return '';
+  }
+  return parentPhone !== undefined && parentPhone !== null ? String(parentPhone).trim() : '';
+}
+
 function mergeSingleRecordFieldLevel(
   category: keyof AppDataStore,
   localItem: any,
@@ -566,14 +630,18 @@ function mergeSingleRecordFieldLevel(
     const locVal = localItem ? localItem[key] : undefined;
     const cloudVal = cloudItem ? cloudItem[key] : undefined;
 
-    // 1. Array properties: non-destructive union with ID normalization and roster deduplication
+    // 1. Array properties: handle authoritative roster and membership updates without blind union
     if (Array.isArray(locVal) || Array.isArray(cloudVal)) {
       if (key === 'studentIds' || key === 'classIds' || key === 'assignedClassIds') {
-        const locList = Array.isArray(locVal) ? locVal : [];
         const cldList = Array.isArray(cloudVal) ? cloudVal : [];
-        merged[key] = Array.from(
-          new Set([...cldList, ...locList].map(x => String(x ?? '').trim()).filter(Boolean))
-        );
+        const locList = Array.isArray(locVal) ? locVal : [];
+        // When Cloud has the membership/roster array, Cloud is authoritative.
+        // Never blindly union arrays because a union makes removing an item impossible.
+        if (Array.isArray(cloudVal)) {
+          merged[key] = Array.from(new Set(cldList.map(x => String(x ?? '').trim()).filter(Boolean)));
+        } else {
+          merged[key] = Array.from(new Set(locList.map(x => String(x ?? '').trim()).filter(Boolean)));
+        }
         continue;
       }
       if (Array.isArray(locVal) && Array.isArray(cloudVal)) {
@@ -581,12 +649,13 @@ function mergeSingleRecordFieldLevel(
           locVal.every(x => typeof x !== 'object') &&
           cloudVal.every(x => typeof x !== 'object')
         ) {
-          merged[key] = Array.from(new Set([...locVal, ...cloudVal]));
+          // Cloud primitive array is authoritative
+          merged[key] = [...cloudVal];
         } else {
           merged[key] = mergeObjectArrayByKey(locVal, cloudVal);
         }
       } else {
-        merged[key] = Array.isArray(locVal) ? locVal : cloudVal;
+        merged[key] = Array.isArray(cloudVal) ? cloudVal : locVal;
       }
       continue;
     }
@@ -946,7 +1015,17 @@ export function mergeCenterData(
     const mergedList: any[] = [];
     const allIds = Array.from(new Set([...cldMap.keys(), ...locMap.keys()])).filter(Boolean);
 
+    const deletedClassIds = new Set<string>([
+      ...getLocalDeletedClassIds(),
+      ...(local.settings?.deletedClassIds || []),
+      ...(normRemote.settings?.deletedClassIds || [])
+    ]);
+
     for (const id of allIds) {
+      if (cat.key === 'classes' && deletedClassIds.has(id)) {
+        continue;
+      }
+
       const cldItem = cldMap.get(id);
       const locItem = locMap.get(id);
 
@@ -958,6 +1037,19 @@ export function mergeCenterData(
       }
 
       if (locItem && !cldItem) {
+        if (cat.key === 'classes') {
+          // If the class is pending initial upload from a local addClass call, preserve it
+          if (isClassPendingCreation(id)) {
+            mergedList.push(locItem);
+            stats.addedFromLocal++;
+            needsUpload = true;
+          } else {
+            // Stale class from local cache that was deleted in Cloud - purge it
+            recordLocalDeletedClassId(id);
+          }
+          continue;
+        }
+
         // Local has it, cloud does not
         const isUntouchedDemo = baseMap.has(id) && !isRecordModified(locItem, baseMap.get(id));
         if (isUntouchedDemo) {
@@ -1022,6 +1114,12 @@ export function mergeCenterData(
   }
 
   // 6. Merge Center Settings (force demoMode: false for authenticated accounts)
+  const allDeletedClassIds = Array.from(new Set([
+    ...(local.settings?.deletedClassIds || []),
+    ...(normRemote.settings?.deletedClassIds || []),
+    ...getLocalDeletedClassIds()
+  ]));
+
   if (normRemote.settings) {
     const locSettings = local.settings;
     const cldSettings = normRemote.settings;
@@ -1032,11 +1130,13 @@ export function mergeCenterData(
       ...locSettings,
       ...cldSettings,
       classrooms: mergedClassrooms,
+      deletedClassIds: allDeletedClassIds,
       demoMode: !isAuthenticated ? (cldSettings.demoMode ?? locSettings.demoMode) : false
     };
   } else {
     merged.settings = {
       ...local.settings,
+      deletedClassIds: allDeletedClassIds,
       demoMode: !isAuthenticated ? local.settings.demoMode : false
     };
   }
@@ -1095,7 +1195,7 @@ export function resolveConflict(
 
 
 // Excel Export Functions
-export function exportStudentsToExcel(students: Student[], classes: ClassItem[]): void {
+export function exportStudentsToExcel(students: Student[], classes: ClassItem[], includeParentPhone: boolean = true): void {
   const classMap = new Map(classes.map(c => [c.id, c.name]));
   const exportData = students.map((s, idx) => ({
     'STT': idx + 1,
@@ -1109,7 +1209,7 @@ export function exportStudentsToExcel(students: Student[], classes: ClassItem[])
     'Trình độ hiện tại': s.currentLevel,
     'Lớp đang học': s.classIds.map(cid => classMap.get(cid) || cid).join(', '),
     'Họ tên phụ huynh': s.parentName,
-    'SĐT liên hệ': s.parentPhone,
+    'SĐT liên hệ': includeParentPhone ? s.parentPhone : '***',
     'Email phụ huynh': s.parentEmail,
     'Địa chỉ': s.address,
     'Ngày nhập học': s.enrollmentDate,
