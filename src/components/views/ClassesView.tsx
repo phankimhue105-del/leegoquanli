@@ -20,7 +20,7 @@ import { ClassItem, ClassStatus, WeeklyScheduleSlot } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import { getClassWeeklySchedule, formatScheduleTimeSummary, resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
+import { getClassWeeklySchedule, formatScheduleTimeSummary, resolveStaffProfile, getAssignedClassesForStaff, canUserViewParentPhone } from '../../services/dataService';
 
 const WEEKDAY_OPTIONS: { dayOfWeek: number; dayName: string }[] = [
   { dayOfWeek: 1, dayName: 'Thứ 2' },
@@ -59,6 +59,7 @@ export const ClassesView: React.FC = () => {
   const staff = resolveStaffProfile(currentUser, data.teachers, data.teachingAssistants);
   const isTeacher = staff.isTeacher;
   const isTA = staff.isTA;
+  const canViewParentPhone = canUserViewParentPhone(currentUser?.role);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassItem | null>(null);
@@ -571,7 +572,7 @@ export const ClassesView: React.FC = () => {
                             {isTeacher ? (student.vietnameseName?.trim() || student.fullName) : student.fullName} ({student.id})
                           </div>
                           <div className="text-[11px] text-slate-400">
-                            {student.currentLevel} • {student.school}{!isTeacher && ` • PH: ${student.parentPhone}`}
+                            {student.currentLevel} • {student.school}{canViewParentPhone && ` • PH: ${student.parentPhone}`}
                           </div>
                         </div>
                       </div>
@@ -904,7 +905,7 @@ export const ClassesView: React.FC = () => {
                                 </span>
                                 <span className="text-slate-400">({st.id})</span>
                               </div>
-                              {!isTeacher && (
+                              {canViewParentPhone && (
                                 <span className="text-slate-500 font-medium">PH: {st.parentPhone}</span>
                               )}
                             </div>
