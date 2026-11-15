@@ -126,6 +126,7 @@ interface DataContextType {
   // Assessments
   saveAssessment: (assessment: Omit<AssessmentRecord, 'id'> & { id?: string }) => AssessmentRecord;
   updateAssessmentScore: (assessmentId: string, studentScores: StudentScoreEntry[]) => void;
+  deleteAssessment?: (id: string) => { success: boolean; error?: string };
 
   // Lesson Plans
   submitLessonPlan: (plan: Omit<LessonPlanReport, 'id' | 'submittedAt'>) => LessonPlanReport;
@@ -1098,9 +1099,38 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 8. Assessments
   const saveAssessment = (assessmentData: Omit<AssessmentRecord, 'id'> & { id?: string }): AssessmentRecord => {
     const newId = assessmentData.id || `ASM-${Date.now().toString().slice(-6)}`;
+    
+    // Auto-calculate month and year from test date if not explicitly set
+    let parsedMonth = assessmentData.month;
+    let parsedYear = assessmentData.year;
+    if ((!parsedMonth || !parsedYear) && assessmentData.date) {
+      const parts = assessmentData.date.split('-');
+      if (parts.length >= 2) {
+        parsedYear = parsedYear || Number(parts[0]);
+        parsedMonth = parsedMonth || Number(parts[1]);
+      }
+    }
+
+    const normScores = (assessmentData.scores || []).map(sc => ({
+      ...sc,
+      participationStatus: sc.participationStatus || 'participated'
+    }));
+
     const newRecord: AssessmentRecord = {
       ...assessmentData,
-      id: newId
+      id: newId,
+      month: parsedMonth || (new Date().getMonth() + 1),
+      year: parsedYear || new Date().getFullYear(),
+      selectedComponents: assessmentData.selectedComponents || [
+        'listening',
+        'speaking',
+        'reading',
+        'writing',
+        'language_focus',
+        'overall_score'
+      ],
+      scores: normScores,
+      updatedAt: new Date().toISOString()
     };
 
     setData(prev => {
@@ -1122,13 +1152,34 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateAssessmentScore = (assessmentId: string, studentScores: StudentScoreEntry[]) => {
+    const normScores = studentScores.map(sc => ({
+      ...sc,
+      participationStatus: sc.participationStatus || 'participated'
+    }));
+
     setData(prev => ({
       ...prev,
       assessments: prev.assessments.map(a =>
-        a.id === assessmentId ? { ...a, scores: studentScores } : a
+        a.id === assessmentId
+          ? {
+              ...a,
+              scores: normScores,
+              updatedAt: new Date().toISOString()
+            }
+          : a
       )
     }));
     queueKeysForCloudSync(['assessments']);
+  };
+
+  const deleteAssessment = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      assessments: prev.assessments.filter(a => a.id !== id)
+    }));
+    addActivityLog('Xóa bài kiểm tra', `Đã xóa bài đánh giá ${id}`);
+    queueKeysForCloudSync(['assessments']);
+    return { success: true };
   };
 
   // 9. Lesson Plans
@@ -2399,6 +2450,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveAttendance,
         saveAssessment,
         updateAssessmentScore,
+        deleteAssessment,
         submitLessonPlan,
         reviewLessonPlan,
         addUser,
