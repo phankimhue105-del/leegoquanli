@@ -27,7 +27,7 @@ import { Student, StudentStatus } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
-import { exportStudentsToExcel, parseExcelToStudents, resolveStaffProfile, getAssignedClassesForStaff } from '../../services/dataService';
+import { exportStudentsToExcel, parseExcelToStudents, resolveStaffProfile, getAssignedClassesForStaff, canUserViewParentPhone } from '../../services/dataService';
 
 export const StudentsView: React.FC = () => {
   const { currentUser } = useAuth();
@@ -38,6 +38,7 @@ export const StudentsView: React.FC = () => {
   const isTeacher = staff.isTeacher;
   const isTA = staff.isTA;
   const isStaff = isTeacher || isTA;
+  const canViewParentPhone = canUserViewParentPhone(currentUser?.role);
 
   const staffClasses = useMemo(() => {
     return isStaff ? getAssignedClassesForStaff(data.classes, staff) : data.classes;
@@ -71,7 +72,7 @@ export const StudentsView: React.FC = () => {
         const query = searchTerm.toLowerCase();
         const matchName = String(student.fullName || '').toLowerCase().includes(query);
         const matchCode = String(student.id || '').toLowerCase().includes(query);
-        const matchPhone = String(student.parentPhone || '').includes(query);
+        const matchPhone = canViewParentPhone && student.parentPhone ? String(student.parentPhone).includes(query) : false;
         const matchNick = student.vietnameseName ? String(student.vietnameseName).toLowerCase().includes(query) : false;
         if (!matchName && !matchCode && !matchPhone && !matchNick) return false;
       }
@@ -190,7 +191,7 @@ export const StudentsView: React.FC = () => {
   };
 
   const handleExportExcel = () => {
-    exportStudentsToExcel(filteredStudents, data.classes);
+    exportStudentsToExcel(filteredStudents, data.classes, canViewParentPhone);
     showToast(`Đã xuất ${filteredStudents.length} học sinh ra file Excel`, 'success');
   };
 
@@ -299,7 +300,7 @@ export const StudentsView: React.FC = () => {
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Tìm theo tên học sinh, mã HS, SĐT phụ huynh..."
+            placeholder={canViewParentPhone ? "Tìm theo tên học sinh, mã HS, SĐT phụ huynh..." : "Tìm theo tên học sinh, mã HS..."}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 transition-all"
@@ -414,10 +415,16 @@ export const StudentsView: React.FC = () => {
                       </td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-800">{student.parentName}</div>
-                        <div className="text-slate-500 flex items-center gap-1 mt-0.5">
-                          <Phone className="w-3 h-3 text-slate-400" />
-                          <span>{student.parentPhone}</span>
-                        </div>
+                        {canViewParentPhone ? (
+                          <div className="text-slate-500 flex items-center gap-1 mt-0.5">
+                            <Phone className="w-3 h-3 text-slate-400" />
+                            <span>{student.parentPhone}</span>
+                          </div>
+                        ) : (
+                          <div className="text-slate-400 flex items-center gap-1 mt-0.5 text-[10px]">
+                            <span>SĐT bảo mật</span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <span
@@ -581,7 +588,11 @@ export const StudentsView: React.FC = () => {
                       <Phone className="w-4 h-4 text-blue-600" /> Thông tin phụ huynh
                     </h4>
                     <div><span className="text-slate-400">Họ tên phụ huynh:</span> <span className="font-semibold text-slate-700">{viewingStudent.parentName}</span></div>
-                    <div><span className="text-slate-400">Số điện thoại:</span> <span className="font-semibold text-slate-700">{viewingStudent.parentPhone}</span></div>
+                    {canViewParentPhone ? (
+                      <div><span className="text-slate-400">Số điện thoại:</span> <span className="font-semibold text-slate-700">{viewingStudent.parentPhone}</span></div>
+                    ) : (
+                      <div><span className="text-slate-400">Số điện thoại:</span> <span className="font-semibold text-slate-400 italic">SĐT bảo mật</span></div>
+                    )}
                     <div><span className="text-slate-400">Email:</span> <span className="font-semibold text-slate-700">{viewingStudent.parentEmail || 'Chưa có email'}</span></div>
                     <div><span className="text-slate-400">Địa chỉ liên hệ:</span> <span className="font-semibold text-slate-700">{viewingStudent.address}</span></div>
                     <div className="pt-2 border-t border-slate-200">
