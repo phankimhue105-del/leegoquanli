@@ -150,7 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Đánh giá học tập',
       sublabel: 'Assessments',
       icon: Award,
-      allowedRoles: ['admin', 'academic_manager', 'teacher', 'teaching_assistant'],
+      allowedRoles: ['academic_manager', 'teacher'],
     },
     {
       id: 'lesson_plans',
