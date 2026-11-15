@@ -302,6 +302,7 @@ export interface CenterSettings {
   maxClassCapacityDefault: number;
   firebaseConnected: boolean;
   demoMode: boolean;
+  deletedClassIds?: string[];
 }
 
 export interface TeachingSession {
