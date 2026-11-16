@@ -1348,6 +1348,7 @@ export const LessonReportsView: React.FC = () => {
                       <th className="p-3 w-40">Tình hình làm BTVN</th>
                       <th className="p-3 w-40">Tình hình học bài cũ</th>
                       <th className="p-3 min-w-[220px]">Nhận xét</th>
+                      <th className="p-3 min-w-[180px]">Giao BVN</th>
                       <th className="p-3 w-36">Giáo viên</th>
                       <th className="p-3 min-w-[160px]">Ghi chú</th>
                     </tr>
@@ -1434,6 +1435,21 @@ export const LessonReportsView: React.FC = () => {
                                 setActiveReport({ ...activeReport, studentReports: next });
                               }}
                               placeholder="Nhập nhận xét tiến độ học tập..."
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs disabled:bg-slate-100"
+                            />
+                          </td>
+
+                          <td className="p-3">
+                            <textarea
+                              disabled={activeReportReadOnly}
+                              rows={2}
+                              value={student.assignedHomework || ''}
+                              onChange={e => {
+                                const next = [...activeReport.studentReports];
+                                next[idx] = { ...next[idx], assignedHomework: e.target.value };
+                                setActiveReport({ ...activeReport, studentReports: next });
+                              }}
+                              placeholder="Nhập bài về nhà..."
                               className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs disabled:bg-slate-100"
                             />
                           </td>
