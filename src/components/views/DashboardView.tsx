@@ -24,9 +24,11 @@ import { AdminDailyClassOverview } from './AdminDailyClassOverview';
 
 interface DashboardViewProps {
   onNavigate: (tab: NavigationTab) => void;
+  /** Called when user clicks a class card in the daily overview to deep-link to Attendance. */
+  onNavigateToAttendance?: (classId: string, date: string) => void;
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
+export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onNavigateToAttendance }) => {
   const { currentUser } = useAuth();
   const { data } = useData();
 
@@ -360,9 +362,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
           <AdminDailyClassOverview
             selectedDate={overviewDate}
             selectedClassId={overviewClassId}
-            onSelectClass={classId => {
+            onSelectClass={(classId, date) => {
               setOverviewClassId(classId);
-              onNavigate('attendance');
+              if (onNavigateToAttendance) {
+                onNavigateToAttendance(classId, date);
+              } else {
+                onNavigate('attendance');
+              }
             }}
           />
         </div>
