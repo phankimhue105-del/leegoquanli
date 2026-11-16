@@ -19,7 +19,17 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../common/Toast';
 import { exportAttendanceReportToExcel, resolveStaffProfile, getAssignedClassesForStaff, canUserViewParentPhone } from '../../services/dataService';
 
-export const AttendanceView: React.FC = () => {
+interface AttendanceViewProps {
+  /** When set by Dashboard deep-link, pre-selects this class on mount. */
+  initialClassId?: string;
+  /** When set by Dashboard deep-link, pre-selects this date on mount. */
+  initialDate?: string;
+}
+
+export const AttendanceView: React.FC<AttendanceViewProps> = ({
+  initialClassId,
+  initialDate
+}) => {
   const { currentUser } = useAuth();
   const { data, saveAttendance } = useData();
   const { showToast } = useToast();
@@ -33,15 +43,27 @@ export const AttendanceView: React.FC = () => {
     return getAssignedClassesForStaff(data.classes, staff);
   }, [data.classes, staff]);
 
-  // Selected Class & Date for taking attendance
-  const [selectedClassId, setSelectedClassId] = useState<string>(availableClasses[0]?.id || '');
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  // Selected Class & Date for taking attendance.
+  // Seeded from initialClassId/initialDate when navigating directly from Dashboard.
+  const [selectedClassId, setSelectedClassId] = useState<string>(
+    initialClassId && availableClasses.some(c => c.id === initialClassId)
+      ? initialClassId
+      : availableClasses[0]?.id || ''
+  );
+  const [selectedDate, setSelectedDate] = useState<string>(
+    initialDate || new Date().toISOString().slice(0, 10)
+  );
 
   React.useEffect(() => {
-    if ((!selectedClassId || !availableClasses.some(c => c.id === selectedClassId)) && availableClasses.length > 0) {
+    // If initialClassId was provided and is valid, honour it on first mount.
+    // Otherwise fall back to first available class.
+    if (initialClassId && availableClasses.some(c => c.id === initialClassId)) {
+      setSelectedClassId(initialClassId);
+    } else if ((!selectedClassId || !availableClasses.some(c => c.id === selectedClassId)) && availableClasses.length > 0) {
       setSelectedClassId(availableClasses[0].id);
     }
-  }, [availableClasses, selectedClassId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableClasses]);
 
   const selectedClass = data.classes.find(c => c.id === selectedClassId);
 
