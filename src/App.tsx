@@ -154,6 +154,13 @@ const AppContent: React.FC = () => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
 
+  /**
+   * Deep-link state from Dashboard → Attendance.
+   * Set when Admin clicks a class card in AdminDailyClassOverview.
+   * Cleared when the user navigates away from attendance or opens it from the menu.
+   */
+  const [attendanceDeepLink, setAttendanceDeepLink] = useState<{ classId: string; date: string } | null>(null);
+
   if (!isAuthenticated) {
     return <LoginView />;
   }
@@ -188,6 +195,10 @@ const AppContent: React.FC = () => {
     if (isTabAllowed(tab)) {
       setCurrentTab(tab);
       setMobileSidebarOpen(false);
+      // Clear any deep-link when user manually navigates to/from attendance
+      if (tab !== 'attendance') {
+        setAttendanceDeepLink(null);
+      }
     }
   };
 
@@ -237,7 +248,10 @@ const AppContent: React.FC = () => {
         {/* View Viewport */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 scrollbar-thin">
           <div className="max-w-7xl mx-auto pb-12">
-            {activeTab === 'dashboard' && <DashboardView onNavigate={handleSelectTab} />}
+            {activeTab === 'dashboard' && <DashboardView onNavigate={handleSelectTab} onNavigateToAttendance={(classId, date) => {
+              setAttendanceDeepLink({ classId, date });
+              handleSelectTab('attendance');
+            }} />}
             {activeTab === 'students' && <StudentsView />}
             {activeTab === 'parents' && <ParentsView />}
             {activeTab === 'classes' && <ClassesView />}
@@ -247,7 +261,7 @@ const AppContent: React.FC = () => {
             {activeTab === 'teachers' && <TeachersView />}
             {activeTab === 'assistants' && <TeachingAssistantsView />}
             {activeTab === 'timetable' && <TimetableView />}
-            {activeTab === 'attendance' && <AttendanceView />}
+            {activeTab === 'attendance' && <AttendanceView key={attendanceDeepLink ? `${attendanceDeepLink.classId}-${attendanceDeepLink.date}` : 'default'} initialClassId={attendanceDeepLink?.classId} initialDate={attendanceDeepLink?.date} />}
             {activeTab === 'assessments' && <AssessmentsView />}
             {activeTab === 'lesson_plans' && <LessonPlansView />}
             {activeTab === 'lesson_reports' && <LessonReportsView />}
