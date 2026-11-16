@@ -12,7 +12,7 @@ import { useData } from '../../context/DataContext';
 interface AdminDailyClassOverviewProps {
   selectedDate: string;
   selectedClassId: string;
-  onSelectClass: (classId: string) => void;
+  onSelectClass: (classId: string, date: string) => void;
 }
 
 interface DailyClassOverviewItem {
@@ -373,7 +373,7 @@ export const AdminDailyClassOverview: React.FC<AdminDailyClassOverviewProps> = (
               <button
                 key={item.classId}
                 type="button"
-                onClick={() => onSelectClass(item.classId)}
+                onClick={() => onSelectClass(item.classId, effectiveDate)}
                 className={`text-left rounded-xl p-4 border transition-all flex flex-col justify-between gap-3 min-w-0 cursor-pointer ${
                   item.isCompleted
                     ? 'bg-emerald-50 border-emerald-300 hover:bg-emerald-100/70 text-emerald-950'
