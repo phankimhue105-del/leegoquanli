@@ -100,6 +100,16 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
     ...getLocalDeletedClassIds()
   ]);
 
+  const deletedMakeupIds = new Set<string>([
+    ...(store.settings?.deletedMakeupSessionIds || []),
+    ...getLocalDeletedMakeupSessionIds()
+  ]);
+
+  const deletedReportIds = new Set<string>([
+    ...(store.settings?.deletedLessonReportIds || []),
+    ...getLocalDeletedLessonReportIds()
+  ]);
+
   const normClasses = (Array.isArray(store.classes) ? store.classes : [])
     .filter(c => !deletedClassIds.has(String(c.id ?? '').trim()))
     .map(c => ({
@@ -156,15 +166,33 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
     }))
   }));
 
-  const normLessonReports = (Array.isArray(store.lessonReports) ? store.lessonReports : []).map(lr => ({
-    ...lr,
-    id: String(lr.id ?? '').trim(),
-    classId: String(lr.classId ?? '').trim(),
-    studentReports: (lr.studentReports || []).map(sr => ({
-      ...sr,
-      studentId: String(sr.studentId ?? '').trim()
-    }))
-  }));
+  const normLessonReports = (Array.isArray(store.lessonReports) ? store.lessonReports : [])
+    .filter(lr => {
+      const rid = String(lr.id ?? '').trim();
+      if (deletedReportIds.has(rid)) return false;
+      if (rid.startsWith('LR-MAKEUP-')) {
+        const mid = rid.replace('LR-MAKEUP-', '').trim();
+        if (deletedMakeupIds.has(mid)) return false;
+      }
+      return true;
+    })
+    .map(lr => ({
+      ...lr,
+      id: String(lr.id ?? '').trim(),
+      classId: String(lr.classId ?? '').trim(),
+      studentReports: (lr.studentReports || []).map(sr => ({
+        ...sr,
+        studentId: String(sr.studentId ?? '').trim()
+      }))
+    }));
+
+  const normMakeupSessions = (Array.isArray(store.makeupSessions) ? store.makeupSessions : [])
+    .filter(m => !deletedMakeupIds.has(String(m.id ?? '').trim()))
+    .map(m => ({
+      ...m,
+      id: String(m.id ?? '').trim(),
+      classId: String(m.classId ?? '').trim()
+    }));
 
   const normTimetable = (Array.isArray(store.timetable) ? store.timetable : []).map(tt => ({
     ...tt,
@@ -201,6 +229,7 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
     attendance: normAttendance,
     assessments: normAssessments,
     lessonReports: normLessonReports,
+    makeupSessions: normMakeupSessions,
     timetable: syncedTimetable,
     users: normUsers,
     courseDurations: Array.isArray(store.courseDurations) ? store.courseDurations : [],
@@ -589,6 +618,83 @@ export function isClassPendingCreation(id: string): boolean {
   return pendingCreatedClassIds.has(String(id).trim());
 }
 
+// Tombstones for makeup session deletions — prevents deleted sessions from reappearing after cloud sync
+const MAKEUP_TOMBSTONES_STORAGE_KEY = 'leego_deleted_makeup_session_ids_v1';
+
+export function getLocalDeletedMakeupSessionIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(MAKEUP_TOMBSTONES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordLocalDeletedMakeupSessionId(makeupId: string): void {
+  if (!makeupId || typeof localStorage === 'undefined') return;
+  try {
+    const existing = new Set(getLocalDeletedMakeupSessionIds());
+    existing.add(String(makeupId).trim());
+    localStorage.setItem(MAKEUP_TOMBSTONES_STORAGE_KEY, JSON.stringify(Array.from(existing)));
+  } catch {}
+}
+
+// Tombstones for lesson report deletions — prevents deleted reports from reappearing after cloud sync
+const REPORT_TOMBSTONES_STORAGE_KEY = 'leego_deleted_lesson_report_ids_v1';
+
+export function getLocalDeletedLessonReportIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(REPORT_TOMBSTONES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordLocalDeletedLessonReportId(reportId: string): void {
+  if (!reportId || typeof localStorage === 'undefined') return;
+  try {
+    const existing = new Set(getLocalDeletedLessonReportIds());
+    existing.add(String(reportId).trim());
+    localStorage.setItem(REPORT_TOMBSTONES_STORAGE_KEY, JSON.stringify(Array.from(existing)));
+  } catch {}
+}
+
+/**
+ * Sanitizes the "last edited" timestamp string to guarantee no passwords, credentials,
+ * or username strings in parentheses are ever exposed to users.
+ * E.g. "2026-11-17 19:44:25 (Lg1010@@@)" -> "2026-11-17 19:44:25"
+ */
+export function cleanEditTimestamp(timestamp?: string | null): string {
+  if (!timestamp) return '';
+  const str = String(timestamp).trim();
+  return str.replace(/\s*\([^)]*\)\s*$/, '').replace(/\s*•\s*.*$/, '').trim();
+}
+
+/**
+ * Sanitizes the editor display name to show only legitimate names,
+ * stripping any trailing credential/password strings in parentheses and
+ * resolving to a stable display name from user pool if the stored name is credential-like or missing.
+ */
+export function cleanEditorName(name?: string | null, id?: string | null, usersList?: User[]): string {
+  let rawName = String(name || '').trim();
+  // Strip any trailing parenthesized credential/password/username
+  rawName = rawName.replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+  // If the rawName looks like a password or login token, or is empty, resolve via staff/user ID
+  const isCredentialLike = !rawName ||
+    (/^[A-Za-z0-9@#$%^&*!_+=-]{6,20}$/.test(rawName) && /[0-9]/.test(rawName) && /[@#$%^&*!_+=]/.test(rawName));
+
+  if (isCredentialLike && id && usersList && usersList.length > 0) {
+    const found = usersList.find(u => u.id === id || u.username === id || u.teacherId === id);
+    if (found?.name) return found.name;
+  }
+
+  return rawName;
+}
+
 /**
  * Role-aware check for whether the current user is permitted to view parent phone numbers.
  * Privacy rule: Parent phone numbers must be visible ONLY to Admin and Academic Manager.
@@ -865,14 +971,36 @@ export function mergeCenterData(
     normRemote.teachers = Array.from(tchMap.values());
   }
 
-  // 1. Merge Lesson Reports safely
+  // 1. Merge Lesson Reports safely (with deletion tombstone enforcement)
   if (Array.isArray(normRemote.lessonReports)) {
+    const deletedReportIds = new Set<string>([
+      ...getLocalDeletedLessonReportIds(),
+      ...(local.settings?.deletedLessonReportIds || []),
+      ...(normRemote.settings?.deletedLessonReportIds || [])
+    ]);
+    const deletedMakeupIds = new Set<string>([
+      ...getLocalDeletedMakeupSessionIds(),
+      ...(local.settings?.deletedMakeupSessionIds || []),
+      ...(normRemote.settings?.deletedMakeupSessionIds || [])
+    ]);
+
+    const isReportTombstoned = (r: LessonReport) => {
+      const rid = String(r.id || '').trim();
+      if (deletedReportIds.has(rid)) return true;
+      if (rid.startsWith('LR-MAKEUP-')) {
+        const mid = rid.replace('LR-MAKEUP-', '').trim();
+        if (deletedMakeupIds.has(mid)) return true;
+      }
+      return false;
+    };
+
+    const filteredRemoteReports = normRemote.lessonReports.filter(r => !isReportTombstoned(r));
+    const remoteReportMap = new Map(filteredRemoteReports.map(r => [r.id, r]));
     const localReports = Array.isArray(local.lessonReports) ? local.lessonReports : [];
-    const remoteReportMap = new Map(normRemote.lessonReports.map(r => [r.id, r]));
     const localReportMap = new Map(localReports.map(r => [r.id, r]));
     const combinedReports: LessonReport[] = [];
 
-    for (const rem of normRemote.lessonReports) {
+    for (const rem of filteredRemoteReports) {
       const loc = localReportMap.get(rem.id);
       if (!loc) {
         combinedReports.push(rem);
@@ -904,11 +1032,15 @@ export function mergeCenterData(
     }
 
     for (const loc of localReports) {
+      if (isReportTombstoned(loc)) continue;
       if (!remoteReportMap.has(loc.id)) {
         combinedReports.push(loc);
         needsUpload = true;
         stats.addedFromLocal++;
       }
+    }
+    if (normRemote.lessonReports.length !== filteredRemoteReports.length) {
+      needsUpload = true;
     }
     merged.lessonReports = combinedReports;
   } else if (Array.isArray(local.lessonReports) && local.lessonReports.length > 0) {
@@ -932,17 +1064,30 @@ export function mergeCenterData(
     needsUpload = true;
   }
 
-  // 3. Merge Make-up Sessions
+  // 3. Merge Make-up Sessions (with deletion tombstone enforcement)
   if (Array.isArray(normRemote.makeupSessions)) {
-    const remoteMakeupMap = new Map(normRemote.makeupSessions.map(m => [m.id, m]));
+    const deletedMakeupIds = new Set<string>([
+      ...getLocalDeletedMakeupSessionIds(),
+      ...(local.settings?.deletedMakeupSessionIds || []),
+      ...(normRemote.settings?.deletedMakeupSessionIds || [])
+    ]);
+    // Filter cloud sessions through tombstone list — if admin deleted a session, it stays deleted even if cloud still has it
+    const filteredRemoteMakeups = normRemote.makeupSessions.filter(m => !deletedMakeupIds.has(String(m.id).trim()));
+    const remoteMakeupMap = new Map(filteredRemoteMakeups.map(m => [m.id, m]));
     const localMakeups = Array.isArray(local.makeupSessions) ? local.makeupSessions : [];
-    const combinedMakeups = [...normRemote.makeupSessions];
+    // Start with filtered cloud sessions
+    const combinedMakeups = [...filteredRemoteMakeups];
     for (const loc of localMakeups) {
+      // Skip tombstoned local sessions; also skip if cloud already has this session
+      if (deletedMakeupIds.has(String(loc.id).trim())) continue;
       if (!remoteMakeupMap.has(loc.id)) {
         combinedMakeups.push(loc);
         needsUpload = true;
         stats.addedFromLocal++;
       }
+    }
+    if (normRemote.makeupSessions.length !== filteredRemoteMakeups.length) {
+      needsUpload = true;
     }
     merged.makeupSessions = combinedMakeups;
   } else if (Array.isArray(local.makeupSessions) && local.makeupSessions.length > 0) {
@@ -1122,6 +1267,18 @@ export function mergeCenterData(
     ...getLocalDeletedClassIds()
   ]));
 
+  const allDeletedMakeupIds = Array.from(new Set([
+    ...(local.settings?.deletedMakeupSessionIds || []),
+    ...(normRemote.settings?.deletedMakeupSessionIds || []),
+    ...getLocalDeletedMakeupSessionIds()
+  ]));
+
+  const allDeletedReportIds = Array.from(new Set([
+    ...(local.settings?.deletedLessonReportIds || []),
+    ...(normRemote.settings?.deletedLessonReportIds || []),
+    ...getLocalDeletedLessonReportIds()
+  ]));
+
   if (normRemote.settings) {
     const locSettings = local.settings;
     const cldSettings = normRemote.settings;
@@ -1133,12 +1290,16 @@ export function mergeCenterData(
       ...cldSettings,
       classrooms: mergedClassrooms,
       deletedClassIds: allDeletedClassIds,
+      deletedMakeupSessionIds: allDeletedMakeupIds,
+      deletedLessonReportIds: allDeletedReportIds,
       demoMode: !isAuthenticated ? (cldSettings.demoMode ?? locSettings.demoMode) : false
     };
   } else {
     merged.settings = {
       ...local.settings,
       deletedClassIds: allDeletedClassIds,
+      deletedMakeupSessionIds: allDeletedMakeupIds,
+      deletedLessonReportIds: allDeletedReportIds,
       demoMode: !isAuthenticated ? local.settings.demoMode : false
     };
   }
