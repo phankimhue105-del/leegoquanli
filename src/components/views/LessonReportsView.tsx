@@ -40,7 +40,9 @@ import {
   getVietnamTodayISO,
   isReportExpired,
   isStudentReportEntryComplete,
-  computeReportDeadlineISO
+  computeReportDeadlineISO,
+  cleanEditorName,
+  cleanEditTimestamp
 } from '../../services/dataService';
 
 const STATUS_OPTIONS = [
@@ -172,7 +174,8 @@ export const LessonReportsView: React.FC = () => {
         const q = searchQuery.toLowerCase();
         const matchClass = rep.className?.toLowerCase().includes(q);
         const matchTeacher = rep.teacherName?.toLowerCase().includes(q);
-        const matchEditor = isManager && rep.lastEditedByName?.toLowerCase().includes(q);
+        const edName = cleanEditorName(rep.lastEditedByName, rep.lastEditedById, data?.users);
+        const matchEditor = isManager && edName.toLowerCase().includes(q);
         if (!matchClass && !matchTeacher && !matchEditor) return false;
       }
 
@@ -186,7 +189,7 @@ export const LessonReportsView: React.FC = () => {
 
       return true;
     });
-  }, [dailyReports, searchQuery, classFilter, statusFilter, lockFilter, isManager]);
+  }, [dailyReports, searchQuery, classFilter, statusFilter, lockFilter, isManager, data?.users]);
 
   // Historical reports (all stored reports, never deleted)
   const historicalReports = useMemo(() => {
@@ -199,13 +202,14 @@ export const LessonReportsView: React.FC = () => {
           const q = searchQuery.toLowerCase();
           const matchClass = rep.className?.toLowerCase().includes(q);
           const matchTeacher = rep.teacherName?.toLowerCase().includes(q);
-          const matchEditor = rep.lastEditedByName?.toLowerCase().includes(q);
+          const edName = cleanEditorName(rep.lastEditedByName, rep.lastEditedById, data?.users);
+          const matchEditor = edName.toLowerCase().includes(q);
           if (!matchClass && !matchTeacher && !matchEditor) return false;
         }
         return true;
       })
       .sort((a, b) => b.teachingDate.localeCompare(a.teachingDate));
-  }, [data?.lessonReports, historyDateFilter, classFilter, searchQuery]);
+  }, [data?.lessonReports, historyDateFilter, classFilter, searchQuery, data?.users]);
 
   const lockAuditLogs: LessonReportLockAuditEntry[] = useMemo(() => {
     return Array.isArray(data?.lessonReportLockAudits) ? data.lessonReportLockAudits : [];
@@ -354,10 +358,11 @@ export const LessonReportsView: React.FC = () => {
     }
   };
 
-  const handleDeleteMakeup = (makeupId: string) => {
-    if (window.confirm('Bạn có chắc muốn xóa lịch học bù này?')) {
+  const handleDeleteMakeup = (rep: LessonReport) => {
+    if (window.confirm(`Bạn có chắc muốn xóa lịch học bù của lớp ${rep.className || ''}?`)) {
       if (typeof deleteMakeupClass === 'function') {
-        const res = deleteMakeupClass(makeupId);
+        const makeupId = rep.id.startsWith('LR-MAKEUP-') ? rep.id.replace('LR-MAKEUP-', '') : '';
+        const res = deleteMakeupClass(makeupId, rep.id);
         if (res?.success !== false) {
           showToast('Đã xóa lớp học bù.', 'info');
         }
@@ -735,11 +740,11 @@ export const LessonReportsView: React.FC = () => {
                           <div className="pt-1.5 text-[11px] bg-white/70 rounded-lg px-2.5 py-1.5 border border-slate-200/70 text-slate-700">
                             <div>
                               Người sửa cuối:{' '}
-                              <strong>{rep.lastEditedByName || 'Chưa có ai chỉnh sửa'}</strong>
+                              <strong>{cleanEditorName(rep.lastEditedByName, rep.lastEditedById, data?.users) || 'Chưa có ai chỉnh sửa'}</strong>
                             </div>
                             {rep.lastEditedAt && (
                               <div className="text-[10px] text-slate-500">
-                                Lúc: {rep.lastEditedAt} ({rep.lastEditedByUsername})
+                                Lúc: {cleanEditTimestamp(rep.lastEditedAt)}
                               </div>
                             )}
                           </div>
@@ -787,7 +792,7 @@ export const LessonReportsView: React.FC = () => {
                       {isManager && rep.sessionType === 'makeup' && (
                         <button
                           type="button"
-                          onClick={() => handleDeleteMakeup(rep.id.replace('LR-MAKEUP-', ''))}
+                          onClick={() => handleDeleteMakeup(rep)}
                           className="p-2 bg-white hover:bg-rose-50 text-rose-600 border border-slate-300 rounded-xl cursor-pointer"
                           title="Xóa lớp học bù"
                         >
@@ -875,11 +880,11 @@ export const LessonReportsView: React.FC = () => {
                           <td className="py-3 px-4">{rep.teacherName}</td>
                           <td className="py-3 px-4">
                             <div className="font-semibold text-slate-800">
-                              {rep.lastEditedByName || '—'}
+                              {cleanEditorName(rep.lastEditedByName, rep.lastEditedById, data?.users) || '—'}
                             </div>
                             {rep.lastEditedAt && (
                               <div className="text-[10px] text-slate-400">
-                                {rep.lastEditedAt} • {rep.lastEditedByUsername}
+                                {cleanEditTimestamp(rep.lastEditedAt)}
                               </div>
                             )}
                           </td>
@@ -920,6 +925,16 @@ export const LessonReportsView: React.FC = () => {
                               >
                                 {rep.locked ? 'Mở khóa' : 'Khóa'}
                               </button>
+                              {isManager && rep.sessionType === 'makeup' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteMakeup(rep)}
+                                  className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg font-semibold"
+                                  title="Xóa lớp học bù"
+                                >
+                                  Xóa
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1189,14 +1204,14 @@ export const LessonReportsView: React.FC = () => {
                 </div>
               )}
 
-              {isManager && activeReport.lastEditedByName && (
+              {isManager && (activeReport.lastEditedByName || activeReport.lastEditedById) && (
                 <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
                   <span>
-                    Người chỉnh sửa cuối: <strong className="text-slate-900">{activeReport.lastEditedByName}</strong> ({activeReport.lastEditedByUsername}) • Lúc: <strong>{activeReport.lastEditedAt}</strong>
+                    Người chỉnh sửa cuối: <strong className="text-slate-900">{cleanEditorName(activeReport.lastEditedByName, activeReport.lastEditedById, data?.users)}</strong> • Lúc: <strong>{cleanEditTimestamp(activeReport.lastEditedAt)}</strong>
                   </span>
                   {activeReport.submittedAt && (
                     <span>
-                      Nộp lúc: <strong>{activeReport.submittedAt}</strong>
+                      Nộp lúc: <strong>{cleanEditTimestamp(activeReport.submittedAt)}</strong>
                     </span>
                   )}
                 </div>
