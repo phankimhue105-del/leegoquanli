@@ -303,6 +303,8 @@ export interface CenterSettings {
   firebaseConnected: boolean;
   demoMode: boolean;
   deletedClassIds?: string[];
+  deletedMakeupSessionIds?: string[];
+  deletedLessonReportIds?: string[];
 }
 
 export interface TeachingSession {
