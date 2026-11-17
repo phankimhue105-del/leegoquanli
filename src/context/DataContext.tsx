@@ -57,7 +57,10 @@ import {
   reconcileTimetableWithClasses,
   recordLocalDeletedClassId,
   registerPendingCreatedClassId,
-  unregisterPendingCreatedClassId
+  unregisterPendingCreatedClassId,
+  recordLocalDeletedMakeupSessionId,
+  recordLocalDeletedLessonReportId,
+  cleanEditorName
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
 
@@ -177,7 +180,7 @@ interface DataContextType {
     reportSnapshot?: LessonReport
   ) => { success: boolean; error?: string };
   addMakeupClass?: (session: Omit<MakeupClassSession, 'id'>) => { success: boolean; error?: string };
-  deleteMakeupClass?: (makeupId: string) => { success: boolean; error?: string };
+  deleteMakeupClass?: (makeupIdOrReportId: string, explicitReportId?: string) => { success: boolean; error?: string };
   resolveIncompleteReport?: (incompleteId: string) => void;
 
   // Course Duration Module
@@ -1793,8 +1796,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         submittedAt: currentStored?.submittedAt || report.submittedAt,
         submittedBy: currentStored?.submittedBy || report.submittedBy,
         lastEditedById: currentUser.id,
-        lastEditedByUsername: currentUser.email,
-        lastEditedByName: currentUser.name,
+        lastEditedByName: cleanEditorName(currentUser.name, currentUser.id, Array.isArray(data.users) ? data.users : undefined),
         lastEditedAt: nowFormatted
       },
       cleanedEntries
@@ -1884,10 +1886,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         lockedBy: currentStored?.lockedBy || baseReport.lockedBy,
         unlockedAfterExpiration: isUnlockedAfterExp,
         submittedAt: nowFormatted,
-        submittedBy: currentUser.name,
+        submittedBy: cleanEditorName(currentUser.name, currentUser.id, Array.isArray(data.users) ? data.users : undefined),
         lastEditedById: currentUser.id,
-        lastEditedByUsername: currentUser.email,
-        lastEditedByName: currentUser.name,
+        lastEditedByName: cleanEditorName(currentUser.name, currentUser.id, Array.isArray(data.users) ? data.users : undefined),
         lastEditedAt: nowFormatted
       },
       cleanedEntries,
@@ -1967,7 +1968,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       teachingDate: updatedReport.teachingDate,
       action: locked ? 'LOCK' : 'UNLOCK',
       actorUserId: currentUser.id,
-      actorUsername: currentUser.email,
+      actorUsername: currentUser.id,
       actorName: currentUser.name,
       timestamp: nowFormatted,
       timestampIso: nowIso,
@@ -2070,22 +2071,110 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  const deleteMakeupClass = (makeupId: string) => {
+  const deleteMakeupClass = (makeupIdOrReportId: string, explicitReportId?: string) => {
     if (currentUser.role !== 'admin' && currentUser.role !== 'academic_manager') {
       return { success: false, error: 'Không có quyền xóa lớp học bù.' };
     }
+
+    const inputId = String(makeupIdOrReportId || '').trim();
+    const expRepId = String(explicitReportId || '').trim();
+
+    // Identify makeupId and reportId
+    let makeupId = inputId.startsWith('LR-MAKEUP-') ? inputId.replace('LR-MAKEUP-', '') : inputId;
+    let reportId = expRepId || (inputId.startsWith('LR-MAKEUP-') ? inputId : (inputId ? `LR-MAKEUP-${inputId}` : ''));
+
+    // Look up in current data
+    const prevMakeups = Array.isArray(data.makeupSessions) ? data.makeupSessions : [];
+    const prevReports = Array.isArray(data.lessonReports) ? data.lessonReports : [];
+
+    let targetMakeup = prevMakeups.find(m => m.id === makeupId);
+    let targetReport = prevReports.find(r => (reportId && r.id === reportId) || (inputId && r.id === inputId));
+
+    // If makeup was not found by direct ID, check if targetReport matches classId + date
+    if (!targetMakeup && targetReport && targetReport.sessionType === 'makeup') {
+      targetMakeup = prevMakeups.find(
+        m => m.classId === targetReport!.classId && m.date === targetReport!.teachingDate
+      );
+      if (targetMakeup) {
+        makeupId = targetMakeup.id;
+      }
+    }
+
+    // Conversely, if report was not found by direct ID, check if there is a makeup report matching targetMakeup
+    if (!targetReport && targetMakeup) {
+      targetReport = prevReports.find(
+        r => r.id === `LR-MAKEUP-${targetMakeup!.id}` ||
+             (r.classId === targetMakeup!.classId && r.teachingDate === targetMakeup!.date && r.sessionType === 'makeup')
+      );
+      if (targetReport) {
+        reportId = targetReport.id;
+      }
+    }
+
+    // Record local tombstones BEFORE state update so they are immediately available to sync/merge
+    if (makeupId) recordLocalDeletedMakeupSessionId(makeupId);
+    if (targetMakeup?.id) recordLocalDeletedMakeupSessionId(targetMakeup.id);
+    if (reportId) recordLocalDeletedLessonReportId(reportId);
+    if (targetReport?.id) recordLocalDeletedLessonReportId(targetReport.id);
+
     setData(prev => {
-      const nextMakeup = (prev.makeupSessions || []).filter(m => m.id !== makeupId);
+      const nextMakeup = (prev.makeupSessions || []).filter(
+        m => m.id !== makeupId && (!targetMakeup || m.id !== targetMakeup.id)
+      );
+
+      const nextReports = (prev.lessonReports || []).filter(r => {
+        if (reportId && r.id === reportId) return false;
+        if (targetReport && r.id === targetReport.id) return false;
+        if (makeupId && r.id === `LR-MAKEUP-${makeupId}`) return false;
+        if (targetMakeup && r.classId === targetMakeup.classId && r.teachingDate === targetMakeup.date && r.sessionType === 'makeup') return false;
+        return true;
+      });
+
+      const nextIncomplete = (prev.incompleteReports || []).filter(
+        inc => (reportId && inc.reportId === reportId) ? false : (!targetReport || inc.reportId !== targetReport.id)
+      );
+
+      const existingDelMakeups = new Set(prev.settings?.deletedMakeupSessionIds || []);
+      if (makeupId) existingDelMakeups.add(makeupId);
+      if (targetMakeup?.id) existingDelMakeups.add(targetMakeup.id);
+
+      const existingDelReports = new Set(prev.settings?.deletedLessonReportIds || []);
+      if (reportId) existingDelReports.add(reportId);
+      if (targetReport?.id) existingDelReports.add(targetReport.id);
+
+      const nextSettings: CenterSettings = {
+        ...(prev.settings || (initialSettings as any)),
+        deletedMakeupSessionIds: Array.from(existingDelMakeups),
+        deletedLessonReportIds: Array.from(existingDelReports)
+      };
+
       const nextData = {
         ...prev,
-        makeupSessions: nextMakeup
+        makeupSessions: nextMakeup,
+        lessonReports: nextReports,
+        incompleteReports: nextIncomplete,
+        settings: nextSettings
       };
+
       saveStorage(nextData);
-      saveCenterDataToGoogleAppsScript({ makeupSessions: nextMakeup }, ['makeupSessions']).catch(e =>
-        console.warn('Background sync error on deleteMakeupClass:', e)
-      );
+      saveCenterDataToGoogleAppsScript(
+        {
+          makeupSessions: nextMakeup,
+          lessonReports: nextReports,
+          incompleteReports: nextIncomplete,
+          settings: nextSettings
+        },
+        ['makeupSessions', 'lessonReports', 'incompleteReports', 'settings']
+      ).catch(e => console.warn('Background sync error on deleteMakeupClass:', e));
+
       return nextData;
     });
+
+    addActivityLog(
+      'Xóa lớp học bù',
+      `Đã xóa lịch học bù ${targetMakeup?.className || targetReport?.className || makeupId}`
+    );
+
     return { success: true };
   };
 
