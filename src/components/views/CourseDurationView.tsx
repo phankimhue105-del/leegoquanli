@@ -1234,6 +1234,13 @@ export const CourseDurationView: React.FC = () => {
                 </div>
               </div>
 
+              {simulatorResult.hasScheduleWarning && (
+                <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-400/40 text-xs text-amber-200 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+                  <span>{simulatorResult.warningMessage || 'Lớp học chưa có lịch học trong tuần. Vui lòng kiểm tra lại thời khóa biểu.'}</span>
+                </div>
+              )}
+
               <div className="p-3.5 rounded-xl bg-indigo-950/60 border border-indigo-800/60 text-xs text-indigo-100 leading-relaxed">
                 <p className="font-semibold text-white mb-1 flex items-center gap-1.5">
                   <Info className="w-4 h-4 text-indigo-400" />
@@ -1794,7 +1801,11 @@ export const CourseDurationView: React.FC = () => {
                 </div>
 
                 {previewExplanation && (
-                  <p className="text-[11px] text-slate-600 leading-normal">
+                  <p className={`text-[11px] leading-normal ${
+                    previewExplanation.includes('Cảnh báo')
+                      ? 'text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200 font-medium'
+                      : 'text-slate-600'
+                  }`}>
                     {previewExplanation}
                   </p>
                 )}
