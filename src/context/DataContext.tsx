@@ -60,6 +60,9 @@ import {
   unregisterPendingCreatedClassId,
   recordLocalDeletedMakeupSessionId,
   recordLocalDeletedLessonReportId,
+  recordLocalDeletedCourseDurationId,
+  recordLocalDeletedCourseHolidayId,
+  recordLocalDeletedCourseMakeupId,
   cleanEditorName
 } from '../services/dataService';
 import { useAuth } from './AuthContext';
@@ -2249,39 +2252,82 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }): CourseCalculationResult => {
     const { startDate, durationMode, durationValue, classId, extensionPolicy = 'scheduled_holidays' } = params;
 
-    const start = new Date(startDate || new Date().toISOString().slice(0, 10));
-    start.setHours(0, 0, 0, 0);
+    // Timezone-safe local date formatting helpers (prevents UTC date shifts)
+    const toLocalDateStr = (d: Date): string => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const parseLocalDate = (dateStr: string): Date => {
+      const parts = (dateStr || '').trim().split('-');
+      if (parts.length === 3) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10) - 1;
+        const d = parseInt(parts[2], 10);
+        if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+          return new Date(y, m, d, 0, 0, 0, 0);
+        }
+      }
+      const fallback = new Date();
+      fallback.setHours(0, 0, 0, 0);
+      return fallback;
+    };
+
+    const start = parseLocalDate(startDate || toLocalDateStr(new Date()));
 
     const holidays = (data.courseHolidays || []).filter(h => h.affectsScheduledLessons);
     const isHoliday = (d: Date) => {
-      const iso = d.toISOString().slice(0, 10);
+      const iso = toLocalDateStr(d);
       return holidays.some(h => iso >= h.startDate && iso <= h.endDate);
     };
 
-    const targetClass = classId ? data.classes.find(c => c.id === classId) : null;
-    const timetables = classId ? data.timetable.filter(t => t.classId === classId) : [];
+    // 1. Identify selected class by stable ID, name, or code
+    const targetClass = classId
+      ? (data.classes || []).find(c => c.id === classId || c.code === classId || c.name === classId)
+      : null;
+    const resolvedClassId = targetClass?.id || classId;
+
+    // 2. Extract teaching weekdays (1 = Monday, ..., 7 = Sunday)
     const scheduleDaysSet = new Set<number>();
 
-    if (timetables.length > 0) {
-      timetables.forEach(t => scheduleDaysSet.add(t.dayOfWeek));
-    } else if (targetClass?.scheduleDays) {
-      if (/thứ 2|thứ hai|t2|mon/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(1);
-      if (/thứ 3|thứ ba|t3|tue/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(2);
-      if (/thứ 4|thứ tư|t4|wed/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(3);
-      if (/thứ 5|thứ năm|t5|thu/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(4);
-      if (/thứ 6|thứ sáu|t6|fri/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(5);
-      if (/thứ 7|thứ bảy|t7|sat/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(6);
-      if (/chủ nhật|cn|sun/i.test(targetClass.scheduleDays)) scheduleDaysSet.add(7);
+    if (targetClass) {
+      // Use canonical helper that handles both weeklySchedule slots and scheduleDays text
+      const classSlots = getClassWeeklySchedule(targetClass);
+      if (classSlots.length > 0) {
+        classSlots.forEach(s => {
+          if (typeof s.dayOfWeek === 'number' && s.dayOfWeek >= 1 && s.dayOfWeek <= 7) {
+            scheduleDaysSet.add(s.dayOfWeek);
+          }
+        });
+      }
     }
 
-    // Default to Tue, Thu (2 sessions/week) if no specific class schedule found
-    if (scheduleDaysSet.size === 0) {
-      scheduleDaysSet.add(2);
-      scheduleDaysSet.add(4);
+    // If class slots yielded no weekdays, inspect active timetable sessions for this class
+    if (scheduleDaysSet.size === 0 && resolvedClassId) {
+      const timetables = (data.timetable || []).filter(
+        t => t.classId === resolvedClassId && t.status !== 'cancelled'
+      );
+      if (timetables.length > 0) {
+        timetables.forEach(t => {
+          if (typeof t.dayOfWeek === 'number' && t.dayOfWeek >= 1 && t.dayOfWeek <= 7) {
+            scheduleDaysSet.add(t.dayOfWeek);
+          }
+        });
+      }
     }
+
+    // 3. If class has no valid weekly schedule, do NOT silently add arbitrary weekdays (e.g. Tue/Thu)
+    const hasScheduleWarning = scheduleDaysSet.size === 0;
+    const warningMessage = hasScheduleWarning
+      ? (targetClass
+          ? `Lớp "${targetClass.name}" chưa được cấu hình lịch học trong tuần (Thứ trong tuần). Vui lòng cập nhật thời khóa biểu của lớp.`
+          : 'Chưa chọn lớp học hoặc lớp học chưa có lịch học trong tuần. Vui lòng kiểm tra lại thời khóa biểu.')
+      : undefined;
 
     const isClassDay = (d: Date) => {
-      const jsDay = d.getDay();
+      const jsDay = d.getDay(); // 0: Sunday, 1: Monday, ... 6: Saturday
       const appDay = jsDay === 0 ? 7 : jsDay;
       return scheduleDaysSet.has(appDay);
     };
@@ -2291,11 +2337,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let holidaysEncounteredCount = 0;
     const breakdownDates: { date: string; type: string; note: string }[] = [];
 
+    if (hasScheduleWarning) {
+      // Cannot calculate exact learning session completion without a weekly schedule
+      const expectedDateStr = toLocalDateStr(start);
+      const explanation = `⚠️ Cảnh báo: ${warningMessage} Không thể tính toán ngày kết thúc chính xác.`;
+      return {
+        expectedCompletionDate: expectedDateStr,
+        totalDaysSpan: 0,
+        explanation,
+        scheduledSessionsCount: 0,
+        holidaysEncounteredCount: 0,
+        makeupsCount: 0,
+        breakdownDates: [],
+        hasScheduleWarning: true,
+        warningMessage
+      };
+    }
+
     if (durationMode === 'learning_sessions') {
       const targetSessions = Number(durationValue) || 48;
 
       while (scheduledSessionsCount < targetSessions) {
-        const iso = currentDate.toISOString().slice(0, 10);
+        const iso = toLocalDateStr(currentDate);
 
         if (isClassDay(currentDate)) {
           if (extensionPolicy !== 'none' && isHoliday(currentDate)) {
@@ -2323,14 +2386,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const targetMonths = Number(durationValue) || 6;
       currentDate.setMonth(currentDate.getMonth() + targetMonths);
 
-      // Check holidays encountered during this month span
+      // Check holidays encountered during this month span on class days
       let checkDate = new Date(start);
       while (checkDate <= currentDate) {
         if (isClassDay(checkDate)) {
           if (isHoliday(checkDate)) {
             holidaysEncounteredCount++;
             breakdownDates.push({
-              date: checkDate.toISOString().slice(0, 10),
+              date: toLocalDateStr(checkDate),
               type: 'holiday_skipped',
               note: 'Nghỉ lễ trong kỳ học'
             });
@@ -2343,25 +2406,32 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Extension policy by holiday days
       if (extensionPolicy === 'scheduled_holidays' && holidaysEncounteredCount > 0) {
-        const addedDays = Math.ceil(holidaysEncounteredCount * 3.5);
+        const sessionsPerWeek = scheduleDaysSet.size || 2;
+        const addedDays = Math.ceil((holidaysEncounteredCount / sessionsPerWeek) * 7);
         currentDate.setDate(currentDate.getDate() + addedDays);
       }
     } else {
       const targetDays = Number(durationValue) || 60;
       currentDate.setDate(currentDate.getDate() + targetDays);
-      scheduledSessionsCount = Math.round(targetDays / 3.5);
+      const sessionsPerWeek = scheduleDaysSet.size || 2;
+      scheduledSessionsCount = Math.round((targetDays / 7) * sessionsPerWeek);
     }
 
-    const expectedDateStr = currentDate.toISOString().slice(0, 10);
+    const expectedDateStr = toLocalDateStr(currentDate);
     const totalDaysSpan = Math.max(1, Math.round((currentDate.getTime() - start.getTime()) / (1000 * 3600 * 24)));
 
-    const makeupsForClass = classId
-      ? (data.courseMakeups || []).filter(m => m.classId === classId && m.status === 'completed').length
+    const makeupsForClass = resolvedClassId
+      ? (data.courseMakeups || []).filter(m => m.classId === resolvedClassId && m.status === 'completed').length
       : 0;
+
+    const weekdayNames = Array.from(scheduleDaysSet)
+      .sort((a, b) => a - b)
+      .map(d => (d === 7 ? 'Chủ Nhật' : `Thứ ${d + 1}`))
+      .join(', ');
 
     const explanation = `Khóa học bắt đầu từ ${startDate.split('-').reverse().join('/')}, kéo dài ${durationValue} ${
       durationMode === 'months' ? 'tháng lịch' : durationMode === 'learning_sessions' ? 'buổi học thực tế' : 'ngày'
-    }. Dự kiến hoàn thành ngày ${expectedDateStr.split('-').reverse().join('/')} (tổng ${totalDaysSpan} ngày lịch, ${scheduledSessionsCount} buổi học đạt chuẩn${
+    }${weekdayNames ? ` (lịch học: ${weekdayNames})` : ''}. Dự kiến hoàn thành ngày ${expectedDateStr.split('-').reverse().join('/')} (tổng ${totalDaysSpan} ngày lịch, ${scheduledSessionsCount} buổi học đạt chuẩn${
       holidaysEncounteredCount > 0 ? `, đã tính bù ${holidaysEncounteredCount} buổi nghỉ lễ` : ''
     }).`;
 
@@ -2372,7 +2442,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       scheduledSessionsCount,
       holidaysEncounteredCount,
       makeupsCount: makeupsForClass,
-      breakdownDates
+      breakdownDates,
+      hasScheduleWarning: false
     };
   };
 
@@ -2432,13 +2503,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteCourseDuration = (id: string) => {
-    setData(prev => ({
-      ...prev,
-      courseDurations: (prev.courseDurations || []).filter(c => c.id !== id),
-      courseDurationHistory: (prev.courseDurationHistory || []).filter(h => h.courseDurationId !== id)
-    }));
+    recordLocalDeletedCourseDurationId(id);
+    setData(prev => {
+      const updatedDeletedIds = Array.from(new Set([...(prev.settings?.deletedCourseDurationIds || []), id]));
+      return {
+        ...prev,
+        courseDurations: (prev.courseDurations || []).filter(c => c.id !== id),
+        courseDurationHistory: (prev.courseDurationHistory || []).filter(h => h.courseDurationId !== id),
+        settings: {
+          ...prev.settings,
+          deletedCourseDurationIds: updatedDeletedIds
+        }
+      };
+    });
     addActivityLog('Xóa khóa học', `Đã xóa bản ghi thời gian khóa học ${id}`);
-    queueKeysForCloudSync(['courseDurations', 'courseDurationHistory']);
+    queueKeysForCloudSync(['courseDurations', 'courseDurationHistory', 'settings']);
     return { success: true };
   };
 
@@ -2446,11 +2525,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const course = (data.courseDurations || []).find(c => c.id === courseId);
     if (!course) return { success: false, error: 'Không tìm thấy khóa học!' };
 
+    const resolvedClassId = course.classId || (data.classes.find(c => c.name === course.className)?.id);
+
     const calc = calculateCourseCompletionDate({
       startDate: course.courseStartDate,
       durationMode: course.durationMode,
       durationValue: course.durationValue,
-      classId: course.classId,
+      classId: resolvedClassId,
       extensionPolicy: course.extensionPolicy
     });
 
@@ -2498,11 +2579,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteCourseHoliday = (id: string) => {
-    setData(prev => ({
-      ...prev,
-      courseHolidays: (prev.courseHolidays || []).filter(h => h.id !== id)
-    }));
-    queueKeysForCloudSync(['courseHolidays']);
+    recordLocalDeletedCourseHolidayId(id);
+    setData(prev => {
+      const updatedDeletedIds = Array.from(new Set([...(prev.settings?.deletedCourseHolidayIds || []), id]));
+      return {
+        ...prev,
+        courseHolidays: (prev.courseHolidays || []).filter(h => h.id !== id),
+        settings: {
+          ...prev.settings,
+          deletedCourseHolidayIds: updatedDeletedIds
+        }
+      };
+    });
+    queueKeysForCloudSync(['courseHolidays', 'settings']);
   };
 
   const addCourseMakeup = (makeupData: Omit<CourseMakeupSession, 'id'>) => {
@@ -2526,11 +2615,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteCourseMakeup = (id: string) => {
-    setData(prev => ({
-      ...prev,
-      courseMakeups: (prev.courseMakeups || []).filter(m => m.id !== id)
-    }));
-    queueKeysForCloudSync(['courseMakeups']);
+    recordLocalDeletedCourseMakeupId(id);
+    setData(prev => {
+      const updatedDeletedIds = Array.from(new Set([...(prev.settings?.deletedCourseMakeupIds || []), id]));
+      return {
+        ...prev,
+        courseMakeups: (prev.courseMakeups || []).filter(m => m.id !== id),
+        settings: {
+          ...prev.settings,
+          deletedCourseMakeupIds: updatedDeletedIds
+        }
+      };
+    });
+    queueKeysForCloudSync(['courseMakeups', 'settings']);
   };
 
   const getCourseHistory = (courseId: string): CourseDurationHistory[] => {
