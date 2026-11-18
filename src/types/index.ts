@@ -305,6 +305,9 @@ export interface CenterSettings {
   deletedClassIds?: string[];
   deletedMakeupSessionIds?: string[];
   deletedLessonReportIds?: string[];
+  deletedCourseDurationIds?: string[];
+  deletedCourseHolidayIds?: string[];
+  deletedCourseMakeupIds?: string[];
 }
 
 export interface TeachingSession {
@@ -542,6 +545,8 @@ export interface CourseCalculationResult {
   holidaysEncounteredCount: number;
   makeupsCount: number;
   breakdownDates: { date: string; type: string; note: string }[];
+  hasScheduleWarning?: boolean;
+  warningMessage?: string;
 }
 
 
