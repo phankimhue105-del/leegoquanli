@@ -110,6 +110,21 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
     ...getLocalDeletedLessonReportIds()
   ]);
 
+  const deletedCourseDurationIds = new Set<string>([
+    ...(store.settings?.deletedCourseDurationIds || []),
+    ...getLocalDeletedCourseDurationIds()
+  ]);
+
+  const deletedCourseHolidayIds = new Set<string>([
+    ...(store.settings?.deletedCourseHolidayIds || []),
+    ...getLocalDeletedCourseHolidayIds()
+  ]);
+
+  const deletedCourseMakeupIds = new Set<string>([
+    ...(store.settings?.deletedCourseMakeupIds || []),
+    ...getLocalDeletedCourseMakeupIds()
+  ]);
+
   const normClasses = (Array.isArray(store.classes) ? store.classes : [])
     .filter(c => !deletedClassIds.has(String(c.id ?? '').trim()))
     .map(c => ({
@@ -232,9 +247,12 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
     makeupSessions: normMakeupSessions,
     timetable: syncedTimetable,
     users: normUsers,
-    courseDurations: Array.isArray(store.courseDurations) ? store.courseDurations : [],
-    courseHolidays: Array.isArray(store.courseHolidays) ? store.courseHolidays : [],
-    courseMakeups: Array.isArray(store.courseMakeups) ? store.courseMakeups : [],
+    courseDurations: (Array.isArray(store.courseDurations) ? store.courseDurations : [])
+      .filter(c => !deletedCourseDurationIds.has(String(c.id ?? '').trim())),
+    courseHolidays: (Array.isArray(store.courseHolidays) ? store.courseHolidays : [])
+      .filter(h => !deletedCourseHolidayIds.has(String(h.id ?? '').trim())),
+    courseMakeups: (Array.isArray(store.courseMakeups) ? store.courseMakeups : [])
+      .filter(m => !deletedCourseMakeupIds.has(String(m.id ?? '').trim())),
     courseDurationHistory: Array.isArray(store.courseDurationHistory) ? store.courseDurationHistory : []
   };
 }
@@ -659,6 +677,68 @@ export function recordLocalDeletedLessonReportId(reportId: string): void {
     const existing = new Set(getLocalDeletedLessonReportIds());
     existing.add(String(reportId).trim());
     localStorage.setItem(REPORT_TOMBSTONES_STORAGE_KEY, JSON.stringify(Array.from(existing)));
+  } catch {}
+}
+
+// Tombstones for course duration module deletions
+const COURSE_DURATION_TOMBSTONES_STORAGE_KEY = 'leego_deleted_course_duration_ids_v1';
+const COURSE_HOLIDAY_TOMBSTONES_STORAGE_KEY = 'leego_deleted_course_holiday_ids_v1';
+const COURSE_MAKEUP_TOMBSTONES_STORAGE_KEY = 'leego_deleted_course_makeup_ids_v1';
+
+export function getLocalDeletedCourseDurationIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(COURSE_DURATION_TOMBSTONES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordLocalDeletedCourseDurationId(id: string): void {
+  if (!id || typeof localStorage === 'undefined') return;
+  try {
+    const existing = new Set(getLocalDeletedCourseDurationIds());
+    existing.add(String(id).trim());
+    localStorage.setItem(COURSE_DURATION_TOMBSTONES_STORAGE_KEY, JSON.stringify(Array.from(existing)));
+  } catch {}
+}
+
+export function getLocalDeletedCourseHolidayIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(COURSE_HOLIDAY_TOMBSTONES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordLocalDeletedCourseHolidayId(id: string): void {
+  if (!id || typeof localStorage === 'undefined') return;
+  try {
+    const existing = new Set(getLocalDeletedCourseHolidayIds());
+    existing.add(String(id).trim());
+    localStorage.setItem(COURSE_HOLIDAY_TOMBSTONES_STORAGE_KEY, JSON.stringify(Array.from(existing)));
+  } catch {}
+}
+
+export function getLocalDeletedCourseMakeupIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(COURSE_MAKEUP_TOMBSTONES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordLocalDeletedCourseMakeupId(id: string): void {
+  if (!id || typeof localStorage === 'undefined') return;
+  try {
+    const existing = new Set(getLocalDeletedCourseMakeupIds());
+    existing.add(String(id).trim());
+    localStorage.setItem(COURSE_MAKEUP_TOMBSTONES_STORAGE_KEY, JSON.stringify(Array.from(existing)));
   } catch {}
 }
 
@@ -1126,7 +1206,11 @@ export function mergeCenterData(
     { key: 'users', name: 'Tài khoản người dùng (Users)' },
     { key: 'parents', name: 'Hồ sơ Phụ huynh (Parents)' },
     { key: 'teachingSchedules', name: 'Lịch dạy tháng (Teaching Schedules)' },
-    { key: 'activityLogs', name: 'Nhật ký hoạt động (Activity Logs)' }
+    { key: 'activityLogs', name: 'Nhật ký hoạt động (Activity Logs)' },
+    { key: 'courseDurations', name: 'Thời lượng khóa học (Course Durations)' },
+    { key: 'courseHolidays', name: 'Lịch nghỉ lễ (Course Holidays)' },
+    { key: 'courseMakeups', name: 'Lịch học bù khóa học (Course Makeups)' },
+    { key: 'courseDurationHistory', name: 'Lịch sử thay đổi khóa học (Course History)' }
   ];
 
   for (const cat of entityCollections) {
@@ -1168,8 +1252,35 @@ export function mergeCenterData(
       ...(normRemote.settings?.deletedClassIds || [])
     ]);
 
+    const deletedCourseDurationIds = new Set<string>([
+      ...getLocalDeletedCourseDurationIds(),
+      ...(local.settings?.deletedCourseDurationIds || []),
+      ...(normRemote.settings?.deletedCourseDurationIds || [])
+    ]);
+
+    const deletedCourseHolidayIds = new Set<string>([
+      ...getLocalDeletedCourseHolidayIds(),
+      ...(local.settings?.deletedCourseHolidayIds || []),
+      ...(normRemote.settings?.deletedCourseHolidayIds || [])
+    ]);
+
+    const deletedCourseMakeupIds = new Set<string>([
+      ...getLocalDeletedCourseMakeupIds(),
+      ...(local.settings?.deletedCourseMakeupIds || []),
+      ...(normRemote.settings?.deletedCourseMakeupIds || [])
+    ]);
+
     for (const id of allIds) {
       if (cat.key === 'classes' && deletedClassIds.has(id)) {
+        continue;
+      }
+      if (cat.key === 'courseDurations' && deletedCourseDurationIds.has(id)) {
+        continue;
+      }
+      if (cat.key === 'courseHolidays' && deletedCourseHolidayIds.has(id)) {
+        continue;
+      }
+      if (cat.key === 'courseMakeups' && deletedCourseMakeupIds.has(id)) {
         continue;
       }
 
@@ -1279,6 +1390,24 @@ export function mergeCenterData(
     ...getLocalDeletedLessonReportIds()
   ]));
 
+  const allDeletedCourseDurationIds = Array.from(new Set([
+    ...(local.settings?.deletedCourseDurationIds || []),
+    ...(normRemote.settings?.deletedCourseDurationIds || []),
+    ...getLocalDeletedCourseDurationIds()
+  ]));
+
+  const allDeletedCourseHolidayIds = Array.from(new Set([
+    ...(local.settings?.deletedCourseHolidayIds || []),
+    ...(normRemote.settings?.deletedCourseHolidayIds || []),
+    ...getLocalDeletedCourseHolidayIds()
+  ]));
+
+  const allDeletedCourseMakeupIds = Array.from(new Set([
+    ...(local.settings?.deletedCourseMakeupIds || []),
+    ...(normRemote.settings?.deletedCourseMakeupIds || []),
+    ...getLocalDeletedCourseMakeupIds()
+  ]));
+
   if (normRemote.settings) {
     const locSettings = local.settings;
     const cldSettings = normRemote.settings;
@@ -1292,6 +1421,9 @@ export function mergeCenterData(
       deletedClassIds: allDeletedClassIds,
       deletedMakeupSessionIds: allDeletedMakeupIds,
       deletedLessonReportIds: allDeletedReportIds,
+      deletedCourseDurationIds: allDeletedCourseDurationIds,
+      deletedCourseHolidayIds: allDeletedCourseHolidayIds,
+      deletedCourseMakeupIds: allDeletedCourseMakeupIds,
       demoMode: !isAuthenticated ? (cldSettings.demoMode ?? locSettings.demoMode) : false
     };
   } else {
@@ -1300,6 +1432,9 @@ export function mergeCenterData(
       deletedClassIds: allDeletedClassIds,
       deletedMakeupSessionIds: allDeletedMakeupIds,
       deletedLessonReportIds: allDeletedReportIds,
+      deletedCourseDurationIds: allDeletedCourseDurationIds,
+      deletedCourseHolidayIds: allDeletedCourseHolidayIds,
+      deletedCourseMakeupIds: allDeletedCourseMakeupIds,
       demoMode: !isAuthenticated ? local.settings.demoMode : false
     };
   }
@@ -2971,6 +3106,10 @@ export const BASELINE_DATA_MAP: Record<string, any[]> = {
   parents: initialParents,
   teachingSchedules: initialTeachingSchedules,
   activityLogs: initialActivityLogs,
+  courseDurations: initialCourseDurations,
+  courseHolidays: initialCourseHolidays,
+  courseMakeups: initialCourseMakeups,
+  courseDurationHistory: initialCourseDurationHistory,
 };
 
 const CATEGORY_DEFINITIONS: Array<{ key: keyof AppDataStore; name: string }> = [
