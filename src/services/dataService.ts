@@ -92,6 +92,34 @@ export interface AppDataStore {
   courseDurationHistory?: CourseDurationHistory[];
 }
 
+/**
+ * Deduplicates and normalizes weekly schedule slots for a class.
+ * Preserves distinct sessions on the same weekday if scheduled at different times,
+ * while cleanly merging duplicate entries of the same day and start time.
+ */
+export function deduplicateWeeklyScheduleSlots(
+  slots?: Array<Partial<ClassWeeklyScheduleSlot> | any>
+): any[] {
+  if (!Array.isArray(slots) || slots.length === 0) return [];
+  const map = new Map<string, any>();
+  for (const s of slots) {
+    if (!s || typeof s.dayOfWeek !== 'number' || s.dayOfWeek < 1 || s.dayOfWeek > 7) continue;
+    const cleanTime = (s.startTime || '1730').replace(/[^0-9]/g, '');
+    const key = `${s.dayOfWeek}-${cleanTime}`;
+    if (!map.has(key)) {
+      map.set(key, { ...s });
+    } else {
+      const existing = map.get(key);
+      const merged = { ...existing, ...s };
+      for (const f of ['dayName', 'startTime', 'endTime', 'teacherId', 'assistantTeacherId', 'timeRange']) {
+        if (!merged[f] && existing[f]) merged[f] = existing[f];
+      }
+      map.set(key, merged);
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+}
+
 export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
   if (!store || typeof store !== 'object') return store;
 
@@ -132,6 +160,9 @@ export function normalizeAppDataStore(store: AppDataStore): AppDataStore {
       id: String(c.id ?? '').trim(),
       teacherId: c.teacherId ? String(c.teacherId).trim() : '',
       assistantTeacherId: c.assistantTeacherId ? String(c.assistantTeacherId).trim() : undefined,
+      weeklySchedule: Array.isArray(c.weeklySchedule)
+        ? deduplicateWeeklyScheduleSlots(c.weeklySchedule)
+        : c.weeklySchedule,
       studentIds: Array.from(new Set((c.studentIds || []).map(sid => String(sid).trim()).filter(Boolean)))
     }));
 
@@ -581,7 +612,12 @@ export const FIELD_LABELS: Record<string, string> = {
 function mergeObjectArrayByKey(localArr: any[], cloudArr: any[]): any[] {
   const getKey = (item: any): string => {
     const raw = item?.studentId ?? item?.sessionId ?? item?.id ?? item?.date ?? item?.reportId;
-    return raw !== undefined && raw !== null ? String(raw).trim() : JSON.stringify(item);
+    if (raw !== undefined && raw !== null) return String(raw).trim();
+    if (typeof item?.dayOfWeek === 'number' && item.dayOfWeek >= 1 && item.dayOfWeek <= 7) {
+      const cleanTime = (item.startTime || '1730').replace(/[^0-9]/g, '');
+      return `slot_${item.dayOfWeek}_${cleanTime}`;
+    }
+    return JSON.stringify(item);
   };
   const cloudMap = new Map(cloudArr.map(item => [getKey(item), item]));
   const localMap = new Map(localArr.map(item => [getKey(item), item]));
@@ -594,7 +630,13 @@ function mergeObjectArrayByKey(localArr: any[], cloudArr: any[]): any[] {
     if (!cld) result.push(loc);
     else if (!loc) result.push(cld);
     else {
-      result.push({ ...cld, ...loc });
+      const mergedItem = { ...cld, ...loc };
+      for (const field of Object.keys(cld)) {
+        if ((mergedItem[field] === undefined || mergedItem[field] === '' || mergedItem[field] === null) && cld[field] !== undefined && cld[field] !== '' && cld[field] !== null) {
+          mergedItem[field] = cld[field];
+        }
+      }
+      result.push(mergedItem);
     }
   }
   return result;
@@ -2295,7 +2337,7 @@ export function getClassWeeklySchedule(cls?: ClassItem | null): ClassWeeklySched
 
   const maybeWeekly = (cls as { weeklySchedule?: Array<Partial<ClassWeeklyScheduleSlot>> }).weeklySchedule;
   if (Array.isArray(maybeWeekly) && maybeWeekly.length > 0) {
-    return maybeWeekly
+    return deduplicateWeeklyScheduleSlots(maybeWeekly)
       .filter((slot): slot is Partial<ClassWeeklyScheduleSlot> & { dayOfWeek: number } =>
         Boolean(slot && typeof slot.dayOfWeek === 'number')
       )
@@ -2809,14 +2851,21 @@ export function reconcileTimetableWithClasses(
     }
   }
 
-  // Preserve non-class ad-hoc sessions (sessions without classId)
+  // Preserve non-class ad-hoc sessions (sessions without classId) with unique IDs
+  const seenNonClassIds = new Set<string>();
   const nonClassSessions = safeTimetable.filter(s => {
     const cid = String(s.classId ?? '').trim();
-    return !cid;
+    if (cid) return false;
+    const sid = String(s.id ?? '').trim();
+    if (seenNonClassIds.has(sid)) return false;
+    seenNonClassIds.add(sid);
+    return true;
   });
 
   // Reconciled sessions for active classes
   const reconciledClassSessions: TimetableSession[] = [];
+  const seenClassSessionKeys = new Set<string>();
+  const usedSessionIds = new Set<string>();
 
   // Group existing class sessions by classId
   const existingByClass = new Map<string, TimetableSession[]>();
@@ -2832,47 +2881,37 @@ export function reconcileTimetableWithClasses(
 
   // For every active class, generate or update its authoritative sessions
   for (const [classId, cls] of activeClassesMap.entries()) {
-    let slots: Array<{
-      dayOfWeek: number;
-      dayName?: string;
-      startTime: string;
-      endTime: string;
-      teacherId?: string;
-      assistantTeacherId?: string;
-    }> = [];
-
+    let rawSlots: any[] = [];
     if (Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0) {
-      slots = cls.weeklySchedule
-        .filter(s => typeof s.dayOfWeek === 'number' && s.dayOfWeek >= 1 && s.dayOfWeek <= 7)
-        .map(s => ({
-          dayOfWeek: s.dayOfWeek,
-          dayName: s.dayName || getDayNameFromNumber(s.dayOfWeek),
-          startTime: s.startTime || '17:30',
-          endTime: s.endTime || '19:00',
-          teacherId: s.teacherId || cls.teacherId,
-          // Only assign TA if explicitly set for this specific session slot; do NOT infer entire class TA
-          assistantTeacherId: s.assistantTeacherId ? String(s.assistantTeacherId).trim() : undefined
-        }));
+      rawSlots = deduplicateWeeklyScheduleSlots(cls.weeklySchedule);
     } else {
       const parsed = getClassWeeklySchedule(cls);
-      slots = parsed.map(p => ({
-        dayOfWeek: p.dayOfWeek,
-        dayName: p.dayName || getDayNameFromNumber(p.dayOfWeek),
-        startTime: p.startTime || '17:30',
-        endTime: p.endTime || '19:00',
-        teacherId: cls.teacherId,
-        assistantTeacherId: cls.assistantTeacherId
-      }));
+      rawSlots = deduplicateWeeklyScheduleSlots(parsed);
     }
+
+    const slots = rawSlots.map(s => ({
+      dayOfWeek: s.dayOfWeek,
+      dayName: s.dayName || getDayNameFromNumber(s.dayOfWeek),
+      startTime: s.startTime || '17:30',
+      endTime: s.endTime || '19:00',
+      teacherId: s.teacherId || cls.teacherId,
+      assistantTeacherId: s.assistantTeacherId ? String(s.assistantTeacherId).trim() : undefined
+    }));
 
     if (slots.length === 0) {
       continue;
     }
 
     const existingSessions = existingByClass.get(classId) || [];
-    const usedSessionIds = new Set<string>();
 
     for (const slot of slots) {
+      const cleanTime = (slot.startTime || '1730').replace(/[^0-9]/g, '');
+      const sessionKey = `${classId}_${slot.dayOfWeek}_${cleanTime}`;
+      if (seenClassSessionKeys.has(sessionKey)) {
+        continue;
+      }
+      seenClassSessionKeys.add(sessionKey);
+
       const effTeacherId = String(slot.teacherId || cls.teacherId || '').trim();
       const hasSlotBreakdown = Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0;
       const effTaId = String(slot.assistantTeacherId || (hasSlotBreakdown ? '' : cls.assistantTeacherId) || '').trim();
@@ -2880,16 +2919,18 @@ export function reconcileTimetableWithClasses(
       const teacherObj = safeTeachers.find(t => String(t.id).trim() === effTeacherId);
       const taObj = safeAssistants.find(ta => String(ta.id).trim() === effTaId);
 
-      // Match existing session by dayOfWeek if available and not yet claimed
+      // Match existing session by dayOfWeek AND startTime first, then fallback to dayOfWeek only if unclaimed
       const existing = existingSessions.find(
+        s => s.dayOfWeek === slot.dayOfWeek && s.startTime === slot.startTime && !usedSessionIds.has(s.id)
+      ) || existingSessions.find(
         s => s.dayOfWeek === slot.dayOfWeek && !usedSessionIds.has(s.id)
       );
-      if (existing) {
-        usedSessionIds.add(existing.id);
-      }
 
-      const cleanTime = (slot.startTime || '1730').replace(/[^0-9]/g, '');
-      const sessionId = existing?.id || `SES-${classId}-D${slot.dayOfWeek}-${cleanTime}`;
+      let sessionId = existing?.id;
+      if (!sessionId || usedSessionIds.has(sessionId)) {
+        sessionId = `SES-${classId}-D${slot.dayOfWeek}-${cleanTime}`;
+      }
+      usedSessionIds.add(sessionId);
 
       reconciledClassSessions.push({
         id: sessionId,
@@ -2940,46 +2981,39 @@ export function syncSingleClassToTimetable(
   }
 
   // Extract weekly schedule slots
-  let slots: Array<{
-    dayOfWeek: number;
-    dayName?: string;
-    startTime: string;
-    endTime: string;
-    teacherId?: string;
-    assistantTeacherId?: string;
-  }> = [];
-
+  let rawSlots: any[] = [];
   if (Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0) {
-    slots = cls.weeklySchedule
-      .filter(s => typeof s.dayOfWeek === 'number' && s.dayOfWeek >= 1 && s.dayOfWeek <= 7)
-      .map(s => ({
-        dayOfWeek: s.dayOfWeek,
-        dayName: s.dayName || getDayNameFromNumber(s.dayOfWeek),
-        startTime: s.startTime || '17:30',
-        endTime: s.endTime || '19:00',
-        teacherId: s.teacherId || cls.teacherId,
-        // Only assign TA if explicitly set for this specific session slot; do NOT infer entire class TA
-        assistantTeacherId: s.assistantTeacherId ? String(s.assistantTeacherId).trim() : undefined
-      }));
+    rawSlots = deduplicateWeeklyScheduleSlots(cls.weeklySchedule);
   } else {
     const parsed = getClassWeeklySchedule(cls);
-    slots = parsed.map(p => ({
-      dayOfWeek: p.dayOfWeek,
-      dayName: p.dayName || getDayNameFromNumber(p.dayOfWeek),
-      startTime: p.startTime || '17:30',
-      endTime: p.endTime || '19:00',
-      teacherId: cls.teacherId,
-      assistantTeacherId: cls.assistantTeacherId
-    }));
+    rawSlots = deduplicateWeeklyScheduleSlots(parsed);
   }
+
+  const slots = rawSlots.map(s => ({
+    dayOfWeek: s.dayOfWeek,
+    dayName: s.dayName || getDayNameFromNumber(s.dayOfWeek),
+    startTime: s.startTime || '17:30',
+    endTime: s.endTime || '19:00',
+    teacherId: s.teacherId || cls.teacherId,
+    assistantTeacherId: s.assistantTeacherId ? String(s.assistantTeacherId).trim() : undefined
+  }));
 
   if (slots.length === 0) {
     return otherSessions;
   }
 
   const usedSessionIds = new Set<string>();
+  const seenClassSessionKeys = new Set<string>();
+  const updatedClassSessions: TimetableSession[] = [];
 
-  const updatedClassSessions: TimetableSession[] = slots.map(slot => {
+  for (const slot of slots) {
+    const cleanTimeSuffix = (slot.startTime || '1730').replace(/[^0-9]/g, '');
+    const sessionKey = `${normClassId}_${slot.dayOfWeek}_${cleanTimeSuffix}`;
+    if (seenClassSessionKeys.has(sessionKey)) {
+      continue;
+    }
+    seenClassSessionKeys.add(sessionKey);
+
     const effTeacherId = String(slot.teacherId || cls.teacherId || '').trim();
     const hasSlotBreakdown = Array.isArray(cls.weeklySchedule) && cls.weeklySchedule.length > 0;
     const effTaId = String(slot.assistantTeacherId || (hasSlotBreakdown ? '' : cls.assistantTeacherId) || '').trim();
@@ -2987,17 +3021,20 @@ export function syncSingleClassToTimetable(
     const teacherObj = teachers.find(t => String(t.id).trim() === effTeacherId);
     const taObj = assistants.find(ta => String(ta.id).trim() === effTaId);
 
-    // Reuse existing session matching dayOfWeek and not yet used
+    // Reuse existing session matching dayOfWeek and startTime if possible
     const existing = existingClassSessions.find(
+      s => s.dayOfWeek === slot.dayOfWeek && s.startTime === slot.startTime && !usedSessionIds.has(s.id)
+    ) || existingClassSessions.find(
       s => s.dayOfWeek === slot.dayOfWeek && !usedSessionIds.has(s.id)
     );
-    if (existing) {
-      usedSessionIds.add(existing.id);
-    }
-    const cleanTimeSuffix = (slot.startTime || '1730').replace(/[^0-9]/g, '');
-    const sessionId = existing?.id || `SES-${normClassId}-D${slot.dayOfWeek}-${cleanTimeSuffix}`;
 
-    return {
+    let sessionId = existing?.id;
+    if (!sessionId || usedSessionIds.has(sessionId)) {
+      sessionId = `SES-${normClassId}-D${slot.dayOfWeek}-${cleanTimeSuffix}`;
+    }
+    usedSessionIds.add(sessionId);
+
+    updatedClassSessions.push({
       id: sessionId,
       classId: normClassId,
       className: cls.name || existing?.className || '',
@@ -3011,8 +3048,8 @@ export function syncSingleClassToTimetable(
       startTime: slot.startTime,
       endTime: slot.endTime,
       status: 'scheduled'
-    };
-  });
+    });
+  }
 
   return [...otherSessions, ...updatedClassSessions];
 }
