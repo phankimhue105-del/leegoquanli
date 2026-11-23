@@ -79,7 +79,10 @@ export const TimetableView: React.FC = () => {
     }
 
     // Authoritative teacher assignment MUST come from current class record (or slot)
-    const slot = cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
+    const slot =
+      cls?.weeklySchedule?.find(
+        s => s.dayOfWeek === session.dayOfWeek && (!s.startTime || !session.startTime || s.startTime === session.startTime)
+      ) || cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
     const effTeacherId = String(slot?.teacherId || cls?.teacherId || session.teacherId || '').trim();
     // Authoritative session-level assistant assignment (strictly session/slot, never inferring from entire class)
     const effAssistantId = String(slot?.assistantTeacherId ?? session.assistantId ?? '').trim();
@@ -113,6 +116,22 @@ export const TimetableView: React.FC = () => {
 
     return true;
   });
+
+  // Ensure each legitimate class session appears exactly once using stable session identity
+  const displayedSessions = React.useMemo(() => {
+    const seen = new Set<string>();
+    return filteredSessions.filter(session => {
+      const identityKey = session.classId
+        ? `${session.classId}_${session.dayOfWeek}_${session.startTime}`
+        : session.id;
+      if (seen.has(identityKey) || seen.has(session.id)) {
+        return false;
+      }
+      seen.add(identityKey);
+      seen.add(session.id);
+      return true;
+    });
+  }, [filteredSessions]);
 
   // Check conflicts dynamically when form fields change
   const handleFormChange = (field: keyof Omit<TimetableSession, 'id'>, value: any) => {
@@ -376,7 +395,7 @@ export const TimetableView: React.FC = () => {
       {calendarView === 'week' ? (
         <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
           {daysOfWeek.map(day => {
-            const daySessions = filteredSessions.filter(s => s.dayOfWeek === day.dayNumber);
+            const daySessions = displayedSessions.filter(s => s.dayOfWeek === day.dayNumber);
             return (
               <div
                 key={day.dayNumber}
@@ -399,7 +418,10 @@ export const TimetableView: React.FC = () => {
                       const cls = session.classId
                         ? data.classes.find(c => String(c.id).trim() === String(session.classId).trim())
                         : null;
-                      const slot = cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
+                      const slot =
+                        cls?.weeklySchedule?.find(
+                          s => s.dayOfWeek === session.dayOfWeek && (!s.startTime || !session.startTime || s.startTime === session.startTime)
+                        ) || cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
                       const effClassName = cls?.name || session.className;
                       const effTeacherId = String(slot?.teacherId || cls?.teacherId || session.teacherId || '').trim();
                       const teacherObj = data.teachers.find(t => String(t.id).trim() === effTeacherId);
@@ -468,16 +490,19 @@ export const TimetableView: React.FC = () => {
           </h3>
 
           <div className="space-y-3">
-            {filteredSessions.length === 0 ? (
+            {displayedSessions.length === 0 ? (
               <p className="text-slate-400 italic text-xs py-8 text-center">
                 Không có ca học nào được xếp vào ngày này.
               </p>
             ) : (
-              filteredSessions.map(session => {
+              displayedSessions.map(session => {
                 const cls = session.classId
                   ? data.classes.find(c => String(c.id).trim() === String(session.classId).trim())
                   : null;
-                const slot = cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
+                const slot =
+                  cls?.weeklySchedule?.find(
+                    s => s.dayOfWeek === session.dayOfWeek && (!s.startTime || !session.startTime || s.startTime === session.startTime)
+                  ) || cls?.weeklySchedule?.find(s => s.dayOfWeek === session.dayOfWeek);
                 const effClassName = cls?.name || session.className;
                 const effTeacherId = String(slot?.teacherId || cls?.teacherId || session.teacherId || '').trim();
                 const teacherObj = data.teachers.find(t => String(t.id).trim() === effTeacherId);
